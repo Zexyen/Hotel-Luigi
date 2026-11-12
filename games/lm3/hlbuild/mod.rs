@@ -14,7 +14,7 @@ pub const NAME: &str = "lm3";
 pub const RUNTIME_SOURCES: &[&str] = &["lm3_imports.c", "prompts.c", "debug_menu.c", "presence.c"];
 
 /// data the game library exports to the runtime besides the tables every game has (../runtime/game_shim_eh.c)
-pub const EXPORTS: &[&str] = &["game_fsr_w", "game_fsr_h", "game_fsr_phases"];
+pub const EXPORTS: &[&str] = &["game_fsr_w", "game_fsr_h", "game_fsr_phases", "game_mv_pairs"];
 
 // ---- the one version this port handles
 pub const VERSION: &str = "Luigi's Mansion 3 version 1.4.0, the latest update (0100DCA0064A6000), the build with main build ID 79e5950ffa85acf6 (nnSdk 7.3.2)";
