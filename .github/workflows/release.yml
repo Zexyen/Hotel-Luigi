@@ -1,0 +1,477 @@
+# Builds the launcher for Linux and Windows and publishes them as a release.
+#
+#   git tag v0.1.0 && git push origin v0.1.0     -> builds, then makes the v0.1.0 release with both archives attached
+#   Actions > Release > Run workflow, or a PR    -> builds only; the archives are kept as workflow artifacts
+#
+# The archive is this repository's source (scripts, runtime, lifter, launcher screens) with:
+#   build/recomp-launcher, libSDL3.so.0   the launcher and the SDL3 it was built with
+#   build/wtbuild                    the build tool (tools/wtbuild: no Python needed to build the game)
+#   prebuilt/                        the runtime, built here (libwitchtime.so, witch-time-game, libwt_glslang.so with a
+#                                    static glslang, game_shim_eh.o) and the FFmpeg it uses; nothing in it comes from a
+#                                    dump (runtime/split), so the player's PC only builds game.so
+#   deps/llvm/                       clang + lld (LLVM_VERSION, trimmed from LLVM's own release), which wtbuild uses:
+#                                    the game's code compiles without system headers (runtime/freestanding)
+#   licenses/                        the licences of the libraries and tools above
+# Nothing derived from the game is in it: the player builds that from their own dump.
+#
+# Windows (job windows, cross-built on Ubuntu with llvm-mingw; job windows-test then runs it on Windows): a .zip with
+#   recomp-launcher.exe                   starts build/recomp-launcher.exe
+#   build/recomp-launcher.exe, SDL3.dll   the launcher (C++ runtime linked in) and SDL3, built here with llvm-mingw
+#   build/wtbuild.exe                the build tool
+#   prebuilt/                        the runtime: witch-time-game.exe (+ .pdb), wt_glslang.dll (static glslang),
+#                                    game_shim_eh.o, libucrtbase.a (game.dll's C functions come from the UCRT, part of
+#                                    Windows 10 and 11) and the FFmpeg DLLs: movies must not depend on the PC's codecs (#68)
+#   deps/llvm/                       clang.exe and ld.lld.exe (LLVM_VERSION, trimmed from LLVM's release), clang's headers
+#                                    and llvm-mingw's compiler-rt builtins: the player's PC compiles the game's code and
+#                                    links game.dll with these alone (tools/wtbuild/src/link.rs)
+#   licenses/
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+  # a pull request that changes what the archive is built from builds it too, as a check
+  pull_request:
+    paths: ['launcher/**', 'runtime/**', 'tools/wtbuild/**', 'games/**', '.gitattributes', '.github/workflows/release.yml']
+
+permissions:
+  contents: write
+
+env:
+  SDL_TAG: release-3.4.18
+  FFMPEG_TAG: n7.1.5
+  GLSLANG_TAG: 16.6.0
+  LLVM_VERSION: 23.1.4
+  LLVM_MINGW_TAG: '20260922'
+  VULKAN_HEADERS_TAG: vulkan-sdk-1.4.341.0
+  FREETYPE_TAG: VER-2-13-3
+
+jobs:
+  linux:
+    # the oldest supported runner, so the binaries run on older glibc too
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "name=Recomp-$v-linux-x86_64" >> "$GITHUB_OUTPUT"
+
+      - name: Packages
+        run: |
+          echo 'nameserver 1.1.1.1' | sudo tee /etc/resolv.conf      # 2026-11-11: the runners' own resolver timed out on the Ubuntu mirrors' names (20 s a try); take this line out when it answers again
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build patchelf nasm libfreetype-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl1-mesa-dev libdrm-dev libgbm-dev \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev libibus-1.0-dev \
+            libgl-dev libvulkan-dev
+
+      # the compiler players get: clang, lld and clang's own headers and builtins from LLVM's release, nothing else
+      - name: LLVM cache
+        id: llvm
+        uses: actions/cache@v4
+        with:
+          path: deps/llvm
+          key: llvm-${{ env.LLVM_VERSION }}-trim1
+      - name: LLVM
+        if: steps.llvm.outputs.cache-hit != 'true'
+        run: |
+          v="$LLVM_VERSION"; major="${v%%.*}"
+          mkdir -p deps/llvm
+          curl -sSfL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$v/LLVM-$v-Linux-X64.tar.xz" |
+            tar -xJ --strip-components=1 -C deps/llvm --wildcards "LLVM-$v-Linux-X64/bin/clang-$major" \
+              "LLVM-$v-Linux-X64/bin/lld" "LLVM-$v-Linux-X64/lib/clang/$major/include/*" \
+              "LLVM-$v-Linux-X64/lib/clang/$major/lib/x86_64-unknown-linux-gnu/libclang_rt.builtins.a"
+          strip deps/llvm/bin/clang-$major deps/llvm/bin/lld
+          ln -s clang-$major deps/llvm/bin/clang
+          ln -s clang-$major deps/llvm/bin/clang++
+          ln -s lld deps/llvm/bin/ld.lld
+          curl -sSfL -o deps/llvm/LICENSE.TXT "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-$v/llvm/LICENSE.TXT"
+          du -sh deps/llvm
+      - name: LLVM check
+        run: deps/llvm/bin/clang --version && deps/llvm/bin/ld.lld --version
+
+      - name: SDL3
+        run: |
+          git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/sdl"
+          cmake -S "$RUNNER_TEMP/sdl" -B "$RUNNER_TEMP/sdl-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl3" -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
+          cmake --build "$RUNNER_TEMP/sdl-build"
+          cmake --install "$RUNNER_TEMP/sdl-build"
+          cp "$RUNNER_TEMP/sdl/LICENSE.txt" "$RUNNER_TEMP/sdl3/LICENSE.txt"
+
+      # FFmpeg for the movies, shared and LGPL (no --enable-gpl), decoders and demuxers only, nothing found on the runner
+      # (--disable-autodetect), so the libraries need only glibc
+      - name: FFmpeg cache
+        id: ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ffmpeg
+          key: ffmpeg-${{ env.FFMPEG_TAG }}-ubuntu-22.04-1
+      - name: FFmpeg
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$FFMPEG_TAG" https://github.com/FFmpeg/FFmpeg.git "$RUNNER_TEMP/ffmpeg-src"
+          cd "$RUNNER_TEMP/ffmpeg-src"
+          ./configure --prefix="$RUNNER_TEMP/ffmpeg" --enable-shared --disable-static --enable-pic --disable-autodetect \
+            --disable-programs --disable-doc --disable-avdevice --disable-avfilter --disable-network --disable-encoders \
+            --disable-muxers --disable-debug
+          make -j"$(nproc)"
+          make install
+          cp COPYING.LGPLv2.1 "$RUNNER_TEMP/ffmpeg/"
+          # each library finds the others beside it
+          for f in "$RUNNER_TEMP"/ffmpeg/lib/lib*.so.*.*; do patchelf --set-rpath '$ORIGIN' "$f"; done
+
+      # glslang for the shader compiler shim, static (no SPIRV-Tools optimizer), linked into libwt_glslang.so
+      - name: glslang cache
+        id: glslang
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/glslang
+          key: glslang-${{ env.GLSLANG_TAG }}-ubuntu-22.04-1
+      - name: glslang
+        if: steps.glslang.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$GLSLANG_TAG" https://github.com/KhronosGroup/glslang.git "$RUNNER_TEMP/glslang-src"
+          cmake -S "$RUNNER_TEMP/glslang-src" -B "$RUNNER_TEMP/glslang-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/glslang" -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DENABLE_OPT=OFF -DGLSLANG_TESTS=OFF -DENABLE_GLSLANG_BINARIES=OFF
+          cmake --build "$RUNNER_TEMP/glslang-build"
+          cmake --install "$RUNNER_TEMP/glslang-build"
+          cp "$RUNNER_TEMP/glslang-src/LICENSE.txt" "$RUNNER_TEMP/glslang/"
+
+      - name: Launcher
+        run: |
+          cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/sdl3" -DWT_VERSION="${{ steps.version.outputs.version }}"
+          cmake --build build/launcher
+          # only $ORIGIN: the libSDL3.so.0 shipped beside it, which libwitchtime.so then shares
+          patchelf --set-rpath '$ORIGIN' build/recomp-launcher
+
+      - name: wtbuild
+        run: |
+          cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
+          cargo test --release --locked --manifest-path tools/wtbuild/Cargo.toml
+
+      # the Vulkan headers the runtime is written against (Ubuntu 22.04's libvulkan-dev is 1.3.204, too old for it)
+      - name: Vulkan-Headers
+        run: git clone --depth 1 --branch "$VULKAN_HEADERS_TAG" https://github.com/KhronosGroup/Vulkan-Headers.git "$RUNNER_TEMP/vulkan-headers"
+
+      # the runtime, with the bundled clang, against the SDL3, FFmpeg, Vulkan headers and glslang above and the runner's GL
+      - name: Runtime
+        run: |
+          mkdir -p prebuilt
+          for l in avformat avcodec swscale swresample avutil; do
+            so=$(readelf -d "$RUNNER_TEMP/ffmpeg/lib/lib$l.so" | sed -n 's/.*SONAME.*\[\(.*\)\]/\1/p')
+            cp -L "$RUNNER_TEMP/ffmpeg/lib/$so" prebuilt/
+          done
+          export LLVM_ROOT="$PWD/deps/llvm"
+          export CPATH="$RUNNER_TEMP/sdl3/include:$RUNNER_TEMP/ffmpeg/include:$RUNNER_TEMP/vulkan-headers/include:$RUNNER_TEMP/glslang/include"
+          export LIBRARY_PATH="$RUNNER_TEMP/sdl3/lib:$RUNNER_TEMP/ffmpeg/lib"
+          export WTBUILD_GLSLANG_LIBS="-Wl,--start-group $(echo "$RUNNER_TEMP"/glslang/lib/*.a) -Wl,--end-group -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm -lpthread -Wl,--exclude-libs,ALL"
+          tools/wtbuild/target/release/wtbuild runtime --out prebuilt
+          strip prebuilt/libwt_glslang.so
+          readelf -d prebuilt/libwitchtime.so | grep -E 'NEEDED|RUNPATH'
+          ls -la prebuilt
+
+      # the link step on stand-in modules, with this prebuilt runtime and the bundled compiler, run until the image is mapped
+      - name: Smoke test of the link step
+        run: LLVM_ROOT="$PWD/deps/llvm" tools/wtbuild/target/release/wtbuild smoke --prebuilt prebuilt --lib "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0"
+
+      - name: Package
+        run: |
+          name="${{ steps.version.outputs.name }}"
+          mkdir -p "dist/$name/build" "dist/$name/deps" "dist/$name/licenses"
+          git archive HEAD | tar -x -C "dist/$name"
+          rm -rf "dist/$name/.github"
+          cp build/recomp-launcher "dist/$name/build/"
+          cp tools/wtbuild/target/release/wtbuild "dist/$name/build/"
+          cp -L "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0" "dist/$name/build/"
+          strip "dist/$name/build/recomp-launcher" "dist/$name/build/libSDL3.so.0"
+          cp -a prebuilt "dist/$name/prebuilt"
+          cp -a deps/llvm "dist/$name/deps/llvm"
+          cp "$RUNNER_TEMP/sdl3/LICENSE.txt" "dist/$name/licenses/SDL3.txt"
+          cp "$RUNNER_TEMP/ffmpeg/COPYING.LGPLv2.1" "dist/$name/licenses/FFmpeg-LGPL-2.1.txt"
+          cp "$RUNNER_TEMP/glslang/LICENSE.txt" "dist/$name/licenses/glslang.txt"
+          cp deps/llvm/LICENSE.TXT "dist/$name/licenses/LLVM.txt"
+          ln -s build/recomp-launcher "dist/$name/recomp-launcher"
+          LD_LIBRARY_PATH= ldd "dist/$name/build/recomp-launcher" | tee /dev/stderr | grep -q "dist/$name/build/libSDL3.so.0"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.event.repository.name }} ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
+
+  windows:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "name=Recomp-$v-windows-x86_64" >> "$GITHUB_OUTPUT"
+
+      - name: Packages
+        run: |
+          echo 'nameserver 1.1.1.1' | sudo tee /etc/resolv.conf      # 2026-11-11: the runners' own resolver timed out on the Ubuntu mirrors' names (20 s a try); take this line out when it answers again
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build nasm zip
+
+      # the cross compiler for everything built here: clang, lld and mingw-w64 for the UCRT
+      - name: llvm-mingw cache
+        id: llvm-mingw
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/llvm-mingw
+          key: llvm-mingw-${{ env.LLVM_MINGW_TAG }}-ucrt-ubuntu-22.04
+      - name: llvm-mingw
+        if: steps.llvm-mingw.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/llvm-mingw"
+          curl -sSfL "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW_TAG/llvm-mingw-$LLVM_MINGW_TAG-ucrt-ubuntu-22.04-x86_64.tar.xz" |
+            tar -xJ --strip-components=1 -C "$RUNNER_TEMP/llvm-mingw"
+      - name: Cross toolchain file
+        run: |
+          m="$RUNNER_TEMP/llvm-mingw"
+          echo "$m/bin" >> "$GITHUB_PATH"
+          cat > "$RUNNER_TEMP/mingw.cmake" <<EOF
+          set(CMAKE_SYSTEM_NAME Windows)
+          set(CMAKE_SYSTEM_PROCESSOR x86_64)
+          set(CMAKE_C_COMPILER $m/bin/x86_64-w64-mingw32-clang)
+          set(CMAKE_CXX_COMPILER $m/bin/x86_64-w64-mingw32-clang++)
+          set(CMAKE_RC_COMPILER $m/bin/x86_64-w64-mingw32-windres)
+          set(CMAKE_FIND_ROOT_PATH $m/x86_64-w64-mingw32)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
+          EOF
+
+      # the compiler players get: clang.exe, ld.lld.exe and clang's headers from LLVM's Windows release, and the
+      # compiler-rt builtins for the MinGW target (stack probe, 128-bit division) from llvm-mingw, same LLVM major
+      - name: LLVM for Windows cache
+        id: llvm-win
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/llvm-win
+          key: llvm-win-${{ env.LLVM_VERSION }}-${{ env.LLVM_MINGW_TAG }}-trim2
+      - name: LLVM for Windows
+        if: steps.llvm-win.outputs.cache-hit != 'true'
+        run: |
+          v="$LLVM_VERSION"; major="${v%%.*}"; d="$RUNNER_TEMP/llvm-win"; top="clang+llvm-$v-x86_64-pc-windows-msvc"
+          mkdir -p "$d"
+          curl -sSfL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$v/$top.tar.xz" |
+            tar -xJ --strip-components=1 -C "$d" --wildcards "$top/bin/clang.exe" "$top/bin/ld.lld.exe" \
+              "$top/lib/clang/$major/include/*"
+          # the Windows archive has no LICENSE.TXT at its top; the same file from the source, as the Linux job does
+          curl -sSfL -o "$d/LICENSE.TXT" "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-$v/llvm/LICENSE.TXT"
+          mkdir -p "$d/lib/clang/$major/lib/windows"
+          cp "$RUNNER_TEMP"/llvm-mingw/lib/clang/*/lib/windows/libclang_rt.builtins-x86_64.a "$d/lib/clang/$major/lib/windows/"
+          du -sh "$d"
+
+      - name: SDL3
+        run: |
+          git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/sdl"
+          cmake -S "$RUNNER_TEMP/sdl" -B "$RUNNER_TEMP/sdl-build" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/mingw.cmake" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl3" -DSDL_SHARED=ON -DSDL_STATIC=OFF \
+            -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
+          cmake --build "$RUNNER_TEMP/sdl-build"
+          cmake --install "$RUNNER_TEMP/sdl-build"
+          cp "$RUNNER_TEMP/sdl/LICENSE.txt" "$RUNNER_TEMP/sdl3/LICENSE.txt"
+
+      - name: Vulkan headers
+        run: git clone --depth 1 --branch "$VULKAN_HEADERS_TAG" https://github.com/KhronosGroup/Vulkan-Headers.git "$RUNNER_TEMP/vulkan-headers"
+
+      # glslang for wt_glslang.dll, static (no SPIRV-Tools optimizer), with libc++ linked in
+      - name: glslang cache
+        id: glslang
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/glslang
+          key: glslang-${{ env.GLSLANG_TAG }}-llvm-mingw-${{ env.LLVM_MINGW_TAG }}-1
+      - name: glslang
+        if: steps.glslang.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$GLSLANG_TAG" https://github.com/KhronosGroup/glslang.git "$RUNNER_TEMP/glslang-src"
+          cmake -S "$RUNNER_TEMP/glslang-src" -B "$RUNNER_TEMP/glslang-build" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/mingw.cmake" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/glslang" -DCMAKE_INSTALL_LIBDIR=lib \
+            -DBUILD_SHARED_LIBS=OFF -DENABLE_OPT=OFF -DGLSLANG_TESTS=OFF -DENABLE_GLSLANG_BINARIES=OFF
+          cmake --build "$RUNNER_TEMP/glslang-build"
+          cmake --install "$RUNNER_TEMP/glslang-build"
+          cp "$RUNNER_TEMP/glslang-src/LICENSE.txt" "$RUNNER_TEMP/glslang/"
+
+      # FreeType for the launcher's text (RmlUi), static, nothing optional
+      - name: FreeType cache
+        id: freetype
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/freetype
+          key: freetype-${{ env.FREETYPE_TAG }}-llvm-mingw-${{ env.LLVM_MINGW_TAG }}-1
+      - name: FreeType
+        if: steps.freetype.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$FREETYPE_TAG" https://github.com/freetype/freetype.git "$RUNNER_TEMP/freetype-src"
+          cmake -S "$RUNNER_TEMP/freetype-src" -B "$RUNNER_TEMP/freetype-build" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/mingw.cmake" \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/freetype" -DBUILD_SHARED_LIBS=OFF \
+            -DFT_DISABLE_ZLIB=ON -DFT_DISABLE_BZIP2=ON -DFT_DISABLE_PNG=ON -DFT_DISABLE_HARFBUZZ=ON -DFT_DISABLE_BROTLI=ON
+          cmake --build "$RUNNER_TEMP/freetype-build"
+          cmake --install "$RUNNER_TEMP/freetype-build"
+          cp "$RUNNER_TEMP/freetype-src/LICENSE.TXT" "$RUNNER_TEMP/freetype-src/docs/FTL.TXT" "$RUNNER_TEMP/freetype/"
+
+      - name: Launcher
+        run: |
+          cmake -S launcher -B build/launcher -G Ninja -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/mingw.cmake" -DCMAKE_BUILD_TYPE=Release \
+            -DSDL3_DIR="$RUNNER_TEMP/sdl3/lib/cmake/SDL3" -DFREETYPE_LIBRARY="$RUNNER_TEMP/freetype/lib/libfreetype.a" \
+            -DFREETYPE_INCLUDE_DIRS="$RUNNER_TEMP/freetype/include/freetype2" -DWT_VERSION="${{ steps.version.outputs.version }}"
+          cmake --build build/launcher
+          ls -la build/recomp-launcher.exe recomp-launcher.exe
+
+      # wtbuild twice: for this runner (it builds the Windows runtime below) and for Windows (what players run)
+      - name: wtbuild
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_LINKER: x86_64-w64-mingw32-clang
+          CC_x86_64_pc_windows_gnullvm: x86_64-w64-mingw32-clang
+          AR_x86_64_pc_windows_gnullvm: llvm-ar
+        run: |
+          rustup target add x86_64-pc-windows-gnullvm
+          cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
+          # intel_tex_2 packs its encoder for MSVC only: the same archives under the names it asks for on this target, the
+          # C++ half of its ASTC encoder and MSVC's libraries empty (only BC7 is called; msvc_shim in src/texpack.rs)
+          ispc="$(ls -d ~/.cargo/registry/src/*/intel_tex_2-*/src/ispc)"; libs="$RUNNER_TEMP/ispc-gnullvm"; mkdir -p "$libs"
+          for k in kernel kernel_astc; do cp "$ispc/${k}x86_64-pc-windows-msvc.lib" "$libs/lib${k}x86_64-pc-windows-gnullvm.a"; done
+          for e in ispc_texcomp_astcx86_64-pc-windows-gnullvm-MT LIBCMT OLDNAMES libcpmt; do llvm-ar rcs "$libs/lib$e.a"; done
+          export CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_RUSTFLAGS="-C target-feature=+crt-static -L native=$libs"
+          cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml --target x86_64-pc-windows-gnullvm
+
+      # FFmpeg for the movies, as in the Linux job: shared and LGPL, nothing found on the runner (--disable-autodetect), so
+      # its decoders are the software ones (nasm: their assembly) and the DLLs need only Windows
+      - name: FFmpeg cache
+        id: ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ffmpeg
+          key: ffmpeg-${{ env.FFMPEG_TAG }}-${{ env.LLVM_MINGW_TAG }}-mingw-1
+      - name: FFmpeg
+        if: steps.ffmpeg.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$FFMPEG_TAG" https://github.com/FFmpeg/FFmpeg.git "$RUNNER_TEMP/ffmpeg-src"
+          cd "$RUNNER_TEMP/ffmpeg-src"
+          ./configure --prefix="$RUNNER_TEMP/ffmpeg" --target-os=mingw32 --arch=x86_64 --enable-cross-compile \
+            --cross-prefix=x86_64-w64-mingw32- --cc=x86_64-w64-mingw32-clang --enable-shared --disable-static --disable-autodetect \
+            --disable-programs --disable-doc --disable-avdevice --disable-avfilter --disable-network --disable-encoders \
+            --disable-muxers --disable-debug
+          grep -q 'HAVE_X86ASM 1' config.h
+          make -j"$(nproc)"
+          make install
+          cp COPYING.LGPLv2.1 "$RUNNER_TEMP/ffmpeg/"
+
+      # the runtime, with llvm-mingw, against the SDL3, FFmpeg, Vulkan headers and glslang above
+      - name: Runtime
+        run: |
+          # the libraries it ships with, listed in its manifest
+          mkdir -p prebuilt
+          cp "$RUNNER_TEMP"/ffmpeg/bin/*.dll prebuilt/
+          export LLVM_ROOT="$RUNNER_TEMP/llvm-mingw"
+          export CPATH="$RUNNER_TEMP/sdl3/include:$RUNNER_TEMP/ffmpeg/include:$RUNNER_TEMP/vulkan-headers/include:$RUNNER_TEMP/glslang/include"
+          export LIBRARY_PATH="$RUNNER_TEMP/sdl3/lib:$RUNNER_TEMP/ffmpeg/lib"
+          export WTBUILD_GLSLANG_LIBS="$(echo "$RUNNER_TEMP"/glslang/lib/*.a) -static -lc++"
+          tools/wtbuild/target/release/wtbuild runtime --out prebuilt --target windows
+          llvm-strip prebuilt/wt_glslang.dll
+          llvm-readobj --coff-imports prebuilt/witch-time-game.exe | grep 'Name:' | sort -u
+          ls -la prebuilt
+
+      - name: Package
+        run: |
+          name="${{ steps.version.outputs.name }}"
+          p="dist/$name"
+          mkdir -p "$p/build" "$p/deps" "$p/licenses"
+          git archive HEAD | tar -x -C "$p"
+          rm -rf "$p/.github"
+          cp recomp-launcher.exe "$p/"
+          cp build/recomp-launcher.exe "$RUNNER_TEMP/sdl3/bin/SDL3.dll" "$p/build/"
+          cp tools/wtbuild/target/x86_64-pc-windows-gnullvm/release/wtbuild.exe "$p/build/"
+          llvm-strip "$p/build/recomp-launcher.exe" "$p/build/SDL3.dll" "$p/recomp-launcher.exe"
+          cp -a prebuilt "$p/prebuilt"
+          cp -a "$RUNNER_TEMP/llvm-win" "$p/deps/llvm"
+          cp "$RUNNER_TEMP/sdl3/LICENSE.txt" "$p/licenses/SDL3.txt"
+          cp "$RUNNER_TEMP/glslang/LICENSE.txt" "$p/licenses/glslang.txt"
+          cp "$RUNNER_TEMP/ffmpeg/COPYING.LGPLv2.1" "$p/licenses/FFmpeg-LGPL-2.1.txt"
+          cp "$RUNNER_TEMP/llvm-win/LICENSE.TXT" "$p/licenses/LLVM.txt"
+          cp "$RUNNER_TEMP/freetype/FTL.TXT" "$p/licenses/FreeType-FTL.txt"
+          cp build/launcher/_deps/rmlui-src/LICENSE.txt "$p/licenses/RmlUi.txt"
+          cp "$RUNNER_TEMP/llvm-mingw/x86_64-w64-mingw32/share/mingw32/COPYING.MinGW-w64-runtime.txt" "$p/licenses/MinGW-w64-runtime.txt"
+          (cd dist && zip -q -r -9 "$name.zip" "$name" && sha256sum "$name.zip" > "$name.zip.sha256")
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.name }}
+          path: |
+            dist/*.zip
+            dist/*.sha256
+
+  # the archive as a player unpacks it, on Windows: the build tool's own tests, then the link step on stand-in modules
+  # with the bundled clang.exe and ld.lld.exe and the prebuilt runtime, run until witch-time-game.exe has mapped the image
+  windows-test:
+    needs: windows
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "name=Recomp-$v-windows-x86_64" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.name }}
+          path: dist
+
+      - name: wtbuild tests (Windows)
+        shell: bash
+        run: cargo test --release --locked --manifest-path tools/wtbuild/Cargo.toml
+
+      - name: Smoke test of the link step
+        shell: bash
+        run: |
+          name="${{ steps.version.outputs.name }}"
+          (cd dist && sha256sum -c "$name.zip.sha256" && unzip -q "$name.zip")
+          p="$PWD/dist/$name"
+          "$p/build/wtbuild.exe" smoke --repo "$p" --prebuilt "$p/prebuilt" --lib "$p/build/SDL3.dll"
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.event.repository.name }} ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            dist/*.zip
+            dist/*.sha256

@@ -1,0 +1,2 @@
+# Frame counters that move by the game time due above 60 fps (tools/wtbuild/src/lifter/fps.rs patch_op):
+# <store address, hex> <what it counts>. A game that lists any defines fps_ci / fps_cf / fps_fs in runtime/game_shim_eh.c.
