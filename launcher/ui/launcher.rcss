@@ -74,6 +74,7 @@ body {
 .foot { position: absolute; left: 0; bottom: 0; width: 100%; height: 64dp; display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 44dp;
 	background-color: #00000099; border-top: 2dp #ffffff40; font-family: "Russo One"; font-size: 26dp; }
 .hint { display: flex; flex-direction: row; align-items: center; gap: 10dp; }
+.hint[key]:hover { color: #ffe55c; }   /* a click presses the hint's key (App::hint_click) */
 .gl { width: 34dp; height: 34dp; }
 
 /* ---- the speech box: what the launcher has to say, under its speaker's name plate ---- */
