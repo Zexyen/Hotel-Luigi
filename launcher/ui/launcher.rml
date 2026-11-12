@@ -1,0 +1,213 @@
+<rml>
+<head>
+	<title>Launcher</title>
+	<link type="text/rcss" href="launcher.rcss"/>
+</head>
+<body data-model="wt">
+
+<!-- ======================================================================= title menu -->
+<div class="screen title" data-if="screen == 'title'" data-class-leaving="leaving">
+	<div class="bg lobby"><div class="ground"></div><div class="g1"></div><div class="g2"></div><div class="g3"></div><div class="pil p1"></div><div class="pil p2"></div><div class="pil p3"></div><div class="pil p4"></div><div class="vg"></div></div>
+	<div class="stage">
+		<div class="logo">{{ app_name }}<span class="sub">LAUNCHER</span></div>
+		<div class="menu">
+			<div data-for="m, i : menu" class="mi autofocus" data-class-dim="m.dim" data-style-animation="leaving ? '0.22s cubic-in stair-out' : (0.35 + 0.08 * i) + 's cubic-out stair-in'" data-event-click="menu(i)">
+				<div class="fill"></div><div class="ptr"></div>
+				<span>{{ m.label }}</span><span class="tag" data-if="m.tag != ''">{{ m.tag }}</span>
+			</div>
+		</div>
+		<div class="card">
+			<div class="fill"></div>
+			<div class="thumb">{{ built ? 'OK' : '?' }}</div>
+			<div class="txt"><div class="t">{{ built ? 'Your game' : 'Not set up yet' }}</div><div class="d">{{ footer_info }}</div></div>
+		</div>
+		<div class="dlg" data-class-bad="status_bad">
+			<div class="fill"></div><div class="who">Front Desk</div>
+			<div class="say"><div>{{ status_line }}</div></div>
+		</div>
+	</div>
+	<div class="foot">
+		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
+	</div>
+</div>
+
+<!-- ======================================================================= first run: the dump -->
+<div class="screen setup" data-if="screen == 'setup'" data-class-leaving="leaving">
+	<div class="bg lobby"><div class="ground"></div><div class="g1"></div><div class="g2"></div><div class="g3"></div><div class="pil p1"></div><div class="pil p2"></div><div class="pil p3"></div><div class="pil p4"></div><div class="vg"></div></div>
+	<div class="stage">
+		<div class="crumb"><span class="home" data-event-click="go('title')">{{ app_name }}</span><span class="sep">›</span><span>{{ built ? 'Your dump' : 'Check in' }}</span></div>
+		<div class="dlg">
+			<div class="fill"></div><div class="who">Front Desk</div>
+			<div class="say"><div>Point the launcher at your <em>dump</em>: a folder with <em>exefs</em> and <em>romfs</em>.<br/>Nothing is downloaded, decrypted or sent anywhere.</div></div>
+		</div>
+		<div class="form">
+			<div class="label">DUMP FOLDER</div>
+			<div class="field-row">
+				<input type="text" class="text autofocus" data-value="dump"/>
+				<div class="btn" data-event-click="browse()"><div class="fill"></div><span>Browse</span></div>
+			</div>
+			<div class="row">
+				<div class="switch" data-class-on="move_dump" data-event-click="toggle_move()"><div class="knob"></div></div>
+				<div class="what"><div class="name">{{ move_dump ? 'Move the game data here' : 'Copy the game data here' }}</div><div class="note">{{ move_dump ? 'The romfs leaves your dump folder for the game folder; nothing is stored twice.' : 'Your dump stays whole: free on the same drive, about 15 GB from another.' }}</div></div>
+			</div>
+			<div class="row" data-if="dump_modified || accept_modified">
+				<div class="switch" data-class-on="accept_modified" data-event-click="toggle_accept_modified()"><div class="knob"></div></div>
+				<div class="what"><div class="name">Use a modified dump</div><div class="note">Some files differ from the supported version (another version, or mods). It may build and run, or it may not; it is unsupported.</div></div>
+			</div>
+			<div class="rows">
+				<div data-for="c : checks" class="row" data-class-done="c.state == 'done'" data-class-run="c.state == 'run'" data-class-wait="c.state == 'wait'" data-class-fail="c.state == 'fail'">
+					<div class="diamond"></div>
+					<div class="grow">{{ c.text }}</div>
+					<div class="right">{{ c.right }}</div>
+				</div>
+			</div>
+			<div class="actions">
+				<div class="hold">{{ verified ? 'Your dump checks out. Begin the build.' : 'Choose the folder, then check the dump.' }}</div>
+				<div class="btn primary" data-if="!verified" data-event-click="check_dump()"><div class="fill"></div><span>{{ checking ? 'Checking…' : 'Check dump' }}</span></div>
+				<div class="btn primary" data-if="verified" data-event-click="start_build()"><div class="fill"></div><span>Begin build</span></div>
+			</div>
+		</div>
+		<div class="fl">About 15 minutes on 16 threads  ·  About 9 GB of free space  ·  Close the window any time; it resumes</div>
+	</div>
+	<div class="foot">
+		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
+	</div>
+</div>
+
+<!-- ======================================================================= building -->
+<div class="screen build" data-if="screen == 'build'" data-class-leaving="leaving">
+	<div class="bg lobby"><div class="ground"></div><div class="g1"></div><div class="g2"></div><div class="g3"></div><div class="pil p1"></div><div class="pil p2"></div><div class="pil p3"></div><div class="pil p4"></div><div class="vg"></div></div>
+	<div class="stage">
+		<div class="crumb"><span class="home" data-event-click="go('title')">{{ app_name }}</span><span class="sep">›</span><span>Building</span></div>
+		<div class="steps">
+			<div data-for="s, i : steps" class="st" data-class-run="s.state == 'run'" data-class-done="s.state == 'done'" data-class-dim="s.state == 'wait'" data-class-fail="s.state == 'fail'" data-style-animation="leaving ? '0.22s cubic-in stair-out' : (0.35 + 0.08 * i) + 's cubic-out stair-in'">
+				<div class="fill"></div>
+				<div class="n">{{ s.num }}</div>
+				<div class="lbl"><div class="t">{{ s.name }}</div><div class="note">{{ s.note }}</div></div>
+				<div class="right">{{ s.right }}</div>
+			</div>
+		</div>
+		<!-- the lift's floor dial: a floor a step, the hand on the one in work -->
+		<div class="dial">
+			<div class="half">
+				<img class="plate" src="gen:pill?w=1040&amp;h=1040&amp;f=2c1208&amp;c=f5c04a&amp;l=10"/>
+				<img class="arc1" src="gen:pill?w=920&amp;h=920&amp;c=f5c04a&amp;l=7"/>
+				<img class="arc2" src="gen:pill?w=640&amp;h=640&amp;c=f5c04a&amp;l=4"/>
+				<div class="spoke" style="transform: rotate(-36deg) translateX(160dp);"></div>
+				<div class="spoke" style="transform: rotate(-72deg) translateX(160dp);"></div>
+				<div class="spoke" style="transform: rotate(-108deg) translateX(160dp);"></div>
+				<div class="spoke" style="transform: rotate(-144deg) translateX(160dp);"></div>
+				<div data-for="s, i : steps" class="floor" data-attr-id="'floor' + i" data-class-on="s.state == 'run' || s.state == 'fail'" data-class-done="s.state == 'done'">{{ s.num }}</div>
+				<div data-for="s, i : steps" class="hand" data-class-on="s.state == 'run' || s.state == 'fail'" data-style-transform="'rotate(' + (36 * i - 72) + 'deg)'"></div>
+			</div>
+			<div class="base"></div>
+			<img class="hub" src="gen:pill?w=80&amp;h=80&amp;f=f5c04a&amp;c=2c1208&amp;l=6"/>
+		</div>
+		<div class="readout">
+			<div class="pct">{{ percent }}%</div>
+			<div class="aside">{{ build_aside }}</div>
+		</div>
+		<div class="actions">
+			<div class="btn autofocus" data-if="building" data-event-click="stop_build()"><div class="fill"></div><span>Stop</span></div>
+			<div class="btn primary autofocus" data-if="(!building || converting) &amp;&amp; built &amp;&amp; !stale" data-event-click="play()"><div class="fill"></div><span>Play</span></div>
+			<div class="btn autofocus" data-if="!building" data-event-click="start_build()"><div class="fill"></div><span>{{ built ? 'Rebuild' : 'Build' }}</span></div>
+			<div class="btn" data-event-click="toggle_log()"><div class="fill"></div><span>{{ show_log ? 'Hide log' : 'Show log' }}</span></div>
+		</div>
+		<div class="logbox" data-if="show_log || build_error != ''">	<!-- an error stays on show; Hide log hides only the lines -->
+			<div class="error" data-if="build_error != ''">{{ build_error }}</div>
+			<div data-if="show_log"><div data-for="l : log">{{ l }}</div></div>
+		</div>
+		<div class="dlg">
+			<div class="fill"></div><div class="who">Elevator</div>
+			<div class="say"><div>{{ build_line }}</div></div>
+		</div>
+	</div>
+	<div class="foot">
+		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
+	</div>
+</div>
+
+<!-- ======================================================================= mods -->
+<div class="screen crt red" data-if="screen == 'mods'" data-class-leaving="leaving">
+	<div class="bg"><div class="ground"></div></div>
+	<div class="stage">
+		<div class="tabs left">
+			<div class="tab on"><div>Mods</div></div>
+			<div class="tab home" data-event-click="go('title')"><div>{{ app_name }}</div></div>
+		</div>
+		<div class="head">Your mods</div>
+		<div class="para">
+			<p>Each mod sits in its own folder in the mods folder: code patches (<em>.pchtxt</em>, <em>.ips</em>) or a <em>romfs</em> folder.</p>
+			<p>Data mods apply at the next start. Code mods rebuild from the mods step.</p>
+		</div>
+		<div class="actions">
+			<div class="btn primary" id="mods_apply" data-if="mods_rebuild" data-event-click="start_build()"><div class="fill"></div><span>Apply and rebuild</span></div>
+			<div class="btn" id="mods_open" data-class-autofocus="mods.size == 0" data-event-click="open_mods()"><div class="fill"></div><span>Open mods folder</span></div>
+		</div>
+		<div class="col">
+			<div class="rows">
+				<div data-for="m, i : mods" class="row">
+					<div class="switch autofocus" data-attr-id="'mod' + i" data-class-on="m.on" data-event-click="toggle_mod(i)"><div class="knob"></div></div>
+					<div class="what"><div class="name">{{ m.name }}</div><div class="note">{{ m.note }}</div></div>
+					<div class="tag">{{ m.kind }}</div>
+				</div>
+			</div>
+			<div class="empty" data-if="mods.size == 0">No mods yet. Put each one in its own folder in the mods folder: code patches (.pchtxt, .ips) or a romfs folder.</div>
+			<div class="error" data-if="mods_error != ''">{{ mods_error }}</div>
+		</div>
+		<div class="line l2">{{ mods_summary }}</div>
+	</div>
+	<div class="foot">
+		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>Turn on or off</span></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
+	</div>
+</div>
+
+<!-- ======================================================================= settings -->
+<div class="screen crt green" data-if="screen == 'settings'" data-class-leaving="leaving">
+	<div class="bg"><div class="ground"></div></div>
+	<div class="stage">
+		<div class="tabs">
+			<img class="gl" data-attr-src="glyph_tab_l" data-event-click="tab(tab - 1)"/>
+			<div class="tab" data-class-on="tab == 0" data-event-click="tab(0)"><div>Display</div></div>
+			<div class="tab" data-class-on="tab == 1" data-event-click="tab(1)"><div>Graphics</div></div>
+			<div class="tab" data-class-on="tab == 2" data-event-click="tab(2)"><div>Controls</div></div>
+			<img class="gl" data-attr-src="glyph_tab_r" data-event-click="tab(tab + 1)"/>
+		</div>
+		<div class="slist">
+			<div data-for="s, i : settings" class="srow setting autofocus" data-attr-index="s.index" data-style-nav-up="i == 0 ? 'none' : 'vertical'" data-style-animation="leaving ? '0.22s cubic-in stair-out-r' : (0.3 + 0.06 * i) + 's cubic-out stair-in-r' + tab">
+				<div class="fill"></div>
+				<div class="k"><div>{{ s.name }}</div><div class="note">{{ s.note }}</div></div>
+				<span class="v"><span class="arrow" data-event-click="setting(s.index, -1)">‹</span><span class="value" data-style-animation="s.bump">{{ s.value }}</span><span class="arrow" data-event-click="setting(s.index, 1)">›</span></span>
+			</div>
+			<div class="srow tex" data-if="tab == 1 &amp;&amp; tex_note != ''">
+				<div class="fill"></div>
+				<div class="k"><div>Converted textures</div><div class="note">{{ tex_action != '' ? 'Not made yet' : tex_switch == 'Turn on' ? 'Off, kept on disk' : tex_remove ? 'In use' : 'Not available' }}</div></div>
+				<span class="v">
+					<div class="btn side" data-if="tex_switch != ''" data-event-click="switch_textures()"><div class="fill"></div><span>{{ tex_switch }}</span></div>
+					<div class="btn side" data-if="tex_action != ''" data-event-click="convert_textures()"><div class="fill"></div><span>{{ tex_action }}</span></div>
+					<div class="btn side" data-if="tex_remove" data-event-click="remove_textures()"><div class="fill"></div><span>Remove</span></div>
+				</span>
+			</div>
+			<div class="srow tex" data-if="tab == 0">
+				<div class="fill"></div>
+				<div class="k"><div>Desktop shortcut</div><div class="note">{{ shortcut_note }}</div></div>
+				<span class="v"><div class="btn side" data-event-click="create_shortcut()"><div class="fill"></div><span>CREATE</span></div></span>
+			</div>
+		</div>
+		<div class="line l0" data-if="tab == 1">{{ tex_note }}</div>
+		<div class="line l1">{{ tab == 0 ? 'The window, the display and the frame rate.' : tab == 1 ? 'What the game draws and how sharply.' : 'Prompts and menu buttons.' }} Changes are saved as you make them.</div>
+		<div class="line l2">The game's PC Settings panel (F1, or Start + Select) has these settings too, and more.</div>
+	</div>
+	<div class="foot">
+		<div class="hint"><img class="gl" data-attr-src="glyph_tab_l"/><img class="gl" data-attr-src="glyph_tab_r"/><span>Section</span></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_change"/><span>Change</span></div>
+		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
+	</div>
+</div>
+
+</body>
+</rml>
