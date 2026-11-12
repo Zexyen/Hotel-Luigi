@@ -231,7 +231,7 @@ static int tess_stage(const Mx *e) { return e->in->stage == MX_TESS_CONTROL || e
 /* vx: the vertex of a tessellation stage's input arrays (ALD's vertex register), NULL elsewhere */
 static const char *attr_in(Mx *e, unsigned a, const char *vx) {
     unsigned c = (a >> 2) & 3, st = (unsigned)e->in->stage;
-    const char *ix = tess_stage(e) ? S(e, "[%s]", vx ? vx : "0u") : "";
+    const char *ix = tess_stage(e) || st == MX_GEOMETRY ? S(e, "[%s]", vx ? vx : "0u") : "";
     if (a >= 0x80 && a < 0x280) {
         unsigned n = (a - 0x80) >> 4;
         e->in_attr |= 1u << n;
@@ -243,6 +243,11 @@ static const char *attr_in(Mx *e, unsigned a, const char *vx) {
         if (a >= 0x70 && a < 0x80) return S(e, "U(gl_in%s.gl_Position[%u])", ix, c);
         if (a == 0x60) return "uint(gl_PrimitiveID)";
         if (st == MX_TESS_EVAL && (a == 0x2f0 || a == 0x2f4)) return S(e, "U(gl_TessCoord[%u])", (a - 0x2f0) >> 2);
+    }
+    if (st == MX_GEOMETRY) {                         /* the input primitive's vertices (ALD's vertex register) */
+        if (a >= 0x70 && a < 0x80) return S(e, "U(gl_in%s.gl_Position[%u])", ix, c);
+        if (a == 0x6c) return S(e, "U(gl_in%s.gl_PointSize)", ix);
+        if (a == 0x60) return "uint(gl_PrimitiveIDIn)";
     }
     if (st == MX_FRAGMENT) {
         if (a >= 0x70 && a < 0x80 && c < 2 && e->in->screen_scale && e->in->target == 1) { e->uses_fcs = 1; return S(e, c ? "U(gl_FragCoord[1] * mx_fcs_y)" : "U(gl_FragCoord[0] * mx_fcs)"); }      /* track O: the game's pixel position */
@@ -284,7 +289,11 @@ static void attr_out(Mx *e, unsigned a, const char *v) {
         else fail(e, "attribute store", "tessellation control store to attribute 0x%x", a);
         return;
     }
-    if (st != MX_VERTEX && st != MX_TESS_EVAL) { fail(e, "attribute store", "attribute store in stage %d", e->in->stage); return; }
+    if (st == MX_GEOMETRY) {                         /* the vertex being built: OUT emits it */
+        if (a == 0x6c) { emit(e, " gl_PointSize = F(%s);", v); return; }
+        if (a == 0x60) { emit(e, " gl_PrimitiveID = int(%s);", v); return; }
+    }
+    if (st != MX_VERTEX && st != MX_TESS_EVAL && st != MX_GEOMETRY) { fail(e, "attribute store", "attribute store in stage %d", e->in->stage); return; }
     if (a >= 0x70 && a < 0x80) emit(e, " gl_Position[%u] = F(%s);", c, v);
     else if (a >= 0x80 && a < 0x280) { e->out_attr |= 1u << ((a - 0x80) >> 4); emit(e, " out_attr%u[%u] = F(%s);", (a - 0x80) >> 4, c, v); }
     else if (a == 0x6c && st == MX_TESS_EVAL) emit(e, " /* point size 0x6c ignored (no point mode) */");
@@ -1336,7 +1345,12 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
     case MXOP_ALD: {
         unsigned a = MXB(i, 20, 10), n = MXB(i, 47, 2) + 1, rd = MXB(i, 0, 8);
         if (MXB(i, 8, 8) != 255) { fail(e, "ALD.indexed", "indexed attribute load"); break; }
-        if (e->in->stage == MX_GEOMETRY) { fail(e, "ALD (vertex array)", "attribute load in stage %d", e->in->stage); break; }
+        if (e->in->stage == MX_GEOMETRY) {       /* the vertex of the input primitive in bits 39..46, as the tessellation stages' */
+            const char *vx = X(e, MXB(i, 39, 8));
+            if (MXB(i, 31, 1) || MXB(i, 32, 1)) { fail(e, "ALD.P/.O", "patch or output attribute load in a geometry stage"); break; }
+            for (unsigned k = 0; k < n && !e->fail; k++) { const char *v = attr_in(e, a + k * 4, vx); if (rd != 255 && !e->fail) emit(e, " %s = %s;", D(e, rd + k), v); }
+            break;
+        }
         if (tess_stage(e)) {                     /* [witchtime] as suyu: vertex register bits 39..46; .P (31) a patch attribute, .O (32) the
                                                   * control stage's own outputs */
             const char *vx = X(e, MXB(i, 39, 8));
@@ -1566,6 +1580,12 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
     case MXOP_TLD: op_tld(e, i); break;
     case MXOP_TLDS: op_tlds(e, i); break;
     case MXOP_TLD4: op_tld4(e, i); break;
+    case MXOP_OUT_reg: case MXOP_OUT_imm: case MXOP_OUT_cbuf:      /* suyu output_geometry.cpp: bit 39 emits the vertex, bit 40 ends the strip; the result register reads 0 */
+        if (e->in->stage != MX_GEOMETRY) { fail(e, "OUT", "OUT outside a geometry stage"); break; }
+        if (MXB(i, 39, 1)) emit(e, " EmitVertex();");
+        if (MXB(i, 40, 1)) emit(e, " EndPrimitive();");
+        if (MXB(i, 0, 8) != 255) emit(e, " %s = 0u;", DST);
+        break;
     case MXOP_TEX_b: op_bindless(e, pc, i, 0); break;
     case MXOP_TLD4_b: op_bindless(e, pc, i, 1); break;
     case MXOP_TLD4S: op_tld4s(e, i); break;
@@ -1867,7 +1887,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
         static const unsigned hw[6] = {0, 4, 3, 1, 2, 0};          /* hardware stage order: vertex, tess control, tess eval, geometry, fragment */
         e->ssbo_word0 = in->stage == MX_COMPUTE ? 0x310 / 4 : (0x110 + 0x100 * hw[in->stage]) / 4;
     }
-    if (in->stage == MX_GEOMETRY) fail(e, "geometry stage", "stage %d is not supported", in->stage);
+    if (in->stage == MX_GEOMETRY && (in->target != 1 || in->gs_prim > 2)) fail(e, "geometry stage", "geometry stage for target %d, input primitive %u", in->target, in->gs_prim);
     if (in->stage == MX_TESS_EVAL && !(in->tess_prim == 4 || in->tess_prim == 7 || in->tess_prim == 0x8e7a)) fail(e, "tessellation mode", "primitive mode 0x%x", in->tess_prim);
 
     /* the code that ends the shader (EXIT): fragment outputs from the registers, alpha test, depth */
@@ -1941,7 +1961,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
         Mx h;
         memset(&h, 0, sizeof h);
         h.in = in;
-        if (in->stage == MX_VERTEX || tess_stage(e)) e->out_attr |= in->force_out;      /* declared and set to (0, 0, 0, 1) below */
+        if (in->stage == MX_VERTEX || tess_stage(e) || in->stage == MX_GEOMETRY) e->out_attr |= in->force_out;      /* declared and set to (0, 0, 0, 1) below */
         const int vk = in->target == 1;
         const char *set0 = vk ? "set = 0, " : "", *set1 = vk ? "set = 1, " : "";
         /* [witchtime] SignedZeroInfNanPreserve: without it AMD's Windows driver may assume no NaN / Inf and fold away the isnan and
@@ -1951,7 +1971,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
         else
         emit(&h, "#version 460 compatibility\n#extension GL_ARB_bindless_texture : require\n#extension GL_NV_gpu_shader5 : enable\n#extension GL_ARB_gpu_shader_int64 : enable\n"
                  "#extension GL_ARB_shader_ballot : enable\n#extension GL_ARB_shader_group_vote : enable\n#extension GL_EXT_texture_shadow_lod : enable\n");
-        if (e->uses_layer_out || e->uses_vp_out) emit(&h, "#extension GL_ARB_shader_viewport_layer_array : require\n");
+        if ((e->uses_layer_out || e->uses_vp_out) && in->stage != MX_GEOMETRY) emit(&h, "#extension GL_ARB_shader_viewport_layer_array : require\n");
         if (vk && e->uses_sg) emit(&h, "#extension GL_KHR_shader_subgroup_basic : require\n#extension GL_KHR_shader_subgroup_ballot : require\n#extension GL_KHR_shader_subgroup_shuffle : require\n");
         if (vk && e->uses_quad) emit(&h, "#extension GL_KHR_shader_subgroup_basic : require\n#extension GL_KHR_shader_subgroup_vote : require\n#extension GL_KHR_shader_subgroup_arithmetic : require\n");
         emit(&h, "%s", k_prelude);
@@ -1984,6 +2004,22 @@ int mx_translate(const MxIn *in, MxOut *out) {
             else emit(&h, "in gl_PerVertex { vec4 gl_Position; } gl_in[gl_MaxPatchVertices];\n");
             for (unsigned n = 0; n < 32; n++) if (e->in_attr >> n & 1) emit(&h, "layout(location = %u) in vec4 in_attr%u[];\n", n, n);
             if (in->stage == MX_TESS_CONTROL) for (unsigned n = 0; n < 32; n++) if (e->out_attr >> n & 1) emit(&h, "layout(location = %u) out vec4 out_attr%u[];\n", n, n);
+        }
+        if (in->stage == MX_GEOMETRY) {
+            /* Program header (suyu ProgramHeader): byte 0x0b threads per input primitive (invocations), word 3 bits 24..27 the
+             * output topology (1 points, 6 line strip, 7 triangle strip), word 4 bits 0..11 the most vertices it emits. The
+             * input primitive is the draw's (MxIn.gs_prim).
+             * shortcut: the built-in input block is {gl_Position, gl_PointSize}, what a vertex stage here writes; one that also
+             * writes clip distances does not match. Outputs keep their values across EmitVertex on the console; GLSL leaves
+             * them undefined, so a stage that emits twice without storing again would show it. */
+            uint32_t w3, w4;
+            memcpy(&w3, in->code + 12, 4); memcpy(&w4, in->code + 16, 4);
+            unsigned topo = (w3 >> 24) & 15, maxv = w4 & 0xfff, inv = in->code[0x0b];
+            emit(&h, "layout(%s%s%s) in;\n", in->gs_prim == 0 ? "points" : in->gs_prim == 1 ? "lines" : "triangles", inv > 1 ? S(e, ", invocations = %u", inv) : "", "");
+            emit(&h, "layout(%s, max_vertices = %u) out;\n", topo == 1 ? "points" : topo == 6 ? "line_strip" : "triangle_strip", maxv ? maxv : 1u);
+            emit(&h, "in gl_PerVertex { vec4 gl_Position; float gl_PointSize; } gl_in[];\nout gl_PerVertex { vec4 gl_Position; float gl_PointSize; };\n");
+            for (unsigned n = 0; n < 32; n++) if (e->in_attr >> n & 1) emit(&h, "layout(location = %u) in vec4 in_attr%u[];\n", n, n);
+            for (unsigned n = 0; n < 32; n++) if (e->out_attr >> n & 1) emit(&h, "layout(location = %u) out vec4 out_attr%u;\n", n, n);
         }
         if (in->stage == MX_VERTEX || in->stage == MX_TESS_EVAL) {
             int nclip = 0;
@@ -2062,6 +2098,10 @@ int mx_translate(const MxIn *in, MxOut *out) {
         }
         emit(&h, "void main() {\n");
         if (in->stage == MX_TESS_CONTROL) for (unsigned n = 0; n < 32; n++) if (e->out_attr >> n & 1) emit(&h, " out_attr%u[gl_InvocationID] = vec4(0.0, 0.0, 0.0, 1.0);\n", n);
+        if (in->stage == MX_GEOMETRY) {
+            emit(&h, " gl_Position = vec4(0.0, 0.0, 0.0, 1.0); gl_PointSize = 1.0;\n");
+            for (unsigned n = 0; n < 32; n++) if (e->out_attr >> n & 1) emit(&h, " out_attr%u = vec4(0.0, 0.0, 0.0, 1.0);\n", n);
+        }
         if (in->stage == MX_VERTEX || in->stage == MX_TESS_EVAL) {
             emit(&h, " gl_Position = vec4(0.0, 0.0, 0.0, 1.0);\n");
             if (vk && in->stage == MX_VERTEX) emit(&h, " gl_PointSize = mx_point_size;\n");

@@ -1717,7 +1717,7 @@ static VStage *vstage_get(Prog *p, int s, const uint32_t *key, uint32_t fo) {
     VStage *v = st->vk;
     if (!st->code) return NULL;
     uint32_t dep_a = v && s == 0 ? v->dep : 0;
-    if (v && ((key[0] ^ v->key[0]) & dep_a) == 0 && ((key[1] ^ v->key[1]) & dep_a) == 0 && ((key[2] ^ v->key[2]) & v->tex_units) == 0 && ((key[3] ^ v->key[3]) & v->tex_units) == 0 && v->fo == fo) return v->ok ? v : NULL;
+    if (v && ((key[0] ^ v->key[0]) & dep_a) == 0 && ((key[1] ^ v->key[1]) & dep_a) == 0 && ((key[2] ^ v->key[2]) & v->tex_units) == 0 && ((key[3] ^ v->key[3]) & v->tex_units) == 0 && v->fo == fo && (s != 2 || key[1] == v->key[1])) return v->ok ? v : NULL;      /* a geometry stage: key[1] is its input primitive */
     const uint8_t *cdata = st->ctl[3] && st->ctl[4] ? st->code - (s == 5 ? 0 : 0x30) + st->ctl[4] : NULL;       /* a compute stage has no program header */
     uint64_t h = fnv(0xcbf29ce484222325ULL ^ (uint64_t)s, st->code, (size_t)st->code_len);
     if (s == 5) { h = fnv(h, st->local, sizeof st->local); h = fnv(h, &st->smem_bytes, 4); h = fnv(h, &st->lmem_bytes, 4); }
@@ -1736,6 +1736,7 @@ static VStage *vstage_get(Prog *p, int s, const uint32_t *key, uint32_t fo) {
     memset(&in, 0, sizeof in); memset(&out, 0, sizeof out);
     in.stage = s; in.code = st->code; in.code_len = st->code_len; in.cdata = cdata; in.cdata_size = cdata ? st->ctl[3] : 0;
     in.int_attrs = key[0]; in.sint_attrs = key[1]; in.int_tex = key[2]; in.sint_tex = key[3]; in.force_out = fo;
+    if (s == 2) in.gs_prim = key[1];
     in.target = 1; in.binding_base = 40u * (unsigned)s; in.ssbo_base = 40u * (unsigned)s + 20; in.tex_base = 40u * (unsigned)s; in.image_base = 40u * (unsigned)s + 32; in.wmask_binding = 40u * (unsigned)s + 38;
     if (s == 5) {                                  /* compute has a layout of its own (design, section 4): the bindings of stage 0 */
         in.binding_base = 0; in.ssbo_base = 20; in.tex_base = 0; in.image_base = 32; in.wmask_binding = 38; in.track_writes = 1;
@@ -1745,7 +1746,7 @@ static VStage *vstage_get(Prog *p, int s, const uint32_t *key, uint32_t fo) {
     v->h = h; v->stage = s; v->code_len = st->code_len; memcpy(v->key, key, 16); v->fo = fo; v->id = ++g_vstage_ids;
     v->next = g_vstage[h & 4095]; g_vstage[h & 4095] = v;
     st->vk = v;
-    snprintf(what, sizeof what, "program #%d %s stage", p->serial, s == 5 ? "compute" : s ? "fragment" : "vertex");
+    snprintf(what, sizeof what, "program #%d %s stage", p->serial, s == 5 ? "compute" : s == 2 ? "geometry" : s == 3 ? "tess control" : s == 4 ? "tess evaluation" : s ? "fragment" : "vertex");
     if (!mx_translate(&in, &out)) { printf("nvn_vk: %s: machine code not translated: %s\n", what, out.why); fflush(stdout); return NULL; }
     uint64_t spv_hash = 0;
     glsl_dump(p->serial, s, 0, out.glsl);                 /* [Recomps#1] TEST ONLY: WT_VK_GLSLDUMP */
@@ -3710,10 +3711,6 @@ static int draw_prepare(unsigned prim) {
     int tess_mark = tess && g_tess_alt == 2 && (nvn_front_frame_next() & 1);
     if (tess && g_tess_alt == 1 && (nvn_front_frame_next() & 1)) return 0;
     if (!R.prog[0]) { if (drawlog_on()) printf("DLS f%lld skipped: no vertex program (fragment #%d)\n", nvn_front_frame_next(), R.prog[1] ? R.prog[1]->serial : -1); return 0; }      /* [witchtime] TEST ONLY log */
-    /* shortcut: draws with a geometry stage (Luigi's Mansion 3 has them from the first scene on) are left out, counted as
-     * skipped: neither the translator (mx_translate.c) nor the pipelines here know the stage. Whatever they draw is missing
-     * until that is written; the game goes on. */
-    if (R.prog[2]) { static int said; if (!said++) printf("nvn_vk: NOT IMPLEMENTED: draws with a geometry stage are left out (first: frame %lld, geometry program #%d)\n", nvn_front_frame_next(), R.prog[2]->serial); return 0; }
     uint32_t ints = 0, sints = 0;
     for (int i = 0; i < 16 && i < R.nattr; i++) {
         int nf = (int)(R.vattr[i] & 0xff), k = nf >= 0x6D ? nf - 0x6D : (nf - 1) % 12;
@@ -3743,7 +3740,16 @@ static int draw_prepare(unsigned prim) {
         tcs = vstage_get(R.prog[3], 3, key3, c3 ? c3->fo : 0);
         if (tcs && tes) { uint32_t need = tes->in_attr & ~(tcs->out_attr & ~tcs->fo); if (need != tcs->fo) tcs = vstage_get(R.prog[3], 3, key3, need); }
     }
-    VStage *vnext = tess ? tcs : fs;               /* what reads the vertex stage's outputs */
+    VStage *gs = NULL;                             /* a geometry stage (Luigi's Mansion 3): between the vertex and the fragment stage */
+    if (R.prog[2]) {
+        if (tess) { nvn_vk_missing("a draw with tessellation and a geometry stage"); return 0; }
+        uint32_t key2[4] = {0, tclass[prim], R.tex_int[2], R.tex_sint[2]};
+        VStage *c2 = R.prog[2]->st[2].vk;
+        gs = vstage_get(R.prog[2], 2, key2, c2 && c2->key[1] == key2[1] ? c2->fo : 0);
+        if (gs) { uint32_t need = fs ? fs->in_attr & ~(gs->out_attr & ~gs->fo) : 0; if (need != gs->fo) gs = vstage_get(R.prog[2], 2, key2, need); }
+        if (!gs) { static int said; if (!said++) printf("nvn_vk: draws whose geometry stage could not be translated or compiled are left out (first: frame %lld, geometry program #%d)\n", nvn_front_frame_next(), R.prog[2]->serial); return 0; }
+    }
+    VStage *vnext = tess ? tcs : gs ? gs : fs;     /* what reads the vertex stage's outputs */
     if (vs) { uint32_t need = vnext ? vnext->in_attr & ~(vs->out_attr & ~vs->fo) : 0; if (need != vs->fo) vs = vstage_get(R.prog[0], 0, key0, need); }
     if (g_skip_flag) { g_skip_flag = 0; if (!vs || (!depth_only && !fs) || (tess && (!tcs || !tes))) return 0; }      /* shader_wait = skip: the draw is left out (counted in vstage_get) */
     if (!vs || (!depth_only && !fs) || (tess && (!tcs || !tes))) { nvn_vk_missing("a draw whose vertex, fragment or tessellation stage could not be translated or compiled (the log names the stage)"); return 0; }
@@ -3751,6 +3757,7 @@ static int draw_prepare(unsigned prim) {
     sv[nsv] = vs; sx[nsv++] = 0;
     if (fs) { sv[nsv] = fs; sx[nsv++] = 1; }
     if (tess) { sv[nsv] = tcs; sx[nsv++] = 3; sv[nsv] = tes; sx[nsv++] = 4; }
+    if (gs) { sv[nsv] = gs; sx[nsv++] = 2; }
 
     PT(0);
     if (g_hdr_var && R.ncol && R.prog[1] && stage_fx(&R.prog[1]->st[1]) == FX_GRAIN && R.col[0].tex &&
@@ -3839,7 +3846,7 @@ static int draw_prepare(unsigned prim) {
     if (!D.dyn_a2c) k.a2c = R.ms[1] != 0;          /* [issue 50] */
     if (!D.has_vids) { uint32_t n = vlay_number(vbd, vnb, vad, vna); pkey_vlay_set(&k, n); vs->vlay = n; }      /* finding 116 */
     pkey_targets(&k);
-    Pipe *p = tess ? tess_pipe_get(&k, vs, tcs, tes, fs, R.patch) : pipe_get(&k, vs, fs);
+    Pipe *p = tess ? tess_pipe_get(&k, vs, tcs, tes, fs, R.patch) : gs ? gs_pipe_get(&k, vs, gs, fs) : pipe_get(&k, vs, fs);
     if (!p) return 0;                              /* shader_wait = skip: the pipeline is being made by a worker, the draw is left out (counted in pipe_get) */
     if (!p->p) { g_fail_draws++; return 0; }       /* finding 120: the driver refused this pipeline: the draw is left out */
     if (tess) {                                    /* [witchtime] tessellated draws: counted; each pipeline named at its first use */
@@ -3895,7 +3902,7 @@ static int draw_prepare(unsigned prim) {
         int nw = 0, ib = 0, it = 0;
         if (!p->push0 && p->nb[0]) sets[0] = set_alloc(p->dl[0]);
         PT(11);
-        VkDescriptorUpdateTemplate ut = sets[0] && !tess ? set0_template(p->dl[0], vs, fs) : VK_NULL_HANDLE;      /* finding 145: then only bi[] is filled */
+        VkDescriptorUpdateTemplate ut = sets[0] && !tess && !gs ? set0_template(p->dl[0], vs, fs) : VK_NULL_HANDLE;      /* finding 145: then only bi[] is filled */
         /* [Recomps#1] finding 93: each write is filled whole below (no memset of all 194 entries of the universal layout, 12 KB per draw) */
         for (int j = 0; j < nsv; j++) {
             int s = sx[j];

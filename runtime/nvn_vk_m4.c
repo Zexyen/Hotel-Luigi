@@ -379,13 +379,14 @@ static void vstage_build(VStage *v, const SSrc *src) {
         memset(&in, 0, sizeof in); memset(&out, 0, sizeof out);
         in.stage = s; in.code = src->code; in.code_len = src->code_len; in.cdata = src->cdata; in.cdata_size = src->cdata ? src->cdata_size : 0;
         in.int_attrs = v->key[0]; in.sint_attrs = v->key[1]; in.int_tex = v->key[2]; in.sint_tex = v->key[3]; in.force_out = v->fo;
+        if (s == 2) in.gs_prim = v->key[1];
         in.target = 1; in.binding_base = 40u * (unsigned)s; in.ssbo_base = 40u * (unsigned)s + 20; in.tex_base = 40u * (unsigned)s; in.image_base = 40u * (unsigned)s + 32; in.wmask_binding = 40u * (unsigned)s + 38;
         if (s == 5) {                              /* compute has a layout of its own (design, section 4): the bindings of stage 0 */
             in.binding_base = 0; in.ssbo_base = 20; in.tex_base = 0; in.image_base = 32; in.wmask_binding = 38; in.track_writes = 1;
             memcpy(in.local_size, src->local, sizeof in.local_size); in.smem_bytes = src->smem; in.lmem_bytes = src->lmem;
         }
         if (s == 4) { in.tess_prim = src->tess[0]; in.tess_spacing = src->tess[1]; in.tess_point = src->tess[2]; in.tess_order = src->tess[3]; }
-        snprintf(what, sizeof what, "program #%d %s stage", src->serial, s == 5 ? "compute" : s == 3 ? "tess control" : s == 4 ? "tess evaluation" : s ? "fragment" : "vertex");
+        snprintf(what, sizeof what, "program #%d %s stage", src->serial, s == 5 ? "compute" : s == 3 ? "tess control" : s == 4 ? "tess evaluation" : s == 2 ? "geometry" : s ? "fragment" : "vertex");
         in.screen_scale = src->rs;
         if (s != 5) in.loopdebug = vk_loopdebug();
         if (!mx_translate(&in, &out)) {
@@ -513,7 +514,7 @@ static VStage *vstage_get(Prog *p, int s, const uint32_t *key, uint32_t fo) {
 
 /* ---------------------------------------------------------------- pipelines */
 typedef struct { uint32_t vs, fs, chanmask, sample_mask; int32_t cfmt[8], dfmt; uint8_t topo_class, ncolor, samples, poly, a2c, dclamp, logic, sshade, blend_on, pad[3]; uint8_t blend[8][8]; } PKey;
-typedef struct Pipe { PKey k; VkPipeline p, p_fast; /* p_fast: the pipeline linked at once, after the optimised one took its place */ VkPipelineLayout layout; VkDescriptorSetLayout dl[2]; int nb[2], push0; VStage *vs, *fs; volatile LONG state; uint8_t recorded, predicted, used, libbed, lib_how; struct Pipe *next; VStage *tcs, *tes; uint32_t patch; } Pipe;      /* tcs, tes, patch: [witchtime] a tessellated pipeline (tess_pipe_get), never in g_pipes / pipes.bin */      /* libbed: linked from libraries (layout and set layouts belong to the pair library); lib_how: 0 the pair library was there, 1 compiled by this build, 2 waited for */      /* state: 0 queued for a worker, 1 being made, 2 made */
+typedef struct Pipe { PKey k; VkPipeline p, p_fast; /* p_fast: the pipeline linked at once, after the optimised one took its place */ VkPipelineLayout layout; VkDescriptorSetLayout dl[2]; int nb[2], push0; VStage *vs, *fs; volatile LONG state; uint8_t recorded, predicted, used, libbed, lib_how; struct Pipe *next; VStage *tcs, *tes; uint32_t patch; VStage *gs; /* gs: a pipeline with a geometry stage (ext_pipe_get), as the tessellated ones */ } Pipe;      /* tcs, tes, patch: [witchtime] a tessellated pipeline (tess_pipe_get), never in g_pipes / pipes.bin */      /* libbed: linked from libraries (layout and set layouts belong to the pair library); lib_how: 0 the pair library was there, 1 compiled by this build, 2 waited for */      /* state: 0 queued for a worker, 1 being made, 2 made */
 static Pipe *g_pipes[1024];
 static void pkey_targets(PKey *k);
 static int pkey_targets_of(PKey *k, int ncol, const TargetRef *col, const TargetRef *depth);
@@ -624,7 +625,7 @@ static VkBlendFactor blend_factor(unsigned f) {
 }
 static VkBlendOp blend_op(unsigned e) { static const uint8_t m[6] = {VK_BLEND_OP_ADD, VK_BLEND_OP_ADD, VK_BLEND_OP_SUBTRACT, VK_BLEND_OP_REVERSE_SUBTRACT, VK_BLEND_OP_MIN, VK_BLEND_OP_MAX}; return (VkBlendOp)m[e < 6 ? e : 1]; }
 static void layout_bindings(VStage *v, int s, VkDescriptorSetLayoutBinding *b0, int *n0, VkDescriptorSetLayoutBinding *b1, int *n1) {
-    VkFlags sf = s == 3 ? VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT : s == 4 ? VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT : s ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
+    VkFlags sf = s == 2 ? VK_SHADER_STAGE_GEOMETRY_BIT : s == 3 ? VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT : s == 4 ? VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT : s ? VK_SHADER_STAGE_FRAGMENT_BIT : VK_SHADER_STAGE_VERTEX_BIT;
     for (unsigned n = 1; n < 18; n++) if (v->cbufs >> n & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + n, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[(*n0)++] = b; }
     for (unsigned k = 0; k < 16; k++) if (v->ssbos >> k & 1) { VkDescriptorSetLayoutBinding b = {40u * (unsigned)s + 20 + k, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, sf, NULL}; b0[(*n0)++] = b; }
     for (int i = 0; i < v->nsmp; i++) { VkDescriptorSetLayoutBinding b = {v->smp[i].binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, sf, NULL}; b1[(*n1)++] = b; }
@@ -1008,7 +1009,7 @@ static double pipe_build(Pipe *p) {
     const PKey *k = &p->k;
     VStage *vs = p->vs, *fs = p->fs;
     LONG64 t0 = tk();
-    if (!p->tcs && D.has_gpl && gpl_sep() && !k->sshade && stage_fits_universal(vs) && (!fs || stage_fits_universal(fs))) {      /* session 9, WT_VK_GPL=2: linked from one library per stage */
+    if (!p->tcs && !p->gs && D.has_gpl && gpl_sep() && !k->sshade && stage_fits_universal(vs) && (!fs || stage_fits_universal(fs))) {      /* session 9, WT_VK_GPL=2: linked from one library per stage */
         int how, how2 = 0, n = 0;
         VkPipeline libs[4];
         libs[n++] = gpl_vilib(k->topo_class < 3 ? k->topo_class : 2);
@@ -1040,7 +1041,7 @@ static double pipe_build(Pipe *p) {
         LeaveCriticalSection(&g_sh_lock);
         { LARGE_INTEGER fq; QueryPerformanceFrequency(&fq); return (double)(tk() - t0) * 1000.0 / (double)fq.QuadPart; }
     }
-    if (!p->tcs && D.has_gpl) {                    /* session 9: linked from libraries */
+    if (!p->tcs && !p->gs && D.has_gpl) {          /* session 9: linked from libraries */
         int how;
         PairLib *l = pairlib_ensure(vs, fs, k->samples, k->sshade, &how);
         if (!l->lib) goto whole;                   /* finding 120: a pair library the driver refused */
@@ -1069,6 +1070,7 @@ whole:;
     layout_bindings(vs, 0, b0, &p->nb[0], b1, &p->nb[1]);
     if (fs) layout_bindings(fs, 1, b0, &p->nb[0], b1, &p->nb[1]);
     if (p->tcs) { layout_bindings(p->tcs, 3, b0, &p->nb[0], b1, &p->nb[1]); layout_bindings(p->tes, 4, b0, &p->nb[0], b1, &p->nb[1]); }
+    if (p->gs) layout_bindings(p->gs, 2, b0, &p->nb[0], b1, &p->nb[1]);
     for (int i = 0; i < 2; i++) {
         VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         li.bindingCount = (uint32_t)p->nb[i]; li.pBindings = i ? b1 : b0;
@@ -1086,6 +1088,7 @@ whole:;
     for (int i = 0; i < 4; i++) { st[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; st[i].pName = "main"; }
     st[nst].stage = VK_SHADER_STAGE_VERTEX_BIT; st[nst++].module = vs->mod;
     if (p->tcs) { st[nst].stage = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT; st[nst++].module = p->tcs->mod; st[nst].stage = VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT; st[nst++].module = p->tes->mod; }
+    if (p->gs) { st[nst].stage = VK_SHADER_STAGE_GEOMETRY_BIT; st[nst++].module = p->gs->mod; }
     if (fs) { st[nst].stage = VK_SHADER_STAGE_FRAGMENT_BIT; st[nst++].module = fs->mod; }
     VkPipelineInputAssemblyStateCreateInfo ia = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
     ia.topology = p->tcs ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : k->topo_class == 0 ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST : k->topo_class == 1 ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -1298,6 +1301,18 @@ static void predict_pair(PairRec *pr, int i) {
  * queues. shortcut: made at the draw (a hitch the first time; the driver's pipeline cache keeps it for the next run); upgrade to
  * the workers and pipes.bin if a game tessellates much more. */
 static Pipe *g_tpipes[64];
+/* A pipeline with a geometry stage (Luigi's Mansion 3), kept as the tessellated ones: made whole at its first draw. */
+static Pipe *gs_pipe_get(const PKey *k, VStage *vs, VStage *gs, VStage *fs) {
+    uint64_t h = fnv(fnv(0xcbf29ce484222325ULL, k, sizeof *k), &gs->id, sizeof gs->id) ^ 0x6773u;
+    for (Pipe *p = g_tpipes[h & 63]; p; p = p->next) if (p->gs == gs && !p->tcs && p->fs == fs && p->vs == vs && !memcmp(&p->k, k, sizeof *k)) return p;
+    Pipe *p = calloc(1, sizeof *p);
+    p->k = *k; p->vs = vs; p->fs = fs; p->gs = gs; p->state = 1;
+    LONG64 t0 = tk();
+    pipe_build(p);
+    hold_note(H_PIPE_DRAW, tk() - t0);
+    p->next = g_tpipes[h & 63]; g_tpipes[h & 63] = p;
+    return p;
+}
 static Pipe *tess_pipe_get(const PKey *k, VStage *vs, VStage *tcs, VStage *tes, VStage *fs, uint32_t patch) {
     uint64_t h = fnv(fnv(fnv(0xcbf29ce484222325ULL, k, sizeof *k), &tcs->id, sizeof tcs->id), &tes->id, sizeof tes->id) ^ patch;
     for (Pipe *p = g_tpipes[h & 63]; p; p = p->next) if (p->tcs == tcs && p->tes == tes && p->patch == patch && p->fs == fs && p->vs == vs && !memcmp(&p->k, k, sizeof *k)) return p;
