@@ -413,6 +413,11 @@ pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&
     let free = format!("{}/freestanding", inc); // no system headers: runtime/freestanding/README.md
     let mut flags = t.clang_flags();
     flags.extend(lifted_flags(t));
+    let level = t.cpu_level(); // in the stamps' hash with the rest: a build moved to another processor compiles again
+    if let Some(l) = level.first() {
+        log(format!("compile: for this PC's processor ({})", l));
+    }
+    flags.extend(level);
     flags.extend(["-nostdlibinc", "-isystem", &free, "-I", &inc, "-I", &gen].map(String::from));
     // [lm3] the game is compiled on the PC that plays it: with FMA3 here, the lifted fmaf (NEON fmla: four a lane) is the
     // instruction instead of a call into game_shim.c's fmaf (11 % of the three game threads in the lobby, lprof
