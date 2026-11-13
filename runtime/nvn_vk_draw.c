@@ -1211,7 +1211,15 @@ static VTex *vt_get2(Tex *t, int sync) {
             if (evict < 0) evict = !(getenv("WT_VK_EVICT") && !atoi(getenv("WT_VK_EVICT")));
             int n = evict ? nvn_front_tex_overlapping(t, al, 64) : 0;
             long long now = nvn_front_frame_next();
-            for (int i = 0; i < n; i++) { VTex *o = al[i]->vk; if (o && o->used + 60 < now) { vk_drop(K_TEX, al[i]); al[i]->uploaded = 0; al[i]->dirty = 1; al[i]->checked = 0; } }      /* a second unused; its texels are read again when it comes back */
+            /* [lm3] a second unused, or two frames once half of the video memory is handed out (resolution_scale 2.0: 17.8 GB
+             * of images in the lobby on a 16 GB card, 43 fps; WT_VK_EVICT_AGE=<frames> sets it) */
+            static int age_set = -2; static uint64_t half;
+            if (age_set == -2) {
+                age_set = getenv("WT_VK_EVICT_AGE") ? atoi(getenv("WT_VK_EVICT_AGE")) : -1;
+                for (uint32_t h = 0; h < D.mp.memoryHeapCount; h++) if ((D.mp.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) && D.mp.memoryHeaps[h].size / 2 > half) half = D.mp.memoryHeaps[h].size / 2;
+            }
+            int age = age_set >= 0 ? age_set : half && (uint64_t)g_mem_used > half ? 2 : 60;
+            for (int i = 0; i < n; i++) { VTex *o = al[i]->vk; if (o && o->used + age < now) { vk_drop(K_TEX, al[i]); al[i]->uploaded = 0; al[i]->dirty = 1; al[i]->checked = 0; } }      /* a second unused; its texels are read again when it comes back */
         }
         tu0 = tk();
         TexBuilder *b = &t->b;
@@ -3284,7 +3292,8 @@ static int buf_ref(uint64_t addr, uint64_t size, uint64_t align, BufRef *b) {
  * kept (512). A stream that overlaps a compute buffer goes to buf_ref (vrc_cb_touch); not used for a draw tagged by WT_DRAWTAG. */
 uint64_t nvn_front_mem_region(const void *p, size_t n, int ask); uint64_t nvn_front_mem_stamp(const void *p, size_t n); uint64_t nvn_front_mem_now(void);      /* nvn_gl.c */
 int nvn_front_draw_tag(void);
-typedef struct { uint64_t addr, size, stamp, busy; LONG64 seen, used; VkBuffer buf; VMem mem; uint32_t gen; uint8_t state; } VRes;
+typedef struct { uint64_t addr, size, stamp, busy; LONG64 seen, used; VkBuffer buf; VMem mem; uint32_t gen; uint8_t state;
+                 uint64_t roff; LONG64 rwrap; } VRes;      /* [lm3] roff: its copy in the ring, standing while rwrap == R.ring_wraps + 1 (vrc_ref) */
 enum { VR_FREE, VR_WATCH, VR_KEPT, VR_RING };       /* VR_WATCH: from the ring, its pages watched; VR_KEPT: from its own buffer; VR_RING: not write-watched */
 #define VRC_N 16384
 #define VRC_REG 4096
@@ -3435,8 +3444,10 @@ static int vrc_cb_touch(uint64_t addr, uint64_t size) {
     return 0;
 }
 /* The vertex stream [addr, addr + size) of a draw: its kept buffer, else the ring. Returns the kept entry (NULL: the ring). */
+static LONG64 g_vrc_again;                          /* [lm3] watched streams served by the ring copy an earlier batch made */
 static VRes *vrc_ref(uint64_t addr, uint64_t size, BufRef *b) {
     int first = 0;
+    VRes *we = NULL;                                /* [lm3] a watched stream on its way to the ring */
     if (g_vrc_frame != g_cur_frame) vrc_frame();
     VRes *e = size >= g_vrc_min ? vrc_find(addr, size) : NULL;
     if (!e) { if (size < g_vrc_min) { g_vs[4]++; g_vs[5] += (LONG64)size; } else g_vs[15]++; }
@@ -3447,6 +3458,7 @@ static VRes *vrc_ref(uint64_t addr, uint64_t size, BufRef *b) {
         if (first) {                               /* its first use in this batch, where the ring would copy it again */
             int w = vrc_written(e);
             e->gen = R.gen;
+            if (w) e->rwrap = 0;                    /* [lm3] written (or not watchable): its ring copy is old */
             if (w < 0) { if (e->state == VR_KEPT) vrc_drop(e); e->state = VR_RING; }
             else if (w) {
                 if (e->stamp) g_vs[10]++;
@@ -3455,10 +3467,18 @@ static VRes *vrc_ref(uint64_t addr, uint64_t size, BufRef *b) {
             } else if (e->state == VR_WATCH && g_cur_frame - e->seen >= 2) vrc_fill(e);
         }
         if (e->state == VR_RING) { e = NULL; g_vs[6]++; g_vs[7] += (LONG64)size; }
-        else if (e->state != VR_KEPT) { e = NULL; g_vs[2]++; g_vs[3] += (LONG64)size; }
+        else if (e->state != VR_KEPT) { we = e; e = NULL; g_vs[2]++; g_vs[3] += (LONG64)size; }
     }
     b->zero = 0; b->size = size;
-    if (!e) { b->off = ring_put(addr, size); b->buf = R.ring; return NULL; }
+    if (!e) {
+        /* [lm3] A stream the game writes every frame (Luigi's Mansion 3 skins on the CPU) is drawn in several batches of the
+         * frame (shadows, depth, the scene), and every batch copied it into the ring again: 30 MB a frame in the lobby, a
+         * quarter of the render thread. Its pages were not written since the copy (the question vrc_written just asked) and
+         * the ring has not wrapped: the same bytes are still there. Not while GPU copies are being patched in (gcp_patch). */
+        if (we && we->rwrap == R.ring_wraps + 1 && !g_ngcp) { b->off = we->roff; g_vrc_again++; }
+        else { b->off = ring_put(addr, size); if (we) { we->roff = b->off; we->rwrap = R.ring_wraps + 1; } }
+        b->buf = R.ring; return NULL;
+    }
     b->off = 0; b->buf = e->buf;
     g_vs[0]++; if (first) g_vs[1] += (LONG64)size;      /* bytes: what the ring would have copied (once per batch) */
     return e;
@@ -4829,7 +4849,20 @@ static void vk_submit_async(void *arg) { SubmitJob *j = arg; j->handles = (const
 static void vk_idle(void) { if (V.alive) { cb_poll(); nvn_front_take_dead(vk_drop); } }
 static void vk_housekeeping(void *arg) { (void)arg; if (V.alive) nvn_front_take_dead(vk_drop); }
 static void vk_flush(void *arg) { (void)arg; if (V.alive) cmd_submit(NULL, NULL); }
-static void vk_finish(void *arg) { (void)arg; if (V.alive) cmd_wait_all(); }
+/* [lm3] nvnQueueFinish. Luigi's Mansion 3 calls it once a frame, so the wait for the GPU (1 ms in its lobby) was part of
+ * every frame. By the time this job runs, the batches before it are replayed: what they read from the game's memory is
+ * in the ring or in kept buffers, and the game may write its buffers again. The wait itself is only owed when the GPU
+ * still has something to bring back into the game's memory (a read-back, a counter report, a GPU copy).
+ * WT_VK_FINISH_WAIT=1: always wait, as before. */
+static void vk_finish(void *arg) {
+    static int always = -1;
+    (void)arg;
+    if (!V.alive) return;
+    if (always < 0) always = getenv("WT_VK_FINISH_WAIT") && atoi(getenv("WT_VK_FINISH_WAIT"));
+    int owed = always || g_ngcp || g_cb_live;      /* not g_cb_nkept: a kept compute buffer lands when the game touches its range (cb_kept_land) */
+    for (int i = 0; i < NSLOT && !owed; i++) owed = g_oq_nev[i] || g_lr_nev[i];
+    if (owed) cmd_wait_all(); else cmd_submit(NULL, NULL);
+}
 static void sync_ran(SyncObj *o) { if (InterlockedIncrement(&o->ran) > o->posted) o->unsafe = 1; nvn_front_done_moved(); }      /* finding 138: after s (nvn_gl.c sync_fast_done reads ran, then s); a game thread waiting for it looks again */
 static void vk_fence(void *arg) { SyncJob *j = arg; if (j->o->dead || !V.alive) return; j->o->s = (void *)(uintptr_t)(cmd_submit(NULL, NULL) + 1); sync_ran(j->o); }
 static void vk_sync_wait(void *arg) {
@@ -5705,7 +5738,7 @@ swap: ;
             {   /* [Recomps#1] aspect = keep (graphics.ini, the default): in a window of another shape (an ultrawide monitor in
                  * borderless or fullscreen mode) the picture keeps its shape, centred, with black bars at the sides or at the
                  * top and bottom; stretch = it fills the window, as before. The shape is the game's crop (fl_s4, before rs_reduce). */
-                int W = (int)V.extent.width, H = (int)V.extent.height, pw = fl_s4[2], ph = fl_s4[3];
+                int W = (int)V.extent.width, H = (int)V.extent.height, pw = (int)((float)fl_s4[2] * rs_xstretch() + 0.5f), ph = fl_s4[3];      /* [lm3] aspect_ratio wider than 16:9: the 16:9 picture is drawn for a wider screen */
                 if (!gfx_options()->aspect_stretch && pw > 0 && ph > 0 && W > 0 && H > 0) {
                     long long ww = (long long)W * ph, hh = (long long)H * pw;      /* W/H against pw/ph, in integers */
                     int x0 = 0, y0 = 0, w = W, h = H;
@@ -5836,6 +5869,7 @@ swap: ;
             printf("nvn_vk_ring: frames %lld..%lld per frame: %.0f ranges asked, %.0f from the cache, %.0f KB copied, %.1f cache resets | polls for finished submissions during a replay %.1f (%.3f ms), %.2f submissions landed by them\n",
                    (long long)frame - 300, (long long)frame, (double)(g_rp_asked - la) / 300.0, (double)(g_rp_hits - lh) / 300.0, (double)(g_rp_bytes - lb) / 1024.0 / 300.0, (double)(uint32_t)(R.gen - lg) / 300.0,
                    (double)(g_sp_calls - lc) / 300.0, (double)(g_sp_tk - lt) * 1000.0 / (double)fq.QuadPart / 300.0, (double)(g_sp_landed - ll) / 300.0);
+            { static LONG64 lv; printf("nvn_vk_ring: watched streams served by an earlier batch's copy: %.0f per frame\n", (double)(g_vrc_again - lv) / 300.0); lv = g_vrc_again; }
             la = g_rp_asked; lh = g_rp_hits; lb = g_rp_bytes; lg = R.gen; lc = g_sp_calls; ll = g_sp_landed; lt = g_sp_tk;
         }
         if (g_vrc_on > 0) {   /* finding 140: the vertex buffers kept on the GPU */

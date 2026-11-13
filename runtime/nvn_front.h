@@ -49,6 +49,7 @@ typedef struct Tex {
     void *vk;                              /* the Vulkan back end's record of this texture (nvn_vk_draw.c: VTex), NULL until first used */
     void *prep;                            /* #45: its ASTC decode on tex_prep's threads (nvn_gl.c), render thread's */
     long long over_frame; struct Tex *over[48]; int nover;      /* nvn_vk_draw.c alias_sync: the larger textures over this one's memory, looked up once a frame */
+    struct Tex *mem_next;                  /* nvn_gl.c: the live textures at the same storage address (g_live_mem), newest first */
     struct Tex *live_next, *live_prev;     /* nvn_gl.c: the textures not finalized (tex_initialize retires the ones whose storage a new texture takes) */
     long long ahead_seen;                  /* session 8 (nvn_vk_draw.c tex_ahead): 1 + the frame the render thread first saw this record; -1 = looked at, not taken */
 } Tex;

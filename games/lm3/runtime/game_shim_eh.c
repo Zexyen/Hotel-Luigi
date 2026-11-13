@@ -18,7 +18,18 @@ __declspec(dllexport) void game_eh_bind(void (*catch_call)(Ctx *, void (*)(Ctx *
 }
 
 /* Host versions of game functions go here: the lifter sends the direct calls of an address listed in HOST_OVERRIDES
- * (../wtbuild/mod.rs) to h_<name>(Ctx *c), defined in this file. The stand-in has none. */
+ * (../wtbuild/mod.rs) to h_<name>(Ctx *c), defined in this file, and so does the function table (calls through a pointer). */
+
+/* graphics.ini aspect_ratio (the 21:9 mod, built in; RECOMPS_ASPECT from gfx_options.c): main's screen-shape function
+ * (0x67be0: the screen's width / height) answers the shape asked for. The game's own function still runs: its first
+ * call initialises the screen settings. The 16:9 constant the mod also patches: lm3_imports.c lm3_image_options. */
+void f_7100067be0(Ctx *c);
+void h_aspect(Ctx *c) {
+    static float a = -1.0f;     /* whichever thread comes first sets it, each to the same value */
+    f_7100067be0(c);
+    if (a < 0.0f) { const char *e = getenv("RECOMPS_ASPECT"); a = e ? (float)atof(e) : 0.0f; }
+    if (a > 0.0f) { c->v[0].d[0] = c->v[0].d[1] = 0; c->v[0].f[0] = a; }
+}
 
 /* What the runtime's FSR pass (runtime/nvn_vk_fsr.c) tells the game while it runs: the scene image's size (0 = off) and
  * AMD's jitter phase count. A game that supports FSR shifts its projection by them, each frame, in a host override. */

@@ -124,13 +124,11 @@ static const char *const k_default_ini =
 ";   'frame-time:' line in the log. (Bars drawn into the picture are not implemented yet.)\r\n"
 "frame_time_overlay = off\r\n"
 "\r\n"
-"; frame_rate = 60      (60 .. 120; EXPERIMENTAL above 60)\r\n"
-";   60: the game as made. 61 .. 120: the game's frame clock measures real time (its 1.0 floor lowered,\r\n"
-";   games/lm3/runtime/game_shim_eh.c h_frame_clock) and the runtime paces the game at this value; the title, menus and cutscenes\r\n"
-";   run at it too (as cutscene_fps = 60). The game's timers that count frames are converted one by one\r\n"
-";   (games/lm3/lifter/fps_counters.txt; Witch Time's docs/STATUS.md, \"Frame rates above 60\"): some effects, input windows and countdowns\r\n"
-";   may still run faster than at 60.\r\n"
-"frame_rate = 60\r\n"
+"; frame_rate = 30 | 60 .. 120\r\n"
+";   30: the game as made. 60: what the 60 FPS mod does, built in: every display refresh gets a frame (the game asks for\r\n"
+";   every second one), its frame time is 16.67 ms and its own limiter is off. Above 60 (90, 120 ...): the same at that\r\n"
+";   rate; the game's speed stays the same. Applies at the next start.\r\n"
+"frame_rate = 30\r\n"
 "\r\n"
 "; cutscene_fps = 30 | 60\r\n"
 ";   30: the game's own 30 fps mode on the title, in menus and in cutscenes, as on the console.\r\n"
@@ -270,7 +268,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "upscaler")) o->upscaler = upscaler_of(val);      /* [witchtime] issue 118 */
         else if (!_stricmp(key, "aspect")) o->aspect_stretch = !_stricmp(val, "stretch");      /* [Recomps#1] */
         else if (!_stricmp(key, "shader_prepare")) o->shader_prepare = !_stricmp(val, "background") ? 1 : !_stricmp(val, "off") ? 2 : 0;
-        else if (!_stricmp(key, "frame_rate")) { int v = atoi(val); o->frame_rate = v < 60 ? 60 : v > 120 ? 120 : v; }      /* [Recomps#1] */
+        else if (!_stricmp(key, "frame_rate")) { int v = atoi(val); o->frame_rate = v < 60 ? 30 : v > 120 ? 120 : v; }      /* [lm3] 30 (the game as made) | 60 .. 120 (lm3_imports.c lm3_image_options, display.c display_set_interval) */
         else if (!_stricmp(key, "hdr")) o->hdr = !_stricmp(val, "off") ? 1 : !_stricmp(val, "on") ? 2 : 0;      /* [Recomps#1] finding 147 */
         else if (!_stricmp(key, "hdr_format")) o->hdr_scrgb = !_stricmp(val, "scrgb");
         else if (!_stricmp(key, "hdr_paper_white")) { float v = (float)atof(val); o->hdr_paper_white = v >= 80.0f && v <= 1000.0f ? v : 0.0f; }      /* auto, or a value out of range */
@@ -283,7 +281,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else unknown++;
     }
     if (f) fclose(f);
-    if (!o->frame_rate) o->frame_rate = 60;
+    if (!o->frame_rate) o->frame_rate = 30;
     if (getenv("WT_UPSCALER")) o->upscaler = upscaler_of(getenv("WT_UPSCALER"));      /* [witchtime] issue 118 */
     {   /* [witchtime] the mip bias: -1, or WT_TEXTURE_LOD_BIAS (-3 .. 3) */
         const char *e = getenv("WT_TEXTURE_LOD_BIAS");

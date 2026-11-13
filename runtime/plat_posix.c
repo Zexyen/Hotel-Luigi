@@ -572,7 +572,6 @@ FILE *plat_fopen(const char *path, const char *mode) {
     return fopen(plat_path(path, p, sizeof p), mode);
 }
 #define PATH(var, in) char var##_buf[4096]; const char *var = plat_path((in), var##_buf, sizeof var##_buf)
-BOOL CreateDirectoryA(LPCSTR path, SECURITY_ATTRIBUTES *sa) { (void)sa; PATH(p, path); return mkdir(p, 0755) == 0; }
 BOOL RemoveDirectoryA(LPCSTR path) { PATH(p, path); return rmdir(p) == 0; }
 BOOL DeleteFileA(LPCSTR path) { PATH(p, path); return unlink(p) == 0; }
 BOOL MoveFileExA(LPCSTR from, LPCSTR to, DWORD flags) {
@@ -622,6 +621,10 @@ static __thread DWORD t_last_error;
 DWORD GetLastError(void) { return t_last_error ? t_last_error : err_from_errno(errno); }
 static void fail_errno(void) { t_last_error = err_from_errno(errno); }
 static void ok_error(void) { t_last_error = 0; errno = 0; }
+/* [lm3] its failure is the last error, as on Windows: an older error of the thread (a file not found, the end of a folder
+ * listing) hid ERROR_ALREADY_EXISTS, nn::fs::EnsureSaveData then failed with save data present, and Luigi's Mansion 3
+ * went back to its title screen at every A once a save existed */
+BOOL CreateDirectoryA(LPCSTR path, SECURITY_ATTRIBUTES *sa) { (void)sa; PATH(p, path); if (mkdir(p, 0755) == 0) return 1; fail_errno(); return 0; }
 
 HANDLE CreateFileA(LPCSTR path, DWORD acc, DWORD share, SECURITY_ATTRIBUTES *sa, DWORD disposition, DWORD flags, HANDLE tmpl) {
     (void)share; (void)sa; (void)tmpl;

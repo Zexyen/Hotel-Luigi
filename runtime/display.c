@@ -859,7 +859,8 @@ void display_init(void) {
 
 /* Called after every presented frame (nvn_gl.c has already put it in the window): holds the caller to 60 Hz. */
 static volatile LONG g_interval = 1;         /* nvnWindowSetPresentInterval: display refreshes per presented frame (0 = do not wait) */
-void display_set_interval(int n) { InterlockedExchange(&g_interval, n < 0 ? 0 : n > 5 ? 5 : n); }
+/* [lm3] frame_rate = 60 and above: the game asks for every second refresh (its one nvnWindowSetPresentInterval call, main 0xb7add8); it gets every one */
+void display_set_interval(int n) { if (n > 1 && gfx_options()->frame_rate >= 60) n = 1; InterlockedExchange(&g_interval, n < 0 ? 0 : n > 5 ? 5 : n); }
 int display_interval(void) { return (int)g_interval; }
 /* [Recomps#1] the interval the pacing uses: above 60 fps the lifted frame-rate patch asks for 0 (do not wait) at every
  * present; when display.c paces at frame_rate (g_pace_hz > 60) that is one of its ticks */

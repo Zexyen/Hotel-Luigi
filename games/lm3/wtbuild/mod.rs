@@ -48,7 +48,10 @@ pub fn is_game(img: &[u8]) -> bool {
 }
 
 /// game functions whose direct calls (BL) go to a host function instead: (address, name) calls h_<name>(Ctx *c)
-pub const HOST_OVERRIDES: &[(i64, &str)] = &[];
+pub const HOST_OVERRIDES: &[(i64, &str)] = &[
+    // the screen's width / height as a float (reached through a pointer only): graphics.ini aspect_ratio
+    (0x7100067be0, "aspect"),
+];
 
 /// instruction patches of main, checked against the words the binary has (im.patches), and its frame counters
 pub fn patches(im: &mut Image) -> Result<(), String> {

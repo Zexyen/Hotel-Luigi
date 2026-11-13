@@ -8,6 +8,8 @@
 #include <windows.h>
 #include "runtime.h"
 #include "hostrt.h"
+#include "gfx_options.h"
+#include "plat.h"
 
 #define A0 (c->x[0])
 #define A1 (c->x[1])
@@ -84,5 +86,31 @@ static const ImportDef lm3_imports[] = {
     {"_ZN2nn3aoc16ListAddOnContentEPiii", ret0},              /* no add-on content installed */
     {"_ZN2nn6socket10InitializeEPvmmi", ret0},                /* Result success; the sockets themselves are not modelled yet */
 };
+
+/* graphics.ini frame_rate = 60 .. 120 and aspect_ratio: the two constants of main's read-only data that the 60 FPS and 21:9
+ * mods patch, set from the options instead (boot.c, once the window is made (aspect_ratio = auto) and before the game starts).
+ * At 60 and above the game's own frame limiter is also switched off (the longest it may wait, 350 ms, becomes 0): the
+ * runtime's clock releases the game every frame (display.c), and with both waiting they took turns (53 fps in the lobby
+ * at 60). The frame time itself stays the mod's value: other code reads it (halved, it made the save thumbnail four
+ * times darker, 2026-11-12), so it is not the place to switch the limiter off.
+ * The rest of each mod: the present interval (display.c display_set_interval) and the game's screen-shape function
+ * (game_shim_eh.c h_aspect). A constant that is not the expected one (another build of main) is left alone. */
+static void set_const(uint64_t off, float was, float now, const char *what) {
+    float *p = (float *)(uintptr_t)(GUEST_BASE + off);
+    if (*p != was) { printf("lm3: %s: main+0x%llx is %g, not %g: left alone\n", what, (unsigned long long)off, *p, was); return; }
+    void *page = (void *)((uintptr_t)p & ~(uintptr_t)0xfff);      /* read-only by now (hostrt.c), unless WT_NO_PROTECT */
+    plat_protect(page, 0x1000, PLAT_RW);
+    *p = now;
+    if (!getenv("WT_NO_PROTECT")) plat_protect(page, 0x1000, PLAT_RO);
+    printf("lm3: %s: main+0x%llx %g -> %g\n", what, (unsigned long long)off, was, now);
+}
+void lm3_image_options(void) {
+    const char *e = getenv("RECOMPS_ASPECT");      /* gfx_options.c: aspect_ratio, when it is not 16:9 */
+    float a = e ? (float)atof(e) : 0.0f;
+    const char *ft = getenv("LM3_FRAME_MS");        /* test: the game's own frame time target, whatever frame_rate says */
+    if (ft || gfx_options()->frame_rate >= 60) set_const(0x13c94dc, 100.0f / 3.0f, ft ? (float)atof(ft) : 1000.0f / (float)gfx_options()->frame_rate, "frame_rate, the frame time in ms");
+    if (gfx_options()->frame_rate >= 60 && !getenv("LM3_KEEP_LIMITER")) set_const(0x13c8e64, 350.0f, 0.0f, "frame_rate, the longest wait of the game's own limiter in ms");
+    if (a > 0.0f) set_const(0x13c96fc, 16.0f / 9.0f, a, "aspect_ratio, the screen's width / height");
+}
 
 void register_lm3_imports(void) { register_imports(lm3_imports, (int)(sizeof lm3_imports / sizeof lm3_imports[0])); }

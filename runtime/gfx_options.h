@@ -18,7 +18,7 @@ typedef struct {
     int shader_prepare;     /* track V session 14 (appended: older objects keep their offsets): 0 first_run (the game is held at its first frame until every shader of the game's data is prepared, once per GPU + driver), 1 background (as before), 2 off;  env WT_VK_PREPARE wins */
     int aspect_stretch;     /* [Recomps#1] aspect = keep (0, default: the picture keeps its shape, black bars on a wider or taller
                                window, e.g. an ultrawide monitor) | stretch (1: it fills the window); nvn_vk_draw.c present (Vulkan) */
-    int frame_rate;         /* [Recomps#1] frame_rate = 60 (the game as made) .. 120: above 60 the lifted frame-rate patch is on, capped there */
+    int frame_rate;         /* [lm3] frame_rate = 30 (the game as made) | 60 .. 120 (the 60 FPS mod built in, above 60 paced by gfx_pace_rate: lm3_imports.c lm3_image_options, display.c display_set_interval) */
     int hdr;                /* [Recomps#1] hdr = auto (0: HDR output while Windows HDR is on for the window's monitor) | off (1) | on (2: always);
                                nvn_vk_draw.c hdr_* (Vulkan on Windows; finding 147) */
     int hdr_scrgb;          /* [Recomps#1] hdr_format = hdr10 (0: 10-bit PQ, BT.2020) | scrgb (1: 16-bit floating point, linear) */

@@ -4492,6 +4492,11 @@ static void texb_get_samples(Ctx *c) { RET(TB->samples); }
 static CRITICAL_SECTION g_live_lock;
 static volatile LONG g_live_ready;
 static Tex *g_live_tex;
+/* [lm3] the same textures by storage address: nvn_front_tex_over / _same are asked for every target every frame, and a walk
+ * of the whole list (13,000 records) was 70 % of the render thread's time at the menu (lprof, 2026-11-12) */
+#define LIVE_MEM_N 4096
+static Tex *g_live_mem[LIVE_MEM_N];
+static Tex **live_mem_slot(const uint8_t *mem) { return &g_live_mem[(((uintptr_t)mem >> 12) ^ ((uintptr_t)mem >> 24)) & (LIVE_MEM_N - 1)]; }
 static void live_lock(void) {
     if (InterlockedCompareExchange(&g_live_ready, 1, 0) == 0) { InitializeCriticalSection(&g_live_lock); InterlockedExchange(&g_live_ready, 2); }
     while (g_live_ready != 2) Sleep(0);
@@ -4501,12 +4506,14 @@ static void live_unlink(Tex *t) {                      /* under the lock; a text
     if (t->live_prev) t->live_prev->live_next = t->live_next; else if (g_live_tex == t) g_live_tex = t->live_next; else return;
     if (t->live_next) t->live_next->live_prev = t->live_prev;
     t->live_next = t->live_prev = NULL;
+    for (Tex **p = live_mem_slot(t->mem); *p; p = &(*p)->mem_next) if (*p == t) { *p = t->mem_next; break; }
+    t->mem_next = NULL;
 }
 int nvn_front_tex_over(const Tex *t, Tex **out, int max) {
     int n = 0;
     if (!t->mem) return 0;
     live_lock();
-    for (Tex *o = g_live_tex; o && n < max; o = o->live_next)
+    for (Tex *o = *live_mem_slot(t->mem); o && n < max; o = o->mem_next)
         if (o != t && o->vk && o->vk != t->vk && o->mem == t->mem && o->b.format == t->b.format && o->b.target == t->b.target && o->b.samples == t->b.samples &&
             o->b.width >= t->b.width && o->b.height >= t->b.height) out[n++] = o;
     LeaveCriticalSection(&g_live_lock);
@@ -4516,7 +4523,7 @@ Tex *nvn_front_tex_same(const Tex *t) {
     Tex *r = NULL;
     if (!t->mem) return NULL;
     live_lock();
-    for (Tex *o = g_live_tex; o && !r; o = o->live_next)
+    for (Tex *o = *live_mem_slot(t->mem); o && !r; o = o->mem_next)
         if (o != t && o->vk && o->mem == t->mem && o->b.format == t->b.format && o->b.width == t->b.width && o->b.height == t->b.height && o->b.depth == t->b.depth &&
             o->b.levels == t->b.levels && o->b.target == t->b.target && o->b.samples == t->b.samples) r = o;
     LeaveCriticalSection(&g_live_lock);
@@ -4559,7 +4566,9 @@ static void tex_initialize(Ctx *c) {                   /* (texture, builder) */
             LeaveCriticalSection(&g_live_lock);
         }
     }
-    live_lock(); t->live_next = g_live_tex; if (g_live_tex) g_live_tex->live_prev = t; g_live_tex = t; LeaveCriticalSection(&g_live_lock);
+    live_lock(); t->live_next = g_live_tex; if (g_live_tex) g_live_tex->live_prev = t; g_live_tex = t;
+    if (t->mem) { Tex **p = live_mem_slot(t->mem); t->mem_next = *p; *p = t; }
+    LeaveCriticalSection(&g_live_lock);
     do { t->all_next = g_all_tex; } while (InterlockedCompareExchangePointer((void *volatile *)&g_all_tex, t, t->all_next) != t->all_next);
     RET(1);
 }
@@ -5378,6 +5387,7 @@ static void queue_finish(Ctx *c) { (void)c; gl_run(g_rb->finish, NULL); }
 static void job_reset_status(void *arg) { *(int *)arg = glGetGraphicsResetStatus ? (int)glGetGraphicsResetStatus() : 0; }
 static void queue_get_error(Ctx *c) {                   /* (queue, NVNqueueErrorInfo *) -> NVNqueueGetErrorResult: the state of the real GPU context */
     int st = 0;
+    if (g_vk) { RET(0); return; }                       /* [lm3] Vulkan's answer is always 0 (vk_reset_status): no wait for the render thread (LM3 asks 4 times a frame, 3-6 ms behind the queued submissions) */
     gl_run(g_rb->reset_status, &st);
     RET(st ? 1 : 0);                                    /* GPU_NO_ERROR, or GPU_ERROR_UNKNOWN after a context reset */
 }

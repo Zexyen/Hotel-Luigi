@@ -273,6 +273,16 @@ static DWORD WINAPI guest_main(LPVOID arg) {
 static int b3_main(int argc, char **argv) {
     g_elf = argc > 1 ? argv[1] : "main.elf";        /* [Recomps#1] path of our main.elf; sdk.elf must sit beside it */
     setvbuf(stdout, NULL, _IONBF, 0);
+    {   /* [lm3] started by hand without WT_ROMFS and no ../romfs: the romfs folder beside main.elf's (targets/romfs), or a
+         * message. The game stopped with a segmentation fault in nnMain without its files. */
+        const char *e = getenv("WT_ROMFS"), *sl = strrchr(g_elf, '/');
+        char rom[1024];
+        snprintf(rom, sizeof rom, "%.*s../romfs", sl ? (int)(sl - g_elf + 1) : 0, g_elf);
+        if (!(e && e[0]) && GetFileAttributesA("../romfs") == INVALID_FILE_ATTRIBUTES) {
+            if (GetFileAttributesA(rom) != INVALID_FILE_ATTRIBUTES) { _putenv_s("WT_ROMFS", rom); printf("romfs: %s (beside main.elf's folder; WT_ROMFS not set)\n", rom); }
+            else if (argc > 1) { fprintf(stderr, "witch-time-game: the game's files (romfs) were not found: no WT_ROMFS, no ../romfs, no %s\n", rom); return 1; }
+        }
+    }
     if (argc <= 1) {    /* started by hand with no path (issues #17, #20): say how it is started instead of "cannot open main.elf" */
         FILE *f = fopen(g_elf, "rb");
         if (!f) {
@@ -331,6 +341,7 @@ static int b3_main(int argc, char **argv) {
     register_sdk2_imports();                 /* SDK families (lifted sdk.elf code + offline service answers): fills only; after the C runtime because its self-test needs every handler */
     { void audit_startup(void); audit_startup(); }   /* hostrt.c: fake audit / WT_STRICT (plan\FAKE_AUDIT.md) */
     display_init();
+    { void lm3_image_options(void); lm3_image_options(); }      /* [lm3] frame_rate / aspect_ratio constants of main (games/lm3/runtime/lm3_imports.c); after the window: aspect_ratio = auto */
     int seconds = argc > 2 ? atoi(argv[2]) : 0;      /* no number = no time limit (a player's launch); tests pass theirs */
     /* the lifted code uses the host stack for every guest call: give it plenty */
     HANDLE t = CreateThread(NULL, (SIZE_T)1 << 30, guest_main, NULL, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);

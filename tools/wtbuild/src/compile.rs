@@ -413,6 +413,14 @@ pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&
     let mut flags = t.clang_flags();
     flags.extend(lifted_flags(t));
     flags.extend(["-nostdlibinc", "-isystem", &free, "-I", &inc, "-I", &gen].map(String::from));
+    // [lm3] the game is compiled on the PC that plays it: with FMA3 here, the lifted fmaf (NEON fmla: four a lane) is the
+    // instruction instead of a call into game_shim.c's fmaf (11 % of the three game threads in the lobby, lprof
+    // 2026-11-12). The same result bit for bit. WTBUILD_NO_FMA=1: a game library that also runs on a CPU without FMA3.
+    // shortcut: such a library copied to a CPU without FMA3 stops with an illegal instruction; check at start if builds get shared.
+    #[cfg(target_arch = "x86_64")]
+    if std::is_x86_feature_detected!("fma") && std::env::var_os("WTBUILD_NO_FMA").is_none() {
+        flags.push("-mfma".into());
+    }
     let c = Cfg {
         target: t,
         clang: clang.to_string(),
