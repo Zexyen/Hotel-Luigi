@@ -10,7 +10,7 @@
 // empty: it never looks). A project made from the template sets these three.
 #define APP_NAME "Hotel Luigi"
 #define APP_ID "recomp"
-#define UPDATE_REPO ""
+#define UPDATE_REPO "Zexyen/Hotel-Luigi"
 // this program's file name, in build/ and (a release) at the top of the folder
 #define LAUNCHER_NAME "hotel-luigi-game"
 
