@@ -24,11 +24,11 @@ struct Group { const char *num, *name, *note; std::vector<std::string> steps; };
 const std::vector<Group>& groups()
 {
 	static const std::vector<Group> g = {
-		{"I", "Check your dump", "Tools, version and every data file", {"deps", "verify"}},
-		{"II", "Unpack and apply mods", "Code files and your code mods", {"convert", "mods"}},
-		{"III", "Translate the code", "Switch code to portable C", {"tables", "lift"}},
-		{"IV", "Compile", "The longest step", {"compile"}},
-		{"V", "Link and finish", "The game library and its self-test", {"link", "check"}},
+		{"1F", "Check your dump", "Tools, version and every data file", {"deps", "verify"}},
+		{"2F", "Unpack and apply mods", "Code files and your code mods", {"convert", "mods"}},
+		{"3F", "Translate the code", "Switch code to portable C", {"tables", "lift"}},
+		{"4F", "Compile", "The longest step", {"compile"}},
+		{"5F", "Link and finish", "The game library and its self-test", {"link", "check"}},
 	};
 	return g;
 }
@@ -257,9 +257,8 @@ bool App::create_ui()
 	// by file, with the family named here: the files of one family do not all carry the same family name
 	struct Font { const char *file, *family; Rml::Style::FontStyle style; int weight; };
 	const Font fonts[] = {
-		{"Marcellus-Regular.ttf", "Marcellus", Rml::Style::FontStyle::Normal, 400},
-		{"SourceSans3-Regular.ttf", "Source Sans 3", Rml::Style::FontStyle::Normal, 400},
-		{"SourceSans3-SemiBold.ttf", "Source Sans 3", Rml::Style::FontStyle::Normal, 600},
+		{"RussoOne-Regular.ttf", "Russo One", Rml::Style::FontStyle::Normal, 400},
+		{"MPLUSRounded1c-ExtraBold.ttf", "M PLUS Rounded 1c", Rml::Style::FontStyle::Normal, 400},   // the one weight the screens use
 	};
 	for (const Font& f : fonts)
 	{
@@ -343,8 +342,6 @@ void App::bind_model()
 	c.Bind("version", &version);
 	c.Bind("app_name", &app_name);
 	c.Bind("stale", &stale);
-	c.Bind("hour_deg", &hour_deg);
-	c.Bind("minute_deg", &minute_deg);
 	c.Bind("status_bad", &status_bad);
 	c.Bind("status_title", &status_title);
 	c.Bind("status_line", &status_line);
@@ -374,8 +371,6 @@ void App::bind_model()
 	c.Bind("mods_rebuild", &mods_rebuild);
 	c.Bind("settings", &settings);
 	c.Bind("tab", &tab);
-	c.Bind("row_step", &row_step);
-	c.Bind("row_pitch", &row_pitch);
 	c.Bind("leaving", &leaving);
 	c.Bind("tex_note", &tex_note);
 	c.Bind("tex_action", &tex_action);
@@ -383,12 +378,12 @@ void App::bind_model()
 	c.Bind("tex_remove", &tex_remove);
 	c.Bind("shortcut_note", &shortcut_note);
 	// footer hints: by the label on the button, as confirm and back in handle() go
-	c.BindFunc("glyph_ok", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=enter&c=26222f" : prompts == 2 ? "gen:glyph?n=cross&c=26222f" : "gen:glyph?n=a&c=26222f"); });
-	c.BindFunc("glyph_back", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=esc&c=26222f" : prompts == 2 ? "gen:glyph?n=circle&c=26222f" : "gen:glyph?n=b&c=26222f"); });
+	c.BindFunc("glyph_ok", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=enter&c=ffffff" : prompts == 2 ? "gen:glyph?n=cross&c=ffffff" : "gen:glyph?n=a&c=ffffff"); });
+	c.BindFunc("glyph_back", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=esc&c=ffffff" : prompts == 2 ? "gen:glyph?n=circle&c=ffffff" : "gen:glyph?n=b&c=ffffff"); });
 	// the settings' sections (Q / E, the shoulder buttons) and a row's value (the arrow keys, the d-pad)
-	c.BindFunc("glyph_tab_l", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=key&t=Q&c=26222f" : prompts == 1 ? "gen:glyph?n=bumper&t=L&c=26222f" : prompts == 2 ? "gen:glyph?n=bumper&t=L1&c=26222f" : "gen:glyph?n=bumper&t=LB&c=26222f"); });
-	c.BindFunc("glyph_tab_r", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=key&t=E&c=26222f" : prompts == 1 ? "gen:glyph?n=bumper&t=R&c=26222f" : prompts == 2 ? "gen:glyph?n=bumper&t=R1&c=26222f" : "gen:glyph?n=bumper&t=RB&c=26222f"); });
-	c.BindFunc("glyph_change", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=arrows&c=26222f" : "gen:glyph?n=dpad&c=26222f"); });
+	c.BindFunc("glyph_tab_l", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=key&t=Q&c=ffffff" : prompts == 1 ? "gen:glyph?n=bumper&t=L&c=ffffff" : prompts == 2 ? "gen:glyph?n=bumper&t=L1&c=ffffff" : "gen:glyph?n=bumper&t=LB&c=ffffff"); });
+	c.BindFunc("glyph_tab_r", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=key&t=E&c=ffffff" : prompts == 1 ? "gen:glyph?n=bumper&t=R&c=ffffff" : prompts == 2 ? "gen:glyph?n=bumper&t=R1&c=ffffff" : "gen:glyph?n=bumper&t=RB&c=ffffff"); });
+	c.BindFunc("glyph_change", [this](Rml::Variant& v) { v = Rml::String(prompts == 4 ? "gen:glyph?n=arrows&c=ffffff" : "gen:glyph?n=dpad&c=ffffff"); });
 	auto arg_int = [](const Rml::VariantList& a, size_t i) { return i < a.size() ? a[i].Get<int>() : 0; };
 	c.BindEventCallback("go", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList& a) {
 		if (!a.empty())
@@ -532,7 +527,7 @@ void App::draw()
 	}
 	SDL_GPUColorTargetInfo clear{};
 	clear.texture = target;
-	clear.clear_color = {238 / 255.f, 237 / 255.f, 242 / 255.f, 1};   // pearl, the screens' ground
+	clear.clear_color = {61 / 255.f, 22 / 255.f, 12 / 255.f, 1};   // the lobby's dark, the screens' ground
 	clear.load_op = SDL_GPU_LOADOP_CLEAR;
 	clear.store_op = SDL_GPU_STOREOP_STORE;
 	SDL_EndGPURenderPass(SDL_BeginGPURenderPass(cmd, &clear, 1, nullptr));
@@ -1054,16 +1049,8 @@ void App::refresh_settings()
 		settings.push_back({d.name, d.note, i >= 0 ? d.options[size_t(i)].second : v, int(n),
 			b == 0 ? Rml::String("none") : Rml::String("0.25s cubic-out bump-") + (b < 0 ? "l" : "r") + (std::abs(b) % 2 ? "-a" : "-b")});
 	}
-	// the staircase (rows 500 dp wide from 620 dp) ends 20 dp inside the 1280 dp stage, however many rows a section has.
-	// Rows that step less than the diagonal (22.6 dp a 56 dp row) close in on its rule, 40 dp from the first row's corner:
-	// they come closer together too, so the last stays 12 dp clear (Graphics' nine, the converted textures' row too)
-	const float rows = float(settings.size() + (tab == 0 || (tab == 1 && TEXTURES) ? 1 : 0)), tan22 = 0.4040f;   // Display: the desktop shortcut's row
-	row_step = rows > 1 ? std::min(26.f, 140.f / (rows - 1)) : 26.f;
-	row_pitch = rows > 1 ? std::clamp((row_step + 28.f / (rows - 1)) / tan22, 50.f, 56.f) : 56.f;
 	model.DirtyVariable("settings");
 	model.DirtyVariable("tab");
-	model.DirtyVariable("row_step");
-	model.DirtyVariable("row_pitch");
 
 	// #54: what the converted textures would cost, before they cost it
 	namespace fs = std::filesystem;
@@ -1253,24 +1240,8 @@ void App::start_build()
 	go("build");
 }
 
-void App::tick_clock()
-{
-	std::time_t now = std::time(nullptr);
-	std::tm* t = std::localtime(&now);
-	if (!t)
-		return;
-	const float m = t->tm_min * 6 + t->tm_sec * 0.1f, h = (t->tm_hour % 12) * 30 + t->tm_min * 0.5f;
-	if (m == minute_deg && h == hour_deg)
-		return;
-	minute_deg = m;
-	hour_deg = h;
-	model.DirtyVariable("minute_deg");
-	model.DirtyVariable("hour_deg");
-}
-
 void App::tick()
 {
-	tick_clock();
 	if (leaving && system->GetElapsedTime() - leave_at >= 0.22)
 		go_now(next_screen);
 	{

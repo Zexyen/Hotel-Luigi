@@ -8,7 +8,7 @@
 // The project as the player sees it: the name in the window title, the screens, the shortcut and messages; the id of
 // its windows and desktop entry; the GitHub repository whose releases the launcher updates itself from ("owner/name";
 // empty: it never looks). A project made from the template sets these three.
-#define APP_NAME "Recomp"
+#define APP_NAME "Hotel Luigi"
 #define APP_ID "recomp"
 #define UPDATE_REPO ""
 // this program's file name, in build/ and (a release) at the top of the folder

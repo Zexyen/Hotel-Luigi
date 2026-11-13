@@ -17,6 +17,8 @@
 //   gen:pill?w=&h=&f=&c=&a=&l=             a w x h texel rounded bar filled with f (if given), its edge c l texels
 //                                          thick (if given): the switches; w = h is a disc. RmlUi's border-radius is jagged
 //   gen:glyph?n=&c=&t=                     a button prompt, as the game shows it: n = a b cross circle enter esc key bumper dpad arrows (t: the letters)
+//   gen:panel?c0=&c1=&a=&e=&l=&la=&k=    a slab for a ninepatch: the menu rows, the buttons, the speech box
+//   gen:crt?c=&d=&b=&z0=&z1=              a whole screen of the handheld monitor (mods, settings)
 //   gen:grad?d=&c0=&a0=&c1=&a1=&c2=&a2=&c3=&a3=&p1=&p2=
 //                                          a gradient with up to four stops (c0 at 0, c3 at 1, c1 and c2 at p1 and p2),
 //                                          left to right (d=h, the default) or top to bottom (d=v): the panel, the bars
@@ -270,6 +272,62 @@ Image grad(const Params& p)
 	return im;
 }
 
+Rml::Colourb mix(Rml::Colourb a, Rml::Colourb b, float t)
+{
+	return Rml::Colourb(Rml::byte(a.red + (b.red - a.red) * t), Rml::byte(a.green + (b.green - a.green) * t), Rml::byte(a.blue + (b.blue - a.blue) * t), 255);
+}
+
+// A slab, cut in nine by the screens (ninepatch): a 48 dp square at two texels a dp. A 2 dp edge e, c0 to c1 down its
+// face (alpha a), a 1 dp line l (alpha la) 5 dp in, and the line's stepped corners 1 dp in (k=0 leaves them out).
+Image panel(const Params& p)
+{
+	Image im(96, 96);
+	const Rml::Colourb c0 = p.color("c0", {143, 143, 143, 255}), c1 = p.color("c1", {92, 92, 92, 255}), e = p.color("e", {38, 38, 38, 255}),
+		l = p.color("l", {255, 255, 255, 255});
+	const float a = p.num("a", 255) / 255.f, la = p.num("la", 153) / 255.f;
+	const bool corners = p.num("k", 1) != 0;
+	for (int y = 0; y < im.h; y++)
+		for (int x = 0; x < im.w; x++)
+		{
+			const int dx = std::min(x, im.w - 1 - x), dy = std::min(y, im.h - 1 - y), d = std::min(dx, dy);
+			const bool line = (d >= 14 && d < 16) || (corners && d >= 6 && d < 8 && std::max(dx, dy) < 26);
+			const Rml::Colourb c = mix(c0, c1, (y + .5f) / im.h);
+			if (d < 4)
+				im.put(x, y, e, 1);
+			else if (line)
+				im.put(x, y, mix(c, l, la), a + (1 - a) * la);
+			else
+				im.put(x, y, c, a);
+		}
+	return im;
+}
+
+// A whole screen of the handheld monitor, 1280 x 800: the bezel z0 to z1 down it, in it the rounded glass (36 in from
+// the sides, 14 from top and bottom), c at its middle to d at its rim, with grid lines and corner marks b and scan lines.
+Image crt(const Params& p)
+{
+	Image im(1280, 800);
+	const Rml::Colourb c = p.color("c", {28, 154, 34, 255}), d = p.color("d", {6, 74, 12, 255}), b = p.color("b", {70, 230, 80, 255}),
+		z0 = p.color("z0", {112, 18, 42, 255}), z1 = p.color("z1", {58, 6, 18, 255});
+	for (int y = 0; y < im.h; y++)
+		for (int x = 0; x < im.w; x++)
+		{
+			const float fx = x + .5f, fy = y + .5f;
+			const float qx = std::fabs(fx - 640) - (604 - 36), qy = std::fabs(fy - 400) - (386 - 36);
+			const float sd = std::hypot(std::max(qx, 0.f), std::max(qy, 0.f)) + std::min(std::max(qx, qy), 0.f) - 36;   // to the glass's rim
+			Rml::Colourb g = mix(c, d, std::clamp(std::hypot((fx / 1280 - .5f) / .6f, (fy / 800 - .4f) / .75f), 0.f, 1.f));
+			if ((x + 36) % 92 < 2 || (y + 58) % 92 < 2)
+				g = mix(g, b, .22f);
+			const int mx = std::min(x - 70, 1209 - x), my = std::min(y - 40, 701 - y);   // the four corner marks
+			if (mx >= 0 && my >= 0 && std::min(mx, my) < 7 && std::max(mx, my) < 44)
+				g = mix(g, b, .7f);
+			float shade = std::clamp(-sd / 90, 0.f, 1.f);            // darker towards the rim
+			shade = (.45f + .55f * shade * shade * (3 - 2 * shade)) * (y % 5 < 2 ? .8f : 1);
+			im.put(x, y, mix(mix(z0, z1, fy / 800), mix({0, 0, 0, 255}, g, shade), coverage(sd)), 1);
+		}
+	return im;
+}
+
 // an 8-bit BMP with alpha in the palette's reserved byte, premultiplied (see the top of this file); empty when it is not one
 Image bmp(const Rml::String& path, const Params& p)
 {
@@ -332,7 +390,7 @@ Rml::TextureHandle UiRender::LoadTexture(Rml::Vector2i& texture_dimensions, cons
 		query = spec.substr(q + 1);
 	}
 	const Params p = parse(query);
-	Image im = name == "glow" ? glow(p) : name == "ring" ? ring(p) : name == "ticks" ? ticks(p) : name == "moon" ? moon(p) : name == "pill" ? pill(p) : name == "glyph" ? glyph(p) : name == "grad" ? grad(p) : fade(p);
+	Image im = name == "glow" ? glow(p) : name == "ring" ? ring(p) : name == "ticks" ? ticks(p) : name == "moon" ? moon(p) : name == "pill" ? pill(p) : name == "glyph" ? glyph(p) : name == "grad" ? grad(p) : name == "panel" ? panel(p) : name == "crt" ? crt(p) : fade(p);
 	texture_dimensions = {im.w, im.h};
 	return GenerateTexture({im.px.data(), im.px.size()}, texture_dimensions);
 }

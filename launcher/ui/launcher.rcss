@@ -1,260 +1,280 @@
-/* The launcher's look. Lengths are dp: the screens are laid out for 1280 x 800 and scaled with the window
- * (app.cpp). A pearl ground crossed by an indigo panel on a 22 degree diagonal, a runic stripe on its edge, lists that
- * step down the diagonal as a staircase of bars, a clockwork wheel on the pearl side, a dark message band and a pale
- * hint band at the bottom (docs: the design page). Colours: pearl #eeedf2, indigo #1b1628, violet #6a49d0 (focus),
- * lavender #a690ec, lilac #d7ccf7 (text on indigo), ink #24202e (text on pearl), red #e5334b (new or changed). */
+/* The launcher's look. Lengths are dp: each screen is a 1280 x 800 stage in the middle of the window, scaled with it
+ * (app.cpp); its backdrop and its hint bar span the window. Three kinds of screen: the lobby (title, the dump, the
+ * build): a warm backdrop out of focus, grey slabs with stepped corners, the chosen one blue with a white pointer, a
+ * blue speech box with a white name plate; and the handheld monitor, green for the settings and red for the mods: a
+ * bezel, a lined glass, bordered rows, the chosen one bright. A dark bar of button hints at the bottom of each.
+ * The renderer draws flat boxes, borders and textures only: every gradient, slab and disc is a gen: picture
+ * (ui_render.cpp). Colours: blue #0a86d8, its edge #06305c, slab grey #8f8f8f to #5c5c5c, ink #262626, yellow #ffe55c
+ * (words that matter), gold #f5c04a (the dial), green #3fe048, red #ff5f6c. */
 
 /* RmlUi has no default style sheet: the block elements the screens use */
 div, p, h1, h2 { display: block; }
 p, h1, h2 { margin: 0; }
-span { display: inline; }
+span, em { display: inline; }
+em { color: #ffe55c; }
 
 body {
 	width: 100%;
 	height: 100%;
-	font-family: "Source Sans 3";
+	font-family: "M PLUS Rounded 1c";
 	font-size: 18dp;
-	color: #24202e;
-	background-color: #eeedf2;
+	color: #ffffff;
+	background-color: #3d160c;
 }
 
 .screen { position: relative; width: 100%; height: 100%; overflow: hidden; }
-.screen > div, .screen > img { position: absolute; }
-.plate, .foot, .mi, .srow, .btn, .col, .lead-block, .logbox, input.text { box-sizing: border-box; }
+.bg, .bg div { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+.stage { position: absolute; left: 50%; top: 50%; width: 1280dp; height: 800dp; margin-left: -640dp; margin-top: -400dp; }
+.stage > div, .stage > img { position: absolute; }
+.foot, .mi, .btn, .st, .srow, .card, .form, .tab, .head, .crumb, .logbox, input.text, .screen div.fill { box-sizing: border-box; }
+/* a control's face, under its words: the words are position: relative so that they draw over it */
+.screen div.fill { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
 
-/* ---- motion: a screen fades in as it opens (data-if makes it anew), the panel slides in from the left ---- */
+/* the slabs, cut in nine: grey, the chosen one's blue, the speech box's see-through blue */
+@spritesheet slab-grey { src: gen:panel?c0=8f8f8f&c1=5c5c5c&e=262626&l=ffffff&la=153; resolution: 2x; grey: 0px 0px 96px 96px; grey-in: 32px 32px 32px 32px; }
+@spritesheet slab-blue { src: gen:panel?c0=0a86d8&c1=0a9ae4&e=06305c&l=8fecff&la=255; resolution: 2x; blue: 0px 0px 96px 96px; blue-in: 32px 32px 32px 32px; }
+@spritesheet slab-talk { src: gen:panel?c0=1878d6&c1=0842a0&a=232&e=082f66&l=7fdcff&la=255&k=0; resolution: 2x; talk: 0px 0px 96px 96px; talk-in: 32px 32px 32px 32px; }
+
+/* ---- motion: a screen fades in as it opens (data-if makes it anew) and out as it is left (App::go waits 0.22 s with
+ * the screen marked leaving); rows step in one after another: each row's animation holds its first 40 % and the rows'
+ * durations grow down the list (data-style-animation in launcher.rml), so a lower row starts and ends later. (A delay
+ * would show the row in place until it starts: RmlUi animates from its start time.) ---- */
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes rise-in { from { opacity: 0; transform: translateY(14dp); } to { opacity: 1; transform: translateY(0); } }
-@keyframes panel-in { from { opacity: 0; transform: skewX(22deg) translateX(-60dp); } to { opacity: 1; transform: skewX(22deg) translateX(0); } }
-@keyframes wheel-in { from { opacity: 0; transform: rotate(-12deg); } to { opacity: 1; transform: rotate(0deg); } }
+@keyframes fade-out { from { opacity: 1; } to { opacity: 0; } }
 @keyframes pulse { from { opacity: 1; } to { opacity: 0.4; } }
-.screen { animation: 0.3s cubic-out fade-in; }
-.wedge, .stripe, .rule { animation: 0.4s cubic-out panel-in; }
-.wheel { animation: 0.8s cubic-out wheel-in; }
-.plate, .logo, .lead-block, .col { animation: 0.45s 0.1s cubic-out rise-in; }
-.band, .foot { animation: 0.45s 0.15s cubic-out fade-in; }
-/* The staircase rows step in one after another (quick start, gradual finish, as the game's menus): each row's animation
- * holds its first 40 % and the rows' durations grow down the stair (data-style-animation in launcher.rml), so a lower row
- * starts and ends later. (A delay would show the row in place until it starts: RmlUi animates from its start time.) */
+@keyframes bob { from { transform: translateX(0dp); } to { transform: translateX(7dp); } }
 @keyframes stair-in { 0% { opacity: 0; transform: translateX(-48dp); } 40% { opacity: 0; transform: translateX(-48dp); } 100% { opacity: 1; transform: translateX(0); } }
 /* (one name a section: a section change renames the rows' animation, which starts it again on rows kept in place) */
 @keyframes stair-in-r0 { 0% { opacity: 0; transform: translateX(48dp); } 40% { opacity: 0; transform: translateX(48dp); } 100% { opacity: 1; transform: translateX(0); } }
 @keyframes stair-in-r1 { 0% { opacity: 0; transform: translateX(48dp); } 40% { opacity: 0; transform: translateX(48dp); } 100% { opacity: 1; transform: translateX(0); } }
 @keyframes stair-in-r2 { 0% { opacity: 0; transform: translateX(48dp); } 40% { opacity: 0; transform: translateX(48dp); } 100% { opacity: 1; transform: translateX(0); } }
-/* the chosen bar's glow sweeps in from its left end */
-@keyframes sweep-in { from { transform: skewX(22deg) scaleX(0.55); } to { transform: skewX(22deg) scaleX(1); } }
-/* (opacity is inherited in RmlUi, not composited: a child with an opacity of its own would show through its row's fade, so the
- * halo, the chevron and the settings rows' glow hide by scale instead) */
+@keyframes stair-out { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(-40dp); } }
+@keyframes stair-out-r { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(40dp); } }
 /* a value that changed nudges the way it went (two names a direction: a second change the same way starts it again) */
 @keyframes bump-l-a { 0% { transform: translateX(0); } 35% { transform: translateX(-10dp); } 100% { transform: translateX(0); } }
 @keyframes bump-l-b { 0% { transform: translateX(0); } 35% { transform: translateX(-10dp); } 100% { transform: translateX(0); } }
 @keyframes bump-r-a { 0% { transform: translateX(0); } 35% { transform: translateX(10dp); } 100% { transform: translateX(0); } }
 @keyframes bump-r-b { 0% { transform: translateX(0); } 35% { transform: translateX(10dp); } 100% { transform: translateX(0); } }
-/* leaving a screen (App::go waits 0.22 s with the screen marked leaving): the panel draws back, the rest fades; the rows' inline animation (launcher.rml) becomes stair-out */
-@keyframes fade-out { from { opacity: 1; } to { opacity: 0; } }
-@keyframes panel-out { from { opacity: 1; transform: skewX(22deg) translateX(0); } to { opacity: 0; transform: skewX(22deg) translateX(-60dp); } }
-@keyframes stair-out { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(-40dp); } }
-@keyframes stair-out-r { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(40dp); } }
-.screen.leaving .wedge, .screen.leaving .stripe, .screen.leaving .rule { animation: 0.25s cubic-in panel-out; }
-.screen.leaving .plate, .screen.leaving .logo, .screen.leaving .lead-block, .screen.leaving .col, .screen.leaving .wheel, .screen.leaving .track, .screen.leaving progress,
-.screen.leaving .readout, .screen.leaving .actions, .screen.leaving .logbox, .screen.leaving .tabs, .screen.leaving .glow, .screen.leaving .band, .screen.leaving .foot { animation: 0.22s cubic-in fade-out; }
+.stage, .foot { animation: 0.3s cubic-out fade-in; }
+.screen.leaving .stage, .screen.leaving .foot { animation: 0.22s cubic-in fade-out; }
 
-/* ---- the stage: ground, the diagonal panel and its stripe ---- */
-/* (the stage is 1280 x 800 dp; a window of another shape is wider or taller, never smaller: the ground and the glow fill it, the two bands span its width) */
-.ground { left: 0; top: 0; width: 100%; height: 100%; decorator: image(gen:grad?d=v&c0=e9e8ee&c1=d3d1da fill); }
-.glow { left: 0; top: 0; width: 100%; height: 100%; decorator: image(gen:glow?x=0.7&y=0.45&rx=0.55&ry=0.7&c1=fbfbfd&a1=255&c0=fbfbfd&a0=0&stop=1 fill); }
-.wedge { left: -300dp; top: 0; width: 700dp; height: 800dp; transform: skewX(22deg); transform-origin: left top;
-	decorator: image(gen:grad?c0=120f1c&c1=221b36&p1=0.7&c2=2a2142 fill); }
-.stripe { left: 400dp; top: 0; width: 40dp; height: 800dp; transform: skewX(22deg); transform-origin: left top;
-	decorator: image(gen:grad?c0=2b2148&c1=3a2d62 fill); }
-.stripe img { position: absolute; left: 0; top: -20dp; width: 40dp; height: 840dp; }
-.rule { top: 0; width: 1dp; height: 800dp; transform: skewX(22deg); transform-origin: left top; background-color: #24202e59; }
-.rule.r1 { left: 450dp; }
-.rule.r2 { left: 455dp; }
-/* narrower panels: the two-column screens hold their text on the indigo side */
-.wide .wedge { width: 760dp; }
-.wide .stripe { left: 460dp; }
-.wide .rule.r1 { left: 510dp; }
-.wide .rule.r2 { left: 515dp; }
-/* on the text-heavy screens the wheel sits at the bottom left, lilac on the indigo side, as in the game's panel */
-.wide .wheel.dark { left: -10dp; top: 390dp; width: 320dp; height: 320dp; }
+/* ---- the lobby's backdrop: lamplight and pillars, out of focus ---- */
+.lobby .ground { decorator: image(gen:grad?d=v&c0=cf8029&c1=8f4215&p1=0.5&c2=3d160c fill); }
+.lobby .g1 { decorator: image(gen:glow?x=0.72&y=0.12&rx=0.42&ry=0.4&c1=fff3c4&a1=235&c0=fff3c4&a0=0&stop=1 fill); }
+.lobby .g2 { decorator: image(gen:glow?x=0.95&y=0.55&rx=0.2&ry=0.7&c1=ffd98a&a1=190&c0=ffd98a&a0=0&stop=1 fill); }
+.lobby .g3 { decorator: image(gen:glow?x=0.12&y=0.3&rx=0.3&ry=0.45&c1=f0a850&a1=170&c0=f0a850&a0=0&stop=1 fill); }
+.lobby .pil { width: 11%; decorator: image(gen:grad?c0=3c1408&a0=0&c1=3c1408&a1=150&p1=0.4&c2=ffc86e&a2=110&p2=0.75&c3=ffc86e&a3=0 fill); }
+.lobby .p1 { left: 8%; }
+.lobby .p2 { left: 27%; }
+.lobby .p3 { left: 47%; }
+.lobby .p4 { left: 78%; }
+.lobby .vg { decorator: image(gen:glow?x=0.5&y=0.45&rx=0.75&ry=0.8&c1=140602&a1=0&c0=140602&a0=165&stop=1 fill); }
 
-/* the wheel, in layers as the design page animates it: the outer rings turn once in two minutes, the inner one the other
- * way in under three, the gears in 10 and 14 s; the hands are turned to the local time by the model (hour_deg, minute_deg).
- * The gears are small squares placed at their centres (fractions of the 800 px drawing) so they turn about themselves. */
-.wheel { width: 660dp; height: 660dp; }
-.wheel img { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-@keyframes spin-back { from { transform: rotate(0deg); } to { transform: rotate(-360deg); } }
-.wheel .ring1 { animation: 120s linear infinite spin; }
-.wheel .ring2 { animation: 160s linear infinite spin-back; }
-.wheel .gear1, .wheel .gear2, .wheel .gear3 { width: 20%; height: 20%; }
-.wheel .gear1 { left: 27.26%; top: 24.81%; animation: 10s linear infinite spin-back; }
-.wheel .gear2 { left: 52.74%; top: 55.19%; animation: 14s linear infinite spin; }
-.wheel .gear3 { left: 62.54%; top: 36.08%; animation: 14s linear infinite spin; }
+/* ---- the hint bar ---- */
+.foot { position: absolute; left: 0; bottom: 0; width: 100%; height: 64dp; display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 44dp;
+	background-color: #00000099; border-top: 2dp #ffffff40; font-family: "Russo One"; font-size: 26dp; }
+.hint { display: flex; flex-direction: row; align-items: center; gap: 10dp; }
+.gl { width: 34dp; height: 34dp; }
 
-/* ---- the header plate, as on the gallery screens: the project's name, a lozenge, the screen's name ---- */
-.plate { left: 0; top: 30dp; height: 44dp; width: 340dp; display: flex; flex-direction: row; align-items: center; gap: 14dp; padding-left: 44dp;
-	decorator: image(gen:grad?c0=15111f&c1=1f1930&p1=0.55&c2=1f1930&a2=0 fill); color: #f3f0fb; font-weight: 600; font-size: 22dp; letter-spacing: 3dp; }
-.plate .crumb { font-size: 14dp; letter-spacing: 3dp; color: #d7ccf7; font-weight: 400; tab-index: auto; nav: auto; }
-.plate .crumb:focus { color: #ffffff; }
-.plate .sep { width: 7dp; height: 7dp; border: 1dp #d7ccf7; transform: rotate(45deg); }
+/* ---- the speech box: what the launcher has to say, under its speaker's name plate ---- */
+.dlg { left: 280dp; top: 626dp; width: 720dp; height: 94dp; }
+.dlg .fill { decorator: ninepatch(talk, talk-in); }
+.dlg .who { position: absolute; left: -50dp; top: -30dp; height: 40dp; line-height: 36dp; padding: 0 60dp; border: 2dp #262626;
+	decorator: image(gen:grad?d=v&c0=ffffff&c1=d4d4d4 fill); color: #1c1c1c; font-family: "Russo One"; font-size: 21dp; white-space: nowrap; }
+.dlg .say { position: absolute; left: 30dp; top: 6dp; width: 660dp; height: 88dp; display: flex; flex-direction: column; justify-content: center;
+	text-align: center; font-size: 25dp; line-height: 34dp; font-effect: shadow(0dp 2dp #001446b3); }
+.dlg.bad .say { color: #ffc9cf; }
 
-/* ---- the two bands at the bottom ---- */
-.band { left: 0; top: 674dp; width: 100%; height: 52dp; line-height: 52dp; text-align: center; background-color: #161220c7;
-	color: #f4f2fa; font-size: 22dp; letter-spacing: 2dp; white-space: nowrap; }
-.band.bad { color: #ffb3bd; }
-.foot { left: 0; top: 726dp; width: 100%; height: 74dp; display: flex; flex-direction: row; align-items: center; gap: 30dp; padding: 0 60dp;
-	decorator: image(gen:grad?d=v&c0=d6d4de&a0=240&c1=cccad4&a1=240 fill); color: #24202e; font-size: 20dp; }
-.foot .fl { font-size: 15dp; color: #5d5868; letter-spacing: 1dp; }
-.foot .grow { flex: 1; }
-.hint { display: flex; flex-direction: row; align-items: center; gap: 8dp; }
-.gl { width: 28dp; height: 28dp; }
-.key { height: 26dp; line-height: 24dp; padding: 0 8dp; border: 1dp #26222f; border-radius: 4dp; font-size: 13dp; font-weight: 600; color: #26222f; }
-
-/* ---- staircase bars: dark, fading out to the right; the focused one a violet to lavender to white glow ---- */
-.mi { height: 40dp; width: 330dp; display: flex; flex-direction: row; align-items: center; gap: 14dp; padding-left: 28dp; color: #f1eefa;
-	font-size: 22dp; letter-spacing: 2dp; white-space: nowrap; tab-index: auto; nav: vertical; }
-.mi .fill { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform: skewX(22deg); transform-origin: left bottom;
-	decorator: image(gen:grad?c0=141020&c1=1c162c&a1=235&p1=0.55&c2=1c162c&a2=0 fill); }
-.mi .halo { position: absolute; left: -40dp; top: -24dp; width: 110%; height: 88dp; transform: scale(0.001); pointer-events: none;
-	decorator: image(gen:glow?x=0.35&y=0.5&rx=0.55&ry=0.7&c1=8f75e6&a1=120&c0=8f75e6&a0=0&stop=1&edge=0.3 fill); transition: transform 0.2s cubic-out; }
-.mi .chev { position: absolute; left: -16dp; top: 0; height: 40dp; line-height: 38dp; font-size: 30dp; color: #ffffff; transform: translateX(-10dp) scale(0.001); transition: transform 0.15s cubic-out; }
+/* ---- the slabs' controls: menu rows and buttons. Lit is :focus, for the mouse too (App::hover_focus moves the focus):
+ * one is lit, never a hovered one and a focused one ---- */
+.mi { position: relative; height: 54dp; display: flex; flex-direction: row; align-items: center; gap: 14dp; padding: 0 26dp; color: #303030;
+	font-family: "Russo One"; font-size: 26dp; white-space: nowrap; tab-index: auto; nav: vertical; }
+.mi .fill, .btn .fill, .st .fill, .form { decorator: ninepatch(grey, grey-in); }
 .mi span { position: relative; }
-.mi .lbl { position: relative; display: flex; flex-direction: column; }
-.mi .sub { font-size: 13dp; letter-spacing: 1dp; color: #ffffffd1; line-height: 14dp; }
-.mi .num { font-family: "Marcellus"; font-size: 22dp; width: 34dp; text-align: right; color: #d7ccf7; }
-.mi .tag { font-size: 13dp; letter-spacing: 1dp; font-weight: 600; padding: 1dp 8dp; background-color: #e5334b; color: #ffffff; margin-left: 4dp; }
-.mi .dia { position: absolute; left: -38dp; top: 15dp; width: 9dp; height: 9dp; background-color: #a690ec; transform: rotate(45deg); }      /* a stage done: before the bar, clear of the name */
-/* lit is :focus, for the mouse too (App::hover_focus moves the focus): one bar is lit, never a hovered one and a focused one */
-.mi:focus, .mi.on { color: #ffffff; font-weight: 600; }
-.mi:focus .fill, .mi.on .fill { decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6&p1=0.4&c2=d6ccf7&a2=217&p2=0.7&c3=d6ccf7&a3=0 fill); animation: 0.3s cubic-out sweep-in; }
-.mi:focus .halo, .mi.on .halo { transform: scale(1); }
-.mi:focus .chev, .mi.on .chev { transform: translateX(0) scale(1); }
-.mi:focus .num, .mi.on .num { color: #ffffff; }
-.mi.dim { color: #f1eefa9e; }
-.mi.dim .num { color: #d7ccf799; }
-.mi.run .num { animation: 0.8s sine-in-out infinite alternate pulse; }
-.mi.fail .num, .mi.fail .sub { color: #ffb3bd; }
-
-/* ---- the title ---- */
-.logo { left: 60dp; top: 120dp; width: 420dp; font-family: "Marcellus"; font-size: 64dp; line-height: 70dp; letter-spacing: 4dp; color: #f3f0fb; }
-.title .wheel { left: 600dp; top: 40dp; }
-
-/* ---- the build screen ---- */
-.build .wheel { left: 600dp; top: 70dp; }
-.build .mi { tab-index: none; focus: none; }   /* the steps show the build, they do nothing: the keys, the mouse and clicks stay on the buttons */
-/* the progress ring on the wheel's grey band (the wheel's box is 660dp at 600, 70: its centre 930, 400; the band at 0.79 of its half) */
-.build .track { left: 660dp; top: 130dp; width: 540dp; height: 540dp; }
-.build progress { position: absolute; left: 660dp; top: 130dp; width: 540dp; height: 540dp; fill-image: gen:ring?c=6a49d0&w=16; }
-.readout { left: 72dp; top: 536dp; display: flex; flex-direction: row; align-items: baseline; gap: 14dp; color: #f4f2fa; white-space: nowrap; }
-.readout .pct { font-family: "Marcellus"; font-size: 64dp; line-height: 64dp; }
-.readout .pct span { font-size: 30dp; color: #d7ccf7; }
-.readout .aside { font-size: 18dp; letter-spacing: 1dp; color: #d7ccf7; }
-.actions { left: 60dp; top: 616dp; display: flex; flex-direction: row; gap: 16dp; }
-.btn { position: relative; height: 38dp; line-height: 38dp; padding: 0 24dp 0 22dp; color: #f1eefa; font-size: 17dp; letter-spacing: 2dp; white-space: nowrap;
+/* (opacity is inherited in RmlUi, not composited: a child with an opacity of its own would show through its row's fade, so
+ * the pointer hides by scale instead) */
+.mi .ptr { position: absolute; left: -38dp; top: 13dp; width: 0; height: 0; border-left: 24dp #ffffff; border-top: 14dp transparent; border-bottom: 14dp transparent; transform: scale(0.001); }
+.mi .tag { font-size: 14dp; padding: 2dp 9dp; background-color: #e5283c; border: 1dp #ffffff; color: #ffffff; font-effect: none; }
+.mi.dim { color: #303030b0; }
+.mi:focus, .btn:focus { color: #ffffff; font-effect: shadow(0dp 2dp #002850b3); }
+.mi:focus .fill, .btn:focus .fill, .card .fill { decorator: ninepatch(blue, blue-in); }
+.mi:focus .ptr { transform: scale(1); animation: 0.7s sine-in-out infinite alternate bob; }
+.btn { position: relative; height: 54dp; line-height: 52dp; padding: 0 34dp; color: #303030; font-family: "Russo One"; font-size: 24dp; text-align: center; white-space: nowrap;
 	tab-index: auto; nav: auto; }
-.btn .fill { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform: skewX(22deg); transform-origin: left bottom;
-	decorator: image(gen:grad?c0=2b2148&c1=3a2d62 fill); }
 .btn span { position: relative; }
-.btn:focus { color: #ffffff; font-weight: 600; }
-.btn:focus .fill { animation: 0.3s cubic-out sweep-in; }
-.btn:focus .fill { decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6 fill); }
-.btn.primary .fill { decorator: image(gen:grad?c0=6a49d0&c1=8f75e6 fill); }
-.btn.primary:focus .fill { decorator: image(gen:grad?c0=8f75e6&c1=a690ec fill); }
-.btn.light { color: #24202e; }
-.btn.light .fill { decorator: image(gen:grad?c0=dddbe3&c1=e9e8ee fill); }
-.btn.light:focus { color: #ffffff; }
-.btn.light:focus .fill { decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6 fill); }
-.logbox { left: 620dp; top: 440dp; width: 620dp; height: 214dp; padding: 12dp 16dp; background-color: #161220d9; font-size: 14dp; line-height: 21dp; color: #d7ccf7; overflow: hidden; }
-.error { color: #ffb3bd; font-size: 16dp; line-height: 22dp; }
+.btn.primary { color: #ffffff; }
+.actions { display: flex; flex-direction: row; gap: 16dp; }
+.error { color: #ffc9cf; font-size: 16dp; line-height: 22dp; }
 
-/* ---- two-column screens: the indigo side explains, the pearl side holds the rows ---- */
-.lead-block { left: 56dp; top: 120dp; width: 400dp; display: flex; flex-direction: column; gap: 14dp; color: #f4f2fa; }
-.lead-block h2 { font-family: "Marcellus"; font-weight: 400; font-size: 36dp; line-height: 40dp; }
-.lead-block .flourish { width: 190dp; height: 2dp; decorator: image(gen:fade?c=a690ec fill); }
-.lead-block p { font-size: 17dp; line-height: 25dp; letter-spacing: 0.5dp; color: #d7ccf7; }
-.lead-block p em { color: #ffffff; font-style: normal; }
-.lead-block p.small { font-size: 15dp; line-height: 21dp; }   /* a long note, clear of the wheel below */
-.lead-block .facts { display: flex; flex-direction: column; gap: 6dp; font-size: 15dp; letter-spacing: 0.5dp; color: #d7ccf7b3; }
-.lead-block .actions { position: relative; left: 0; top: 0; margin-top: 8dp; }
-.col { left: 640dp; top: 110dp; width: 600dp; height: 540dp; display: flex; flex-direction: column; gap: 14dp; }
-/* the column's lower parts step right, clear of the diagonal, as the staircases do */
-.col .row { margin-left: 30dp; }
-.col .rows { margin-left: 120dp; }
-.col .actions { margin-left: 160dp; }
-.col .empty, .col .error { margin-left: 80dp; }
-.label { font-size: 13dp; letter-spacing: 3dp; font-weight: 600; color: #6a49d0; }
-.field-row { display: flex; flex-direction: row; gap: 12dp; align-items: center; }
-input.text { flex: 1; height: 46dp; padding: 0 16dp; line-height: 44dp; background-color: #ffffffb3; border: 1dp #24202e4d; color: #24202e; font-size: 18dp; tab-index: auto; nav: auto; }
-input.text:focus { border-color: #6a49d0; }
+/* ---- the title: the name, the menu, the build as a save slot ---- */
+.logo { left: 60dp; top: 30dp; font-family: "Russo One"; font-size: 60dp; letter-spacing: 2dp; text-transform: uppercase; white-space: nowrap;
+	font-effect: outline(2dp #06305c), shadow(0dp 5dp #06305c); }
+.logo .sub { margin-left: 16dp; font-size: 22dp; letter-spacing: 8dp; color: #ffe55c; font-effect: shadow(0dp 2dp #3d160c); }
+.menu { left: 76dp; top: 150dp; width: 440dp; display: flex; flex-direction: column; gap: 8dp; }
+.card { left: 600dp; top: 150dp; width: 620dp; height: 176dp; display: flex; flex-direction: row; align-items: center; gap: 26dp; padding: 22dp 26dp; }
+.card .thumb { position: relative; flex-shrink: 0; width: 170dp; height: 124dp; line-height: 118dp; border: 3dp #f2f2f2; text-align: center;
+	decorator: image(gen:grad?d=v&c0=9a9a9a&c1=6e6e6e fill); font-family: "Russo One"; font-size: 44dp; color: #ffffffb0; }
+.card .txt { position: relative; flex: 1; }
+.card .t { font-family: "Russo One"; font-size: 30dp; font-effect: shadow(0dp 2dp #002850b3); }
+.card .d { margin-top: 8dp; font-size: 18dp; line-height: 26dp; }
 
+/* ---- the header of the screens under the title: the project's name (back to the title), the screen's ---- */
+.crumb { left: 40dp; top: 30dp; height: 46dp; line-height: 40dp; padding: 0 26dp; background-color: #0a86d8; border: 2dp #06305c;
+	font-family: "Russo One"; font-size: 20dp; white-space: nowrap; }
+.crumb .home { color: #cfeeff; tab-index: auto; nav: auto; }
+.crumb .home:focus { color: #ffe55c; }
+.crumb .sep { margin: 0 14dp; color: #8fecff; }
+
+/* ---- the dump ---- */
+.setup .dlg { left: 190dp; top: 122dp; width: 950dp; height: 96dp; }
+.setup .dlg .say { width: 890dp; font-size: 23dp; line-height: 32dp; }
+.form { left: 140dp; top: 238dp; width: 1000dp; padding: 18dp 30dp; display: flex; flex-direction: column; gap: 8dp; color: #1e1e1e; }
+.form > div { position: relative; }
+.label { font-family: "Russo One"; font-size: 15dp; letter-spacing: 3dp; color: #ffffff; }
+.field-row { display: flex; flex-direction: row; gap: 14dp; align-items: center; }
+input.text { flex: 1; height: 54dp; padding: 0 16dp; line-height: 50dp; background-color: #ececec; border: 2dp #262626; color: #1e1e1e; font-size: 18dp; tab-index: auto; nav: auto; }
+input.text:focus { border-color: #0a86d8; }
 .rows { display: flex; flex-direction: column; min-height: 0; flex-shrink: 1; overflow-y: auto; }
+.form .rows { max-height: 150dp; }
 /* an unstyled scrollbar takes the box's whole width and squeezes the rows to a word per line */
 scrollbarvertical { width: 6dp; }
-scrollbarvertical slidertrack { background-color: #24202e1a; }
-scrollbarvertical sliderbar { background-color: #6a49d080; min-height: 24dp; }
-scrollbarvertical sliderbar:hover, scrollbarvertical sliderbar:active { background-color: #6a49d0; }
+scrollbarvertical slidertrack { background-color: #00000030; }
+scrollbarvertical sliderbar { background-color: #ffffff90; min-height: 24dp; }
+scrollbarvertical sliderbar:hover, scrollbarvertical sliderbar:active { background-color: #ffffff; }
 scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; height: 0; }
-.row { display: flex; flex-direction: row; align-items: center; gap: 16dp; padding: 11dp 8dp; font-size: 18dp; letter-spacing: 0.5dp; border-bottom: 1dp #24202e40; }
+.row { display: flex; flex-direction: row; align-items: center; gap: 16dp; padding: 7dp 0; border-top: 1dp #00000040; }
 .row .grow { flex: 1; }
-.row .right { color: #5d5868; }
-.row .diamond { width: 10dp; height: 10dp; flex-shrink: 0; transform: rotate(45deg); background-color: #a690ec; }
-.row.done .diamond { background-color: #6a49d0; }
-.row.run .diamond { background-color: transparent; border: 2dp #6a49d0; animation: 0.8s sine-in-out infinite alternate pulse; }
-.row.run .right { color: #6a49d0; }
-.row.wait { color: #5d5868; }
-.row.wait .diamond { background-color: transparent; border: 1dp #5d5868; }
-.row.fail .diamond { background-color: #e5334b; }
-.row.fail { color: #b3202f; }
-.row .what { display: flex; flex-direction: column; gap: 2dp; flex: 1; }
+.row .what { display: flex; flex-direction: column; flex: 1; }
 .row .name { font-size: 19dp; }
-.row .note { font-size: 14dp; color: #5d5868; }
+.row .note { font-size: 15dp; color: #1e1e1ed0; }
+.row .diamond { width: 11dp; height: 11dp; margin: 0 4dp; flex-shrink: 0; transform: rotate(45deg); background-color: #262626; }
+.row.done .diamond { background-color: #3fe048; border: 1dp #262626; }
+.row.run .diamond { background-color: #35c4ff; border: 1dp #262626; animation: 0.8s sine-in-out infinite alternate pulse; }
+.row.wait { color: #1e1e1e99; }
+.row.wait .diamond { background-color: transparent; border: 1dp #262626; }
+.row.fail { color: #7a0010; }
+.row.fail .diamond { background-color: #e5283c; }
+.form .actions { justify-content: flex-end; align-items: center; margin-top: 4dp; }
+.form .hold { flex: 1; font-size: 18dp; color: #ffffff; font-effect: shadow(0dp 1dp #00000090); }
+.fl { left: 0; top: 700dp; width: 1280dp; text-align: center; color: #ffe9c4; font-size: 17dp; font-effect: shadow(0dp 1dp #000000c0); }
 
-/* ---- switches (mods, the dump options): drawn by gen:pill, smooth at any size ---- */
-.switch { position: relative; width: 54dp; height: 28dp; flex-shrink: 0; tab-index: auto; nav: vertical; decorator: image(gen:pill?w=108&h=56&c=24202e&a=110&l=2 fill); }
-/* mods: the list scrolls, and arrows do not leave a scrolling box by themselves */
-.rows .switch { nav-left: #mods_open; }
-#mods_open { nav-right: #mod0; }   /* (Apply and rebuild, left of it, goes right to it by itself) */
-.switch .knob { position: absolute; left: 4dp; top: 4dp; width: 20dp; height: 20dp; decorator: image(gen:pill?w=40&h=40&f=5d5868 fill); transition: left 0.18s cubic-out; }
-.switch.on { decorator: image(gen:pill?w=108&h=56&f=6a49d0 fill); }
+/* ---- switches (the dump's options, mods): drawn by gen:pill, smooth at any size ---- */
+.switch { position: relative; width: 54dp; height: 28dp; flex-shrink: 0; tab-index: auto; nav: vertical; decorator: image(gen:pill?w=108&h=56&f=4a4a4a&c=262626&l=4 fill); }
+.switch .knob { position: absolute; left: 4dp; top: 4dp; width: 20dp; height: 20dp; decorator: image(gen:pill?w=40&h=40&f=bbbbbb fill); transition: left 0.18s cubic-out; }
+.switch.on { decorator: image(gen:pill?w=108&h=56&f=0a9ae0&c=262626&l=4 fill); }
 .switch.on .knob { left: 30dp; decorator: image(gen:pill?w=40&h=40&f=ffffff fill); }
-.switch:focus { decorator: image(gen:pill?w=108&h=56&c=6a49d0&l=4 fill); }
-.switch.on:focus { decorator: image(gen:pill?w=108&h=56&f=6a49d0&c=24202e&l=4 fill); }
-.tag { font-size: 12dp; letter-spacing: 2dp; font-weight: 600; color: #6a49d0; border: 1dp #6a49d080; padding: 4dp 8dp; }
-.empty { font-size: 18dp; color: #5d5868; padding: 20dp 0; line-height: 26dp; width: 420dp; }
+.switch:focus { decorator: image(gen:pill?w=108&h=56&f=4a4a4a&c=ffffff&l=6 fill); }
+.switch.on:focus { decorator: image(gen:pill?w=108&h=56&f=0a9ae0&c=ffffff&l=6 fill); }
 
-/* ---- settings: the three sections as tabs over the rows, then a staircase of rows on the pearl side, the value in violet ---- */
-.tabs { left: 520dp; top: 44dp; width: 760dp; display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 40dp; }
-.tabs .gl { margin-bottom: 2dp; }
-.tab { position: relative; padding: 6dp 2dp 8dp 2dp; font-size: 15dp; font-weight: 600; letter-spacing: 3dp; color: #5d5868;
-	border-bottom: 2dp transparent; }   /* Q / E (the shoulders) and a click change the section; the arrows stay on the rows */
+/* ---- the build: its steps as floors, the lift's dial, the count ---- */
+.steps { left: 76dp; top: 106dp; width: 480dp; display: flex; flex-direction: column; gap: 10dp; }
+.st { position: relative; height: 72dp; display: flex; flex-direction: row; align-items: center; gap: 18dp; padding: 0 22dp 0 16dp; color: #303030; white-space: nowrap; }
+.st .n { position: relative; flex-shrink: 0; width: 64dp; height: 50dp; line-height: 44dp; border: 2dp #f2f2f2; text-align: center;
+	decorator: image(gen:grad?d=v&c0=9a9a9a&c1=6e6e6e fill); font-family: "Russo One"; font-size: 24dp; color: #ffffff; }
+.st .lbl { position: relative; flex: 1; }
+.st .t { font-family: "Russo One"; font-size: 22dp; }
+.st .note, .st .right { font-size: 15dp; }
+.st .right { position: relative; }
+.st.run { color: #ffffff; font-effect: shadow(0dp 2dp #002850b3); }
+.st.run .fill { decorator: ninepatch(blue, blue-in); }
+.st.run .n { decorator: image(gen:grad?d=v&c0=35c4ff&c1=0a86d8 fill); animation: 0.8s sine-in-out infinite alternate pulse; }
+.st.done .n { decorator: image(gen:grad?d=v&c0=3fd24a&c1=1f8a28 fill); }
+.st.dim { color: #303030a0; }
+.st.fail .n { decorator: image(gen:grad?d=v&c0=ff5262&c1=c01428 fill); }
+.st.fail .right { color: #7a0010; }
+/* the dial: its centre at 260, 260 of this box, the plate's rim 260 dp out, the floors between the arcs at 230 and 160
+ * (each floor's name 195 dp out, 36 degrees apart: #floor0 to #floor4), the hand turned to the floor in work */
+.dial { left: 650dp; top: 110dp; width: 520dp; height: 284dp; }
+.dial .half { position: absolute; left: 0; top: 0; width: 520dp; height: 260dp; overflow: hidden; clip: always; }   /* (always: a box clips by itself only what it could scroll to) */
+.dial img, .dial .spoke, .dial .floor, .dial .hand, .dial .base { position: absolute; }
+.dial .plate { left: 0; top: 0; width: 520dp; height: 520dp; }
+.dial .arc1 { left: 30dp; top: 30dp; width: 460dp; height: 460dp; }
+.dial .arc2 { left: 100dp; top: 100dp; width: 320dp; height: 320dp; }
+.dial .spoke { left: 260dp; top: 259dp; width: 70dp; height: 2dp; transform-origin: 0 50%; background-color: #f5c04a; }
+.dial .floor { width: 80dp; height: 40dp; line-height: 40dp; text-align: center; font-family: "Russo One"; font-size: 28dp; color: #8a6a34; }
+.dial .floor.done { color: #f5c04a; }
+.dial .floor.on { color: #ffffff; font-size: 36dp; }
+#floor0 { left: 35dp; top: 180dp; }
+#floor1 { left: 105dp; top: 82dp; }
+#floor2 { left: 220dp; top: 45dp; }
+#floor3 { left: 335dp; top: 82dp; }
+#floor4 { left: 405dp; top: 180dp; }
+.dial .hand { display: none; left: 256dp; top: 108dp; width: 8dp; height: 152dp; transform-origin: 50% 100%; background-color: #ffffff; border: 2dp #06305c; }
+.dial .hand.on { display: block; }
+.dial .base { left: 0; top: 257dp; width: 520dp; height: 5dp; background-color: #f5c04a; }
+.dial .hub { left: 240dp; top: 240dp; width: 40dp; height: 40dp; }
+.readout { left: 650dp; top: 398dp; width: 520dp; text-align: center; white-space: nowrap; }
+.readout .pct { font-family: "Russo One"; font-size: 72dp; line-height: 74dp; font-effect: shadow(0dp 5dp #3d160c); }
+.readout .aside { font-size: 19dp; line-height: 28dp; color: #ffe9c4; font-effect: shadow(0dp 1dp #000000c0); }
+.build .actions { left: 650dp; top: 516dp; width: 520dp; justify-content: center; }
+.logbox { left: 620dp; top: 96dp; width: 600dp; height: 400dp; padding: 14dp 18dp; background-color: #0a0a0ee6; border: 2dp #262626; font-size: 14dp; line-height: 21dp; color: #bfe9ff; overflow: hidden; }
+
+/* ---- the handheld monitor: the settings in green, the mods in red ---- */
+.green .ground { decorator: image(gen:crt?c=1c9a22&d=064a0c&b=46e650&z0=70122a&z1=3a0612 fill); }
+.red .ground { decorator: image(gen:crt?c=a81428&d=480610&b=ff646e&z0=40101c&z1=1c040a fill); }
+.crt .foot { background-color: #000000b8; }
+.tabs { left: 0; top: 78dp; width: 1280dp; display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 18dp; }
+.tabs.left { justify-content: flex-start; padding-left: 96dp; }
+/* Q / E (the shoulders) and a click change the section; the arrows stay on the rows */
+.tab { position: relative; height: 50dp; line-height: 42dp; padding: 0 34dp; border: 3dp #3fe048; background-color: #26a02eb3; color: #04300a;
+	font-family: "Russo One"; font-size: 23dp; white-space: nowrap; transform: skewX(-8deg); }
 .tab div { position: relative; }
-.tab:hover { color: #24202e; }
-.tab.on { color: #6a49d0; border-bottom-color: #a690ec; }
-.srow { height: 50dp; width: 500dp; display: flex; flex-direction: row; align-items: center; padding: 0 16dp 0 30dp; font-size: 19dp; letter-spacing: 0.5dp; color: #24202e;
-	tab-index: auto; nav: vertical; border-bottom: 1dp #24202e40; }
-.srow .fill { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform: skewX(22deg) scaleX(0.001); transform-origin: left bottom;
-	decorator: image(gen:grad?c0=5a3cc4&c1=8f75e6&p1=0.55&c2=a690ec&a2=140 fill); transition: transform 0.25s cubic-out; }
-.srow .chev { position: absolute; left: 4dp; top: 0; height: 50dp; line-height: 48dp; font-size: 30dp; color: #ffffff; transform: scale(0.001); transition: transform 0.15s cubic-out; }
-.srow .k { position: relative; flex: 1; display: flex; flex-direction: column; }
-.srow .k div { position: relative; }
-.srow .k .note { font-size: 12dp; color: #5d5868; line-height: 14dp; white-space: nowrap; }
-.srow .v { position: relative; width: 180dp; display: flex; flex-direction: row; justify-content: space-between; align-items: center; color: #6a49d0; font-weight: 600; }
-.srow .v .arrow { width: 28dp; text-align: center; color: #6a49d08c; font-weight: 400; font-size: 24dp; }
-.srow .v .arrow:hover { color: #6a49d0; }
+.tab:hover { color: #ffffff; }
+.tab.on { background-color: #2fcc38; border-color: #dfffe0; color: #ffffff; }
+.red .tab { border-color: #ff5f6c; background-color: #780c1ccc; color: #ffd3d6; }
+.red .tab.on { background-color: #f0283e; border-color: #ffe0e3; color: #ffffff; }
+.red .tab.home { tab-index: auto; nav: auto; }
+.red .tab.home:focus { border-color: #ffffff; color: #ffffff; }
+/* what a screen has to say, on the glass above the hint bar */
+.line { left: 0; width: 1280dp; text-align: center; font-size: 19dp; color: #b4ffb8; }
+.red .line { color: #ffc0c6; }
+.line.l0 { top: 608dp; font-size: 16dp; }
+.line.l1 { top: 644dp; }
+.line.l2 { top: 678dp; }
+
+/* settings: a row a setting, the value between its arrows; the chosen row fills from its left end */
+.slist { left: 300dp; top: 150dp; width: 680dp; display: flex; flex-direction: column; gap: 10dp; }
+.srow { position: relative; height: 60dp; display: flex; flex-direction: row; align-items: center; gap: 16dp; padding: 0 20dp 0 28dp; border: 3dp #3fe048; background-color: #26a02eb3; color: #04300a;
+	tab-index: auto; nav: vertical; }
+.srow .fill { transform: scaleX(0.001); transform-origin: left center; transition: transform 0.25s cubic-out; decorator: image(gen:grad?d=v&c0=3ee046&c1=1fb828 fill); }
+.srow .k { position: relative; flex: 1; display: flex; flex-direction: column; font-family: "Russo One"; font-size: 23dp; line-height: 26dp; white-space: nowrap; }
+.srow .k .note { font-family: "M PLUS Rounded 1c"; font-size: 14dp; line-height: 17dp; }
+.srow .v { position: relative; width: 250dp; display: flex; flex-direction: row; justify-content: space-between; align-items: center; font-family: "Russo One"; font-size: 21dp; }
+.srow .v .arrow { width: 30dp; text-align: center; font-size: 28dp; }
 .srow .v .value { flex: 1; text-align: center; }
-.srow:focus { color: #ffffff; border-bottom-color: transparent; }
-.srow:focus .fill { transform: skewX(22deg) scaleX(1); }
-.srow:focus .chev { transform: scale(1); }
-.srow:focus .k .note { color: #ffffffd1; }
-.srow:focus .v, .srow:focus .v .arrow { color: #ffffff; }
-.srow .btn { height: 32dp; line-height: 32dp; font-size: 14dp; padding: 0 16dp; }
-/* (.srow .fill, the row's glow, would hide a button's own fill until the row itself is lit, and fight its sweep animation) */
-.srow .btn .fill { transform: skewX(22deg); transition: none; }
-/* the converted textures: the row is not a stop of its own, its buttons are (up and down as the rows; left and right between them: App::key) */
+.srow:focus { color: #ffffff; border-color: #dfffe0; }
+.srow:focus .fill { transform: scaleX(1); }
+/* the converted textures and the shortcut: the row is not a stop of its own, its buttons are (up and down as the rows;
+ * left and right between them: App::key) */
 .srow.tex { tab-index: none; }
-.srow.tex .v { width: 220dp; }   /* its two buttons side by side; its own words are short */
-.srow.tex .btn { nav: vertical; }
-.saved { display: flex; flex-direction: row; align-items: center; gap: 8dp; font-size: 15dp; color: #24202e; letter-spacing: 0.5dp; }
-.reddot { width: 10dp; height: 10dp; border-radius: 5dp; background-color: #e5334b; }
+.srow.tex .v { width: auto; justify-content: flex-end; gap: 10dp; }
+.srow .btn { height: 36dp; line-height: 28dp; padding: 0 16dp; font-size: 15dp; nav: vertical; }
+
+/* the monitor's buttons: bordered, as its rows */
+.crt .btn { color: #b4ffb8; }
+.crt .btn .fill { transform: none; transition: none; decorator: none; background-color: #064a0c; border: 3dp #3fe048; }
+.crt .btn:focus { color: #ffffff; font-effect: none; }
+.crt .btn:focus .fill { decorator: none; background-color: #2fcc38; border-color: #ffffff; }
+.red .btn { color: #ffd3d6; }
+.red .btn .fill { background-color: #780c1ccc; border-color: #ff5f6c; }
+.red .btn:focus .fill { background-color: #f0283e; border-color: #ffffff; }
+
+/* mods: what they are on the left, the list on the right */
+.head { left: 96dp; top: 160dp; width: 430dp; height: 54dp; line-height: 52dp; padding: 0 22dp; decorator: image(gen:grad?d=v&c0=ff5262&c1=e21c36 fill); font-family: "Russo One"; font-size: 26dp; }
+.para { left: 100dp; top: 236dp; width: 420dp; font-size: 20dp; line-height: 31dp; }
+.para p { margin-bottom: 22dp; }
+.red .actions { left: 96dp; top: 500dp; width: 430dp; flex-direction: column; gap: 12dp; }
+.col { left: 580dp; top: 160dp; width: 604dp; height: 480dp; display: flex; flex-direction: column; gap: 14dp; }
+.red .row { height: 66dp; margin-bottom: 11dp; padding: 0 20dp 0 24dp; box-sizing: border-box; border: 3dp #ff5f6c; background-color: #780c1ccc; color: #ffffff; }
+.red .row .name { font-family: "Russo One"; font-size: 23dp; line-height: 27dp; }
+.red .row .note { color: #ffd3d6; line-height: 18dp; }
+.red .row:focus { border-color: #ffffff; background-color: #c8182ee0; }
+.red .switch { decorator: image(gen:pill?w=108&h=56&f=3a0810&c=ff5f6c&l=4 fill); }
+.red .switch.on { decorator: image(gen:pill?w=108&h=56&f=ff5f6c&c=ff5f6c&l=4 fill); }
+.red .switch:focus { decorator: image(gen:pill?w=108&h=56&f=3a0810&c=ffffff&l=6 fill); }
+.red .switch.on:focus { decorator: image(gen:pill?w=108&h=56&f=ff5f6c&c=ffffff&l=6 fill); }
+/* the list scrolls, and arrows do not leave a scrolling box by themselves */
+.rows .switch { nav-left: #mods_open; }
+#mods_open { nav-right: #mod0; }   /* (Apply and rebuild, above it, goes right to it by itself) */
+.tag { padding: 3dp 9dp; border: 2dp #ffd3d6; color: #ffd3d6; font-family: "Russo One"; font-size: 13dp; letter-spacing: 2dp; }
+.empty { width: 480dp; font-size: 19dp; line-height: 28dp; color: #ffd3d6; }

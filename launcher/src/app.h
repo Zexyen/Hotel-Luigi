@@ -61,7 +61,6 @@ private:
 	// what the screens show (the data model "wt")
 	Rml::String screen = "title";
 	bool built = false, status_bad = false;
-	float hour_deg = 0, minute_deg = 0;   // the title dial's hands, at this machine's local time
 	Rml::String status_title, status_line, footer_info, version;
 	std::vector<MenuRow> menu;
 	Rml::String update_tag;            // a newer release to install, or empty
@@ -85,8 +84,6 @@ private:
 	bool mods_rebuild = false;
 	std::vector<SettingRow> settings;  // the rows of the tab shown
 	int tab = 0;
-	float row_step = 26;              // dp each settings row steps right of the one above (refresh_settings)
-	float row_pitch = 56;             // dp from one settings row's top to the next one's
 	bool leaving = false;                  // a screen is on its way out (its leaving animations play); next_screen then opens
 	Rml::String next_screen; double leave_at = 0;
 	int bump_count[64] = {};               // per setting row: how many changes, signed by the last one                       // settings: 0 Display, 1 Graphics, 2 Controls
@@ -123,7 +120,6 @@ private:
 	void hover_focus();
 	void back();
 	void tick();
-	void tick_clock();
 	void draw();
 	void rescale();
 	void focus_first();
