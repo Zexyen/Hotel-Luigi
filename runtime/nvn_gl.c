@@ -5878,7 +5878,9 @@ static const TexPackEntry *pack_find(const Tex *t, const uint8_t *src) {
  * 30 frames before. A job copies the texture's bytes first and keeps the copy: nvn_front_tex_read uses the result only if the
  * memory still equals it, so what the game writes later is never missed. Whichever of worker and render thread lets go of a
  * job second frees it (owner). With the BC7 pack a job finds the texture there instead (bc7 = 1: out holds BC7 blocks).
- * WT_TEXPREP_THREADS=<n> (default 3, 0 = at the draw, as before); WT_TEXPREP_CHECK=1 (test) decodes again at the draw and
+ * WT_TEXPREP_THREADS=<n> (default: half of the CPU's threads, 3 to 8; 0 = at the draw, as before). [lm3] It was 3 everywhere:
+ * loading a save on 16 threads left 51 textures to be decoded at their draw (699 made or read at their use in play frames,
+ * a 182 ms frame), with 8: none (38, 59 ms). WT_TEXPREP_CHECK=1 (test) decodes again at the draw and
  * compares; WT_TEXPACK_CHECK=1 (test) compares the pack's texels with the decode and prints the worst level. */
 typedef struct TexPrep { struct TexPrep *next; Tex *t; const uint8_t *src; size_t size, bytes; uint8_t *snap, *out; volatile LONG owner; int ok, bc7; } TexPrep;
 static TexPrep *g_tp_head, *g_tp_tail;
@@ -5954,7 +5956,9 @@ int nvn_front_tex_prep(Tex *t, size_t *bytes) {
     }
     if (g_tp_n < 0) {
         const char *e = getenv("WT_TEXPREP_THREADS");
-        g_tp_n = e ? atoi(e) : 3;
+        SYSTEM_INFO si; GetSystemInfo(&si);
+        int half = (int)si.dwNumberOfProcessors / 2;
+        g_tp_n = e ? atoi(e) : half < 3 ? 3 : half > 8 ? 8 : half;
         if (getenv("WT_ASTC_DUMP") || getenv("WT_ASTC_LOG") || getenv("WT_TEX_RAWDUMP") || g_tp_n < 0) g_tp_n = 0;
         if (g_tp_n) { InitializeCriticalSection(&g_tp_lock); g_tp_go = CreateEventA(NULL, FALSE, FALSE, NULL); }
         for (int k = 0; k < g_tp_n; k++) { HANDLE h = CreateThread(NULL, 0, tp_worker, NULL, 0, NULL); SetThreadPriority(h, THREAD_PRIORITY_BELOW_NORMAL); CloseHandle(h); }

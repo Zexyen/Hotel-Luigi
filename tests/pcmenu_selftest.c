@@ -82,6 +82,11 @@ int main(int argc, char **argv) {
     assert(gfx_ini_get("vsync", buf, sizeof buf) && !strcmp(buf, "clock"));
     assert(fabsf(gfx_options()->aspect_ratio - 21.0f / 9.0f) < 1e-5f && fabs(atof(getenv("RECOMPS_ASPECT")) - 21.0 / 9.0) < 1e-5);      /* <w>:<h>, handed on */
     assert(gfx_options()->hud_centre == 1 && !strcmp(getenv("RECOMPS_HUD_CENTRE"), "1"));
+    {   /* the windowed size: the picture's shape at the file's height, made smaller to fit the screen */
+        int w, h;
+        gfx_window_size(0, 0, &w, &h); assert(w == gfx_options()->height * 21 / 9 && h == gfx_options()->height);
+        gfx_window_size(h, h, &w, &h); assert(w == gfx_options()->height && h == (gfx_options()->height * 9 + 10) / 21);
+    }
     assert(!gfx_ini_get("aspect", buf, sizeof buf));
     assert(gfx_option_set("vsync", "off") && gfx_options()->present == 2);
     char *s = slurp(ini);

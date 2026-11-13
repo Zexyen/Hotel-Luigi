@@ -110,9 +110,10 @@ static const char *const k_default_ini =
 "aspect = keep\r\n"
 "\r\n"
 "; aspect_ratio = 16:9 | auto | <width>:<height>      (Vulkan; experimental; applies at the next start)\r\n"
-";   The shape of the game's own picture. 16:9: as made (\"Fixed\" in the game's Options). auto: the window's shape\r\n"
-";   at the start (borderless and fullscreen: the monitor's; \"Unlocked\"). Or a shape: 21:9, 32:9, 16:10, 9:10 ...\r\n"
-";   (or a number, 2.37). Wider than 16:9 shows more at the sides, narrower more above and below.\r\n"
+";   The shape of the game's own picture. 16:9: as made (\"Fixed\" in the game's Options). auto: the monitor's shape\r\n"
+";   (\"Unlocked\"). Or a shape: 21:9, 32:9, 16:10, 9:10 ... (or a number, 2.37). Wider than 16:9 shows more at the\r\n"
+";   sides, narrower more above and below. A windowed game's window takes this shape (the height above, the width by\r\n"
+";   it) and is made smaller when the screen has no room for it.\r\n"
 "aspect_ratio = 16:9\r\n"
 "\r\n"
 "; hud_area = screen | 16:9      (with aspect_ratio wider than 16:9; at once)\r\n"
@@ -401,14 +402,26 @@ static char *ini_read_all(const char *path, size_t *len) {
     fclose(f);
     return b;
 }
-/* [witchtime] aspect_ratio = auto: the game's screen takes the window's shape (its client size in pixels; borderless and
- * fullscreen: the monitor's), told before the game starts (display.c, before g_ready). 16:9 within 1 % stays the game's own. */
+/* [witchtime] aspect_ratio = auto: the game's screen takes the monitor's shape (w x h), told before the game starts
+ * (display.c, before g_ready). 16:9 within 1 % stays the game's own. ([lm3] in every window mode: a windowed game's
+ * 16:9 window answered 16:9 on an ultrawide monitor, so auto did nothing there.) */
 void gfx_aspect_window(int w, int h) {
     if (gfx_options()->aspect_ratio != -1.0f || getenv("RECOMPS_ASPECT") || w <= 0 || h <= 0) return;
     float a = (float)w / (float)h;
-    if (a < 0.25f || a > 8.0f || fabsf(a / (16.0f / 9.0f) - 1.0f) < 0.01f) { printf("graphics options: aspect_ratio auto: the window is %dx%d, the game's 16:9\n", w, h); return; }
+    if (a < 0.25f || a > 8.0f || fabsf(a / (16.0f / 9.0f) - 1.0f) < 0.01f) { printf("graphics options: aspect_ratio auto: the screen is %dx%d, the game's 16:9\n", w, h); return; }
     char n[32]; snprintf(n, sizeof n, "%.6f", a); _putenv_s("RECOMPS_ASPECT", n);
-    printf("graphics options: aspect_ratio auto: the window is %dx%d, the game's screen %s (width / height)\n", w, h, n);
+    printf("graphics options: aspect_ratio auto: the screen is %dx%d, the game's screen %s (width / height)\n", w, h, n);
+}
+/* [lm3] the windowed game's client size, in the desktop's units: graphics.ini's height and, with an aspect_ratio set
+ * (after gfx_aspect_window), the width of that shape: a 16:9 window showed the 21:9 picture between black bars. Made
+ * smaller, shape kept, to fit the screen's free area mw x mh (0: not known). */
+void gfx_window_size(int mw, int mh, int *w, int *h) {
+    const GfxOptions *o = gfx_options();
+    const char *e = getenv("RECOMPS_ASPECT");
+    double a = e ? atof(e) : 0.0, cw = a >= 0.25 && a <= 8.0 ? o->height * a : o->width, ch = o->height, k = 1.0;
+    if (mw > 0 && cw * k > mw) k = mw / cw;
+    if (mh > 0 && ch * k > mh) k = mh / ch;
+    *w = (int)(cw * k + 0.5); *h = (int)(ch * k + 0.5);
 }
 int gfx_ini_get(const char *key, char *out, size_t on) {
     size_t len, vs, ve;

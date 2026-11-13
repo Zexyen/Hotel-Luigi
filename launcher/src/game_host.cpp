@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 #ifndef _WIN32
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -35,6 +36,11 @@ std::string g_self;
 volatile int32_t* g_display_close = nullptr;  // runtime/display.c (a LONG): the player closed the window
 bool g_relaunch = true;                       // the launcher starts again when the game ends (not with --play)
 int g_out = -1, g_err = -1;                   // the launcher's own stdout / stderr while the game writes to its log
+// The environment as it was before the game ran. The game hands its options on in variables of its own (RECOMPS_ASPECT,
+// RECOMPS_UNCAP, WT_CUTSCENE_FPS ...: runtime/gfx_options.c), where a set variable wins over graphics.ini: left in the
+// launcher that starts again, the first run's picture shape and frame rate stayed whatever Settings said afterwards
+std::vector<std::string> g_env;
+std::vector<char*> g_envp;
 
 // The game's output goes to build/run/witch-time-game.log, as on Windows: a launcher started from a desktop entry has no
 // terminal, and the log is what a bug report needs
@@ -66,8 +72,8 @@ void on_game_exit(int code)
 		dup2(g_err, 2);
 	std::string c = std::to_string(code);
 	if (to_program && !g_relaunch)             // started with --play: it plays the next program the same way
-		execl(g_self.c_str(), g_self.c_str(), "--play", "--returned", c.c_str(), (char*)nullptr);
-	execl(g_self.c_str(), g_self.c_str(), "--returned", c.c_str(), (char*)nullptr);
+		execle(g_self.c_str(), g_self.c_str(), "--play", "--returned", c.c_str(), (char*)nullptr, g_envp.data());
+	execle(g_self.c_str(), g_self.c_str(), "--returned", c.c_str(), (char*)nullptr, g_envp.data());
 }
 #endif
 
@@ -170,6 +176,11 @@ void run_in_process(GameStart& start, const Paths& paths, SDL_Window* window, bo
 	auto exit_hook = static_cast<void (**)(int)>(dlsym(start.host, "plat_exit_hook"));
 	g_display_close = static_cast<volatile int32_t*>(dlsym(start.host, "g_display_close"));
 	g_self = paths.self;
+	for (char** e = environ; e && *e; e++)
+		g_env.emplace_back(*e);
+	for (std::string& e : g_env)
+		g_envp.push_back(e.data());
+	g_envp.push_back(nullptr);
 	*exit_hook = on_game_exit;
 	SDL_SetPointerProperty(SDL_GetGlobalProperties(), "witchtime.window", window);
 	std::string exe = program_build(paths, start.program) + "/witch-time-game", elf = main_elf(paths, start.program);
