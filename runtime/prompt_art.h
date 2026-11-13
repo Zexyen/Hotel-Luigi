@@ -1,12 +1,14 @@
 /* The pictures of the button prompts, drawn from plain shapes on a CELL x CELL cell, SS x SS subsamples per texel: 1 inside.
- * The game's atlas (prompts.c) and the launcher's footer (launcher/src/ui_render.cpp) use them. C and C++. */
+ * The game's font pages (games/lm3/runtime/prompts.c) and the launcher's footer (launcher/src/ui_render.cpp) use them. C and C++. */
 #pragma once
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
 
 #define CELL 40
+#ifndef SS
 #define SS 4                                /* subsamples per texel, per axis */
+#endif
 #define S (CELL * SS)
 
 /* ---- shapes, in cell coordinates; v = 1 paints, 0 cuts */

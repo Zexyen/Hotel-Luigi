@@ -647,8 +647,11 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
         wired = !g_x[slot].wireless;
     }
     if (id == 0) {                                            /* which device player 1 uses now: button prompts follow it (nnpad_button_prompts) */
-        static int used = -1;
-        if (prompts_used >= 0 && prompts_used != used) { used = prompts_used; nnpad_prompts_used(used); }
+        void prompts_tick(void);                              /* [Recomps#1] the game's prompts.c: it repaints when this changes */
+        static int used = -1, polls;
+        int changed = prompts_used >= 0 && prompts_used != used;
+        if (changed) { used = prompts_used; nnpad_prompts_used(used); }
+        if (changed || !(++polls & 15)) prompts_tick();
     }
     if (id == 0) record_or_replay(&buttons, &lx, &ly);
     if (lx < -STICK_MAX / 2) buttons |= 1ull << BTN_SL_LEFT;
