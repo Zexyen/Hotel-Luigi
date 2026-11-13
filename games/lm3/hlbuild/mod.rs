@@ -51,6 +51,8 @@ pub fn is_game(img: &[u8]) -> bool {
 pub const HOST_OVERRIDES: &[(i64, &str)] = &[
     // the screen's width / height as a float (reached through a pointer only): graphics.ini aspect_ratio
     (0x7100067be0, "aspect"),
+    // FrameTimer::Update (reached through a pointer only): at 60 fps and above the time a hitch takes is still stepped
+    (0x710079f320, "frame_timer"),
 ];
 
 /// instruction patches of main, checked against the words the binary has (im.patches), and its frame counters
