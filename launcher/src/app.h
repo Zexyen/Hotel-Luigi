@@ -86,7 +86,7 @@ private:
 	int tab = 0;
 	bool leaving = false;                  // a screen is on its way out (its leaving animations play); next_screen then opens
 	Rml::String next_screen; double leave_at = 0;
-	int bump_count[64] = {};               // per setting row: how many changes, signed by the last one                       // settings: 0 Display, 1 Graphics, 2 Controls
+	int bump_row = -1, bump_n = 0;         // the setting row changed last, and how many times in a row, signed by the last way
 	Rml::String app_name = APP_NAME;
 	Rml::String tex_note, tex_action, tex_switch;  // settings: the converted textures (#54); tex_switch: "Turn off"/"Turn on" (#136)
 	bool tex_remove = false;

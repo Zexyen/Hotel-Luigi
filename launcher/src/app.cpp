@@ -788,7 +788,11 @@ void App::go_now(const Rml::String& to)
 	else if (to == "mods")
 		refresh_mods();
 	else if (to == "settings")
+	{
+		bump_row = -1;
+		model.DirtyVariable("tab");
 		refresh_settings();
+	}
 	else if (to == "build")
 		refresh_build();
 	model.DirtyVariable("screen");
@@ -1054,12 +1058,11 @@ void App::refresh_settings()
 			continue;
 		std::string v = read_setting(paths.config, d);
 		int i = option_index(d, v);
-		const int b = n < 64 ? bump_count[n] : 0;   // the value nudges the way it went; two names a direction, so a second change the same way starts it again
+		const int b = int(n) == bump_row ? bump_n : 0;   // the value nudges the way it went; two names a direction, so a second change the same way starts it again
 		settings.push_back({d.name, d.note, i >= 0 ? d.options[size_t(i)].second : v, int(n),
 			b == 0 ? Rml::String("none") : Rml::String("0.25s cubic-out bump-") + (b < 0 ? "l" : "r") + (std::abs(b) % 2 ? "-a" : "-b")});
 	}
-	model.DirtyVariable("settings");
-	model.DirtyVariable("tab");
+	model.DirtyVariable("settings");        // not "tab": the rows' entrance animation reads it, and RmlUi restarts it on every re-run
 
 	// #54: what the converted textures would cost, before they cost it
 	namespace fs = std::filesystem;
@@ -1092,6 +1095,8 @@ void App::refresh_settings()
 void App::set_tab(int t)
 {
 	tab = (t + 3) % 3;
+	bump_row = -1;
+	model.DirtyVariable("tab");
 	refresh_settings();
 	want_focus = true;
 	sound(0);
@@ -1104,8 +1109,8 @@ void App::step_setting(int index, int dir)
 		return;
 	const SettingDef& d = defs[size_t(index)];
 	write_setting(paths.config, d, d.options[size_t(next_option(d, read_setting(paths.config, d), dir))].first);
-	if (index < 64)                        // the value nudges the way it went (the row's animation name changes with each count)
-		bump_count[index] = (std::abs(bump_count[index]) + 1) * (dir < 0 ? -1 : 1);
+	bump_n = (index == bump_row ? std::abs(bump_n) + 1 : 1) * (dir < 0 ? -1 : 1);   // the row's animation name changes with each count
+	bump_row = index;                      // the other rows go back to none, so a later refresh does not replay theirs
 	refresh_settings();
 	prompts_read();
 	sound(0);                              // (after the write: switching the sounds on ticks, off does not)
