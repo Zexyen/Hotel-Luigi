@@ -3155,8 +3155,14 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
     if (cb_keep_mode() && g_cb_nkept) {            /* WT_VK_CBKEEP: the buffer of the last dispatch into this very range, as the GPU left it */
         for (int i = 0; i < g_cb_hi; i++) {
             CB *k = &g_cb[i];
-            if (k->state != 3 || k->addr != addr || k->size != size) continue;
-            if (g_cb_ww && cb_guest_wrote(k)) { cb_kept_land(k, 4); break; }      /* the game wrote into the range: merged back, then filled again below */
+            if ((k->state != 3 && (k->state != 4 || R.in_pass)) || k->addr != addr || k->size != size) continue;
+            if (g_cb_ww && cb_guest_wrote(k)) { if (k->state == 4) cb_land_force(k, 4); else cb_kept_land(k, 4); break; }      /* the game wrote into the range: merged back, then filled again below */
+            if (k->state == 4) {                   /* [lm3] its landing (WT_VK_CBAGE) is still copying: taken back as a kept buffer instead of waiting for
+                                                    * the GPU (the lobby's one dispatch a frame, 4 batches a frame: a 4-14 ms wait at 120 fps, scale 2.0).
+                                                    * The copy's bytes are never merged; what writes the buffer next runs after the copy has read it. */
+                cmd_begin();
+                vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, 0, NULL);
+            }
             if (g_ngcp) gcp_src_changes(k);        /* [witchtime] the GPU writes it again: copies from it settle first */
             k->state = 1; k->dirty = 0; g_cb_live++; g_ck_hits++; cb_live_add(k);
             if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
