@@ -47,6 +47,19 @@ const SYSTEM_LIBS: [(&str, &str, &str); 5] = [
     ("OpenGL", "", "-lGL"),
 ];
 /// the same on Windows (llvm-mingw has the system's own; SDL3, the Vulkan headers, glslang and FFmpeg come with the developer's)
+/// the same on macOS (Homebrew: sdl3 vulkan-headers glslang spirv-tools ffmpeg; OpenGL is the system's framework)
+const MACOS_LIBS: [(&str, &str, &str); 6] = [
+    ("SPIRV-Tools", "spirv-tools/libspirv.h", "-lSPIRV-Tools-opt -lSPIRV-Tools"),
+    ("SDL3", "SDL3/SDL.h", "-lSDL3"),
+    ("Vulkan headers", "vulkan/vulkan.h", ""),
+    (
+        "glslang",
+        "glslang/Include/glslang_c_interface.h",
+        "-lglslang -lglslang-default-resource-limits",
+    ),
+    ("FFmpeg", "libavformat/avformat.h", "-lavformat -lavcodec -lswscale -lswresample -lavutil"),
+    ("OpenGL", "", "-framework OpenGL"),
+];
 const WINDOWS_LIBS: [(&str, &str, &str); 4] = [
     ("SDL3", "SDL3/SDL.h", "-lSDL3"),
     ("Vulkan headers", "vulkan/vulkan.h", ""),
@@ -307,6 +320,8 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
     if !Path::new(&clang).exists() && which(&clang).is_none() {
         return Err(Fail(if t.windows() {
             "clang not found: a release has it in deps\\llvm; a checkout needs llvm-mingw (--llvm <folder>, README)".into()
+        } else if t.macos() {
+            "clang not found: install Apple's Command Line Tools (xcode-select --install)".into()
         } else {
             "clang not found on PATH (install clang and lld from your distribution)".into()
         }));
@@ -337,14 +352,15 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
         fs::write(&src, code).map_err(|e| Fail(e.to_string()))?;
         let mut c = Command::new(&clang);
         c.args(t.clang_flags())
-            .args(["-shared", "-O2", "-nostdlib", "-fuse-ld=lld"])
+            .args(if t.macos() { &["-shared", "-O2"][..] } else { &["-shared", "-O2", "-nostdlib"][..] })
+            .args(t.linker())
             .args(t.pic())
             .args(link::freestanding(cx.root()))
             .arg(&src);
         if t.windows() {
             c.arg(cx.root().join(link::PREBUILT).join("libucrtbase.a")); // memcpy and trunc from the UCRT, as game.dll
         }
-        c.arg("-o").arg(probe.join(if t.windows() { "t.dll" } else { "t.so" }));
+        c.arg("-o").arg(probe.join(format!("t.{}", t.game_lib().rsplit('.').next().unwrap())));
         let (code, out, _) = compile::run(&mut c, Some(120));
         if code != Some(0) {
             return Err(Fail(format!(
@@ -396,9 +412,14 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
             }
             Ok(())
         };
-        let os = if t.windows() { "Windows" } else { "Linux" };
+        let os = match t {
+            Target::Windows => "Windows",
+            Target::MacOS => "macOS",
+            Target::Linux => "Linux",
+        };
         build_run(&[]).map_err(|e| Fail(format!("the compiler cannot build and run a {} program\n{}", os, e)))?;
-        build_run(&["-fuse-ld=lld"]).map_err(|e| {
+        let linker = t.linker();
+        build_run(&linker.iter().map(String::as_str).collect::<Vec<_>>()).map_err(|e| {
             Fail(format!(
                 "clang works, but not with the lld linker: install lld (ld.lld) from your distribution\n{}",
                 e
@@ -407,7 +428,12 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
         say(format!("  compiler builds and runs a {} program: ok", os));
         if std::env::var_os("HLBUILD_SKIP_LIB_CHECK").is_none() {
             let mut missing = Vec::new();
-            for (what, header, libs) in if t.windows() { &WINDOWS_LIBS[..] } else { &SYSTEM_LIBS[..] } {
+            let wanted = match t {
+                Target::Windows => &WINDOWS_LIBS[..],
+                Target::MacOS => &MACOS_LIBS[..],
+                Target::Linux => &SYSTEM_LIBS[..],
+            };
+            for (what, header, libs) in wanted {
                 let c = probe.join("lib.c");
                 let inc = if header.is_empty() {
                     String::new()
@@ -420,7 +446,8 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
                     .arg(&c)
                     .arg("-o")
                     .arg(probe.join("lib"))
-                    .arg("-fuse-ld=lld")
+                    .args(t.linker())
+                    .args(t.lib_dirs())
                     .args(libs.split_whitespace())
                     .output()
                     .map(|o| o.status.success())
@@ -437,6 +464,11 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
                 return Err(Fail(if t.windows() {
                     format!(
                         "the development files of these libraries are missing: {}. Name their folders in CPATH and LIBRARY_PATH (README, \"Build (Windows)\")",
+                        missing.join("; ")
+                    )
+                } else if t.macos() {
+                    format!(
+                        "the development files of these libraries are missing: {}. Install them with Homebrew (README, \"Build (macOS)\")",
                         missing.join("; ")
                     )
                 } else {
@@ -883,10 +915,10 @@ fn step_compile(cx: &mut Ctx) -> Result<(), Fail> {
 }
 
 fn link_outputs(t: Target) -> &'static [&'static str] {
-    if t.windows() {
-        &["game.dll", "hotel-luigi-runtime.exe"]
-    } else {
-        &["game.so", "libhotelluigi.so", "hotel-luigi-runtime"]
+    match t {
+        Target::Windows => &["game.dll", "hotel-luigi-runtime.exe"],
+        Target::MacOS => &["game.dylib", "libhotelluigi.dylib", "hotel-luigi-runtime"],
+        Target::Linux => &["game.so", "libhotelluigi.so", "hotel-luigi-runtime"],
     }
 }
 
@@ -1145,7 +1177,7 @@ mod tests {
 
     #[test]
     fn exefs_comes_from_targets_when_the_dump_has_none() {
-        let t = std::env::temp_dir().join(format!("wtbuild_exefs_{}", std::process::id()));
+        let t = std::env::temp_dir().join(format!("hlbuild_exefs_{}", std::process::id()));
         let (dump, targets) = (t.join("dump"), t.join("targets"));
         fs::create_dir_all(targets.join("exefs")).unwrap();
         assert_eq!(exefs_source(&dump, &targets), dump.join("exefs")); // nothing kept: the dump's, so the error names it

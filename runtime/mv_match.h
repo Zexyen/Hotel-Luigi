@@ -1,4 +1,4 @@
-/* Motion vectors, step 2: last frame's constants of the objects the depth pre-pass draws (docs/STATUS.md "Object motion
+/* Motion vectors, step 2: last frame's constants of the objects the depth pre-pass draws (Witch Time's docs/STATUS.md "Object motion
  * vectors"). The game keeps no previous transforms; each object's palette moves through a ring of buffer slots, and the game
  * library says which slot was last frame's (game_shim_eh.c h_palette_upload). Here: the bytes of every block of this frame and
  * the last, found again by address. Pure C, tested by tests/mv_match_test.c. */

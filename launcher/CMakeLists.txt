@@ -1,5 +1,6 @@
 # The launcher. Builds the game from the player's dump (hlbuild setup) and plays it in the same window
-# (build/libhotelluigi.so). SDL3 + RmlUi on SDL's GPU API; Linux and Windows (llvm-mingw).
+# (build/libhotelluigi.so). SDL3 + RmlUi on SDL's GPU API; Linux, Windows (llvm-mingw) and macOS (the game runs as
+# build/hotel-luigi-runtime there, as on Windows).
 #
 #     cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release
 #     cmake --build build/launcher                      -> build/hotel-luigi-game (Windows: build/hotel-luigi-game.exe, and
@@ -53,8 +54,21 @@ target_compile_definitions(hotel-luigi-game PRIVATE RMLUI_SDL_VERSION_MAJOR=3 HL
 target_link_libraries(hotel-luigi-game PRIVATE RmlUi::Core SDL3::SDL3 ${CMAKE_DL_LIBS})
 # beside hotel-luigi-runtime, game.so and libhotelluigi.so: the launcher finds the repository from its own place (build/..)
 # $ORIGIN: a release ships libSDL3.so.0 beside it, which libhotelluigi.so (also $ORIGIN) then shares
+if(APPLE)
+	set(HL_ORIGIN "@loader_path")
+else()
+	set(HL_ORIGIN "$ORIGIN")
+endif()
 set_target_properties(hotel-luigi-game PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../build"
-	BUILD_RPATH "$ORIGIN")
+	BUILD_RPATH "${HL_ORIGIN}")
+if(APPLE)
+	# build/Hotel Luigi.app: the same program in a bundle, for Finder and the Dock (macos/make_app.sh)
+	configure_file(macos/Info.plist.in "${CMAKE_CURRENT_BINARY_DIR}/Info.plist" @ONLY)
+	add_custom_command(TARGET hotel-luigi-game POST_BUILD
+		COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/macos/make_app.sh" "$<TARGET_FILE:hotel-luigi-game>" "${CMAKE_CURRENT_BINARY_DIR}/Info.plist"
+			"${CMAKE_CURRENT_SOURCE_DIR}/ui/img/icon.png" "${CMAKE_CURRENT_SOURCE_DIR}/../build/Hotel Luigi.app"
+		VERBATIM)
+endif()
 if(WIN32)
 	# a window program (no console), with UTF-8 as its code page (win32/launcher.rc); C++ runtime linked in, so that it
 	# needs nothing beside it but SDL3.dll

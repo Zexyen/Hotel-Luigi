@@ -180,7 +180,7 @@ static DWORD WINAPI profiler(LPVOID arg) {
     return 0;
 }
 
-#ifndef _WIN32
+#ifdef __linux__
 #include "lprof.c"        /* [witchtime] HL_LPROF: Linux sampling profiler of every thread (test only); included like prof15.c */
 #endif
 #include "prof15.c"       /* HL_PROF15: sampling profiler of every busy thread (test only). Included here, like nvn_vk.c includes its parts, so that
@@ -273,6 +273,9 @@ static DWORD WINAPI guest_main(LPVOID arg) {
 static int b3_main(int argc, char **argv) {
     g_elf = argc > 1 ? argv[1] : "main.elf";        /* [Recomps#1] path of our main.elf; sdk.elf must sit beside it */
     setvbuf(stdout, NULL, _IONBF, 0);
+#ifdef __APPLE__
+    { void plat_guest_space(char **argv); plat_guest_space(argv); }      /* [witchtime] plat_posix.c: the game's addresses, before anything else takes them */
+#endif
     {   /* [lm3] started by hand without HL_ROMFS and no ../romfs: the romfs folder beside main.elf's (targets/romfs), or a
          * message. The game stopped with a segmentation fault in nnMain without its files. */
         const char *e = getenv("HL_ROMFS"), *sl = strrchr(g_elf, '/');
@@ -343,11 +346,17 @@ static int b3_main(int argc, char **argv) {
     display_init();
     { void lm3_image_options(void); lm3_image_options(); }      /* [lm3] frame_rate / aspect_ratio constants of main (games/lm3/runtime/lm3_imports.c); after the window: aspect_ratio = auto */
     int seconds = argc > 2 ? atoi(argv[2]) : 0;      /* no number = no time limit (a player's launch); tests pass theirs */
+#ifdef __APPLE__
+    /* [witchtime] macOS: this thread, the program's first, is the only one the window's events can be read on: it reads
+     * them while it waits for the game's thread (display.c) */
+    DWORD display_main_wait(HANDLE t, DWORD ms);
+#define WaitForSingleObject(t, ms) display_main_wait((t), (ms))
+#endif
     /* the lifted code uses the host stack for every guest call: give it plenty */
     HANDLE t = CreateThread(NULL, (SIZE_T)1 << 30, guest_main, NULL, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
     if (getenv("HL_PROF")) { g_prof_target = t; CloseHandle(CreateThread(NULL, 0, profiler, NULL, 0, NULL)); }
     { void prof15_start(void); prof15_start(); }
-#ifndef _WIN32
+#ifdef __linux__
     lprof_start();
 #endif         /* prof15.c: HL_PROF15, every busy thread (test only; nothing without the variable) */
     DWORD wr = WaitForSingleObject(t, seconds > 0 ? (DWORD)seconds * 1000 : INFINITE);
@@ -424,6 +433,7 @@ static int b3_main(int argc, char **argv) {
         report_and_exit(0);
     }
     return 0;
+#undef WaitForSingleObject
 }
 
 int main(int argc, char **argv) { return b3_main(argc, argv); }
