@@ -11,7 +11,7 @@ use crate::util::{u16_at, u32_at, u64_at};
 pub const NAME: &str = "lm3";
 
 /// this game's own runtime sources (../runtime), built into the host runtime after the shared ones
-pub const RUNTIME_SOURCES: &[&str] = &["lm3_imports.c"];
+pub const RUNTIME_SOURCES: &[&str] = &["lm3_imports.c", "prompts.c"];
 
 /// data the game library exports to the runtime besides the tables every game has (../runtime/game_shim_eh.c)
 pub const EXPORTS: &[&str] = &["game_fsr_w", "game_fsr_h", "game_fsr_phases"];
