@@ -109,6 +109,7 @@ body {
 /* ---- the title: the name, the menu, the build as a save slot ---- */
 .logo { left: 60dp; top: 30dp; font-family: "Russo One"; font-size: 60dp; letter-spacing: 2dp; text-transform: uppercase; white-space: nowrap;
 	font-effect: outline(2dp #06305c), shadow(0dp 5dp #06305c); }
+.logo .mark { width: 84dp; height: 84dp; margin-right: 14dp; vertical-align: -20dp; }
 .logo .sub { margin-left: 16dp; font-size: 22dp; letter-spacing: 8dp; color: #ffe55c; font-effect: shadow(0dp 2dp #3d160c); }
 .menu { left: 76dp; top: 150dp; width: 440dp; display: flex; flex-direction: column; gap: 8dp; }
 .card { left: 600dp; top: 150dp; width: 620dp; height: 176dp; display: flex; flex-direction: row; align-items: center; gap: 26dp; padding: 22dp 26dp; }

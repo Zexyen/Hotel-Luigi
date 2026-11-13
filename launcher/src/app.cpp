@@ -241,6 +241,11 @@ bool App::create_window()
 		return false;
 	}
 	SDL_SetWindowMinimumSize(window, 640, 400);
+	if (SDL_Surface* icon = SDL_LoadBMP((paths.ui + "/img/icon.bmp").c_str()))   // the title bar and the task bar (Windows takes the .exe's)
+	{
+		SDL_SetWindowIcon(window, icon);
+		SDL_DestroySurface(icon);
+	}
 	gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, false, nullptr);
 	if (!gpu || !SDL_ClaimWindowForGPUDevice(gpu, window))
 	{

@@ -4,7 +4,7 @@
 #   Actions > Release > Run workflow, or a PR    -> builds only; the archives are kept as workflow artifacts
 #
 # The archive is this repository's source (scripts, runtime, lifter, launcher screens) with:
-#   build/recomp-launcher, libSDL3.so.0   the launcher and the SDL3 it was built with
+#   build/hotel-luigi-game, libSDL3.so.0   the launcher and the SDL3 it was built with
 #   build/hlbuild                    the build tool (tools/hlbuild: no Python needed to build the game)
 #   prebuilt/                        the runtime, built here (libwitchtime.so, witch-time-game, libwt_glslang.so with a
 #                                    static glslang, game_shim_eh.o) and the FFmpeg it uses; nothing in it comes from a
@@ -15,8 +15,8 @@
 # Nothing derived from the game is in it: the player builds that from their own dump.
 #
 # Windows (job windows, cross-built on Ubuntu with llvm-mingw; job windows-test then runs it on Windows): a .zip with
-#   recomp-launcher.exe                   starts build/recomp-launcher.exe
-#   build/recomp-launcher.exe, SDL3.dll   the launcher (C++ runtime linked in) and SDL3, built here with llvm-mingw
+#   hotel-luigi-game.exe                   starts build/hotel-luigi-game.exe
+#   build/hotel-luigi-game.exe, SDL3.dll   the launcher (C++ runtime linked in) and SDL3, built here with llvm-mingw
 #   build/hlbuild.exe                the build tool
 #   prebuilt/                        the runtime: witch-time-game.exe (+ .pdb), wt_glslang.dll (static glslang),
 #                                    game_shim_eh.o, libucrtbase.a (game.dll's C functions come from the UCRT, part of
@@ -151,7 +151,7 @@ jobs:
             -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/sdl3" -DWT_VERSION="${{ steps.version.outputs.version }}"
           cmake --build build/launcher
           # only $ORIGIN: the libSDL3.so.0 shipped beside it, which libwitchtime.so then shares
-          patchelf --set-rpath '$ORIGIN' build/recomp-launcher
+          patchelf --set-rpath '$ORIGIN' build/hotel-luigi-game
 
       - name: hlbuild
         run: |
@@ -189,18 +189,18 @@ jobs:
           mkdir -p "dist/$name/build" "dist/$name/deps" "dist/$name/licenses"
           git archive HEAD | tar -x -C "dist/$name"
           rm -rf "dist/$name/.github"
-          cp build/recomp-launcher "dist/$name/build/"
+          cp build/hotel-luigi-game "dist/$name/build/"
           cp tools/hlbuild/target/release/hlbuild "dist/$name/build/"
           cp -L "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0" "dist/$name/build/"
-          strip "dist/$name/build/recomp-launcher" "dist/$name/build/libSDL3.so.0"
+          strip "dist/$name/build/hotel-luigi-game" "dist/$name/build/libSDL3.so.0"
           cp -a prebuilt "dist/$name/prebuilt"
           cp -a deps/llvm "dist/$name/deps/llvm"
           cp "$RUNNER_TEMP/sdl3/LICENSE.txt" "dist/$name/licenses/SDL3.txt"
           cp "$RUNNER_TEMP/ffmpeg/COPYING.LGPLv2.1" "dist/$name/licenses/FFmpeg-LGPL-2.1.txt"
           cp "$RUNNER_TEMP/glslang/LICENSE.txt" "dist/$name/licenses/glslang.txt"
           cp deps/llvm/LICENSE.TXT "dist/$name/licenses/LLVM.txt"
-          ln -s build/recomp-launcher "dist/$name/recomp-launcher"
-          LD_LIBRARY_PATH= ldd "dist/$name/build/recomp-launcher" | tee /dev/stderr | grep -q "dist/$name/build/libSDL3.so.0"
+          ln -s build/hotel-luigi-game "dist/$name/hotel-luigi-game"
+          LD_LIBRARY_PATH= ldd "dist/$name/build/hotel-luigi-game" | tee /dev/stderr | grep -q "dist/$name/build/libSDL3.so.0"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
           ls -la dist
@@ -347,7 +347,7 @@ jobs:
             -DSDL3_DIR="$RUNNER_TEMP/sdl3/lib/cmake/SDL3" -DFREETYPE_LIBRARY="$RUNNER_TEMP/freetype/lib/libfreetype.a" \
             -DFREETYPE_INCLUDE_DIRS="$RUNNER_TEMP/freetype/include/freetype2" -DWT_VERSION="${{ steps.version.outputs.version }}"
           cmake --build build/launcher
-          ls -la build/recomp-launcher.exe recomp-launcher.exe
+          ls -la build/hotel-luigi-game.exe hotel-luigi-game.exe
 
       # hlbuild twice: for this runner (it builds the Windows runtime below) and for Windows (what players run)
       - name: hlbuild
@@ -410,10 +410,10 @@ jobs:
           mkdir -p "$p/build" "$p/deps" "$p/licenses"
           git archive HEAD | tar -x -C "$p"
           rm -rf "$p/.github"
-          cp recomp-launcher.exe "$p/"
-          cp build/recomp-launcher.exe "$RUNNER_TEMP/sdl3/bin/SDL3.dll" "$p/build/"
+          cp hotel-luigi-game.exe "$p/"
+          cp build/hotel-luigi-game.exe "$RUNNER_TEMP/sdl3/bin/SDL3.dll" "$p/build/"
           cp tools/hlbuild/target/x86_64-pc-windows-gnullvm/release/hlbuild.exe "$p/build/"
-          llvm-strip "$p/build/recomp-launcher.exe" "$p/build/SDL3.dll" "$p/recomp-launcher.exe"
+          llvm-strip "$p/build/hotel-luigi-game.exe" "$p/build/SDL3.dll" "$p/hotel-luigi-game.exe"
           cp -a prebuilt "$p/prebuilt"
           cp -a "$RUNNER_TEMP/llvm-win" "$p/deps/llvm"
           cp "$RUNNER_TEMP/sdl3/LICENSE.txt" "$p/licenses/SDL3.txt"
