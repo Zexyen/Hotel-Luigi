@@ -175,3 +175,9 @@ cut _ZN2nn3hid23GetActualVibrationValueEPNS0_14VibrationValueERKNS0_21VibrationD
 # queue to the hid service: the queue call goes to the runtime's SendVibrationValue, the flush does nothing (lm3_imports.c)
 cut _ZN2nn3hid6detail21EnqueueVibrationValueERKNS0_21VibrationDeviceHandleERKNS0_14VibrationValueE
 cut _ZN2nn3hid6detail28FlushEnqueuedVibrationValuesEv
+# operator new / delete: the game defines them (its memory manager: pools in front of the heap), and on the console its
+# definitions replace the sdk's in every module. Lifted sdk code bound to the sdk's own: a VibrationNodeConnection the game
+# made with its new was deleted by the sdk's deleting destructor through the sdk's delete, which ends in the game's free:
+# the heap, for a block of a pool (guest trap in StandardAllocator::Free when the rumble nodes are rebuilt)
+cut _ZdlPv
+cut _Znwm
