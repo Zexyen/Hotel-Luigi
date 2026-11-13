@@ -3,7 +3,7 @@
 //! with nn::oe::ExecuteProgram): targets/programN/, build/programN/, build/programN/gen/. The runtime sources, lifter/
 //! and prebuilt/ are the checkout's for every program.
 //!
-//! shortcut: one program per wtbuild process at a time (set_program before the steps); pass it down if two must build
+//! shortcut: one program per hlbuild process at a time (set_program before the steps); pass it down if two must build
 //! at once
 
 use std::path::{Path, PathBuf};

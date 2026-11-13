@@ -56,10 +56,10 @@ headers, glslang, FFmpeg and OpenGL. On Windows the toolchain is llvm-mingw.
 
 ```sh
 # the build tool
-cargo build --release --manifest-path tools/wtbuild/Cargo.toml
+cargo build --release --manifest-path tools/hlbuild/Cargo.toml
 
 # the game, from your dump (resumable; --status shows where it is)
-tools/wtbuild/target/release/wtbuild setup --dump <dump>
+tools/hlbuild/target/release/hlbuild setup --dump <dump>
 
 # the launcher (fetches RmlUi 6.3), then start it
 cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -67,7 +67,7 @@ cmake --build build/launcher
 build/recomp-launcher
 ```
 
-`wtbuild setup` runs these steps, each with its log in `build/logs/`:
+`hlbuild setup` runs these steps, each with its log in `build/logs/`:
 
 | Step | What it does |
 |---|---|
@@ -90,7 +90,7 @@ clang is taken from `$LLVM_ROOT/bin`, then `deps/llvm/bin`, then `PATH`.
 
 | Path | What |
 |---|---|
-| `tools/wtbuild/` | the build tool (Rust): dump check, NSO to ELF, the lifter, compile, link |
+| `tools/hlbuild/` | the build tool (Rust): dump check, NSO to ELF, the lifter, compile, link |
 | `runtime/` | the console's side on the PC: the OS and SDK services, the NVN to Vulkan renderer, audio, pads, the PC settings menu |
 | `games/lm3/` | everything specific to this game: the supported version's hashes, code patches, its runtime files |
 | `launcher/` | the launcher (C++, SDL3 + RmlUi) |
@@ -102,7 +102,7 @@ clang is taken from `$LLVM_ROOT/bin`, then `deps/llvm/bin`, then `PATH`.
 
 ## Testing
 
-`cargo test --release` in `tools/wtbuild` needs no game. `scripts/playtest.sh <name> 300` plays a hidden, scripted run
+`cargo test --release` in `tools/hlbuild` needs no game. `scripts/playtest.sh <name> 300` plays a hidden, scripted run
 from the title into the lobby and reports frame times and screenshots. `docs/TESTING.md` has the matrix and the pass
 criteria.
 

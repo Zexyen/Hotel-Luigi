@@ -79,7 +79,7 @@ bool BuildRunner::start(const std::string& repo_dir, const std::vector<std::stri
 void BuildRunner::stop()
 {
 #ifdef _WIN32
-	child.stop();                            // the build's job: wtbuild and the compilers it started
+	child.stop();                            // the build's job: hlbuild and the compilers it started
 #else
 	if (pid > 0)
 		kill(-pid, SIGTERM);

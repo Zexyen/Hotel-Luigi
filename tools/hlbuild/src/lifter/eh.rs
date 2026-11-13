@@ -516,7 +516,7 @@ pub fn lift_main(im: &Image, outdir: &Path, log: &mut dyn FnMut(String)) -> Resu
     if fps::census_on() {
         // the census build: every counter site reports its store (games/lm3/runtime/game_shim_eh.c), and the list of the sites
         f += "void fps_census(Ctx *c, uint64_t site, uint64_t field, uint64_t v, int code);\n";
-        let mut t = String::from("# store function load op kind field (lifter/fps.rs; WTBUILD_FPS_CENSUS=1)\n");
+        let mut t = String::from("# store function load op kind field (lifter/fps.rs; HLBUILD_FPS_CENSUS=1)\n");
         for &a in &all_funcs {
             for s in fps::sites(im, a, extent(&starts, a, im.text_end())) {
                 let k = match s.kind {
@@ -599,15 +599,15 @@ mod tests {
     use crate::util::hex;
     use sha2::{Digest, Sha256};
 
-    /// the committed stand-in main (testdata/fake_main) as `wtbuild nso2elf` and `wtbuild lift --no-patches` make it: the
+    /// the committed stand-in main (testdata/fake_main) as `hlbuild nso2elf` and `hlbuild lift --no-patches` make it: the
     /// conversion's report and ELF, every file of the lift and the counts it logs
     #[test]
     fn lift_fake_main() {
-        assert!(!fps::census_on(), "WTBUILD_FPS_CENSUS=1 adds the census to the lift: run the tests without it");
+        assert!(!fps::census_on(), "HLBUILD_FPS_CENSUS=1 adds the census to the lift: run the tests without it");
         let nso = fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/fake_main/main.nso")).unwrap();
         let c = crate::nso::nso2elf(&nso).unwrap();
         let mut m = format!("{}\n{}  main.elf\n", c.report.join("\n"), hex(&Sha256::digest(&c.elf)));
-        let dir = std::env::temp_dir().join(format!("wtbuild-lift-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hlbuild-lift-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let mut log = Vec::new();
         lift_main(&Image::main(c.elf), &dir, &mut |l| log.push(l)).unwrap();
@@ -625,10 +625,10 @@ mod tests {
             m += t;
             m += "\n";
         }
-        if fs::read_to_string(crate::golden::path("lift_main.txt")).map_or(false, |g| g == m) || std::env::var_os("WTBUILD_BLESS").is_some() {
+        if fs::read_to_string(crate::golden::path("lift_main.txt")).map_or(false, |g| g == m) || std::env::var_os("HLBUILD_BLESS").is_some() {
             let _ = fs::remove_dir_all(&dir);
         } else {
-            eprintln!("{}the lift is kept in {}: diff -r it with an older build's `wtbuild lift <ELF> <dir> --no-patches`", m, dir.display());
+            eprintln!("{}the lift is kept in {}: diff -r it with an older build's `hlbuild lift <ELF> <dir> --no-patches`", m, dir.display());
         }
         crate::golden::check("lift_main.txt", &m);
     }

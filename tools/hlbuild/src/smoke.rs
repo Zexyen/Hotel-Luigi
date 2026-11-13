@@ -1,9 +1,9 @@
 //! Developer and CI check of the link step on the stand-in modules (testdata/fake_main: no game or sdk code): tables,
 //! lift, compile and link as on a player's PC, then the program is run until it has mapped the stand-in main.
 //!
-//!     wtbuild smoke [--repo <dir>] [--prebuilt <dir>] [--lib <file>]... [--target windows] [--wine <program>]
+//!     hlbuild smoke [--repo <dir>] [--prebuilt <dir>] [--lib <file>]... [--target windows] [--wine <program>]
 //!
-//! --prebuilt: the runtime made by `wtbuild runtime` (as a release ships it), so only game.so is built here; without it
+//! --prebuilt: the runtime made by `hlbuild runtime` (as a release ships it), so only game.so is built here; without it
 //! the link step builds the runtime too, against the system's libraries. --lib: a library a release keeps in build/
 //! (libSDL3.so.0, SDL3.dll). Checks that every symbol resolves (`ldd -r`; only the game functions the runtime replaces,
 //! which the stand-in does not have, may stay undefined) and that witch-time-game maps the image with the values game.so
@@ -105,7 +105,7 @@ pub fn main(args: &[String]) -> Result<(), String> {
 fn run(root: &Path, tmp: &Path, t: Target, prebuilt: Option<&Path>, libs: &[PathBuf], wine: Option<&str>, only: &BTreeSet<String>) -> Result<(), String> {
     let log = &mut |l: String| println!("{}", l);
     let io = |p: &Path, e: std::io::Error| format!("{}: {}", p.display(), e);
-    let fake = root.join("tools").join("wtbuild").join("testdata").join("fake_main");
+    let fake = root.join("tools").join("hlbuild").join("testdata").join("fake_main");
     let repo = tmp.join("repo");
     let (build, exefs) = (repo.join("build"), repo.join("targets").join("exefs"));
     // an exact copy, or link.rs's sources hash differs from the prebuilt runtime's
@@ -131,7 +131,7 @@ fn run(root: &Path, tmp: &Path, t: Target, prebuilt: Option<&Path>, libs: &[Path
     let mut h = fs::read_to_string(&addrs).map_err(|e| io(&addrs, e))?;
     for n in SDKA {
         if !h.contains(&format!("#define SDKA_{} ", n)) {
-            h += &format!("#define SDKA_{} 0x10000ull  /* wtbuild smoke */\n", n);
+            h += &format!("#define SDKA_{} 0x10000ull  /* hlbuild smoke */\n", n);
         }
     }
     fs::write(&addrs, h).map_err(|e| io(&addrs, e))?;

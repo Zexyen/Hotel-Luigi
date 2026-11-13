@@ -124,7 +124,7 @@ void run_update(Paths paths, std::string tag, std::string url, std::string sha25
 	if (code)
 		return set(State::failed, "Download failed: " + (out.empty() ? "is curl installed?" : out));
 	set(State::working, "Checking " + tag + "...");
-	std::string got = run_capture({paths.build + "/wtbuild" WT_EXE, "sha256", archive}, paths.build, &code).substr(0, 64);
+	std::string got = run_capture({paths.build + "/hlbuild" WT_EXE, "sha256", archive}, paths.build, &code).substr(0, 64);
 	if (code || got != sha256)
 		return set(State::failed, "The download is damaged (checksum mismatch); try again");
 	set(State::working, "Unpacking " + tag + "...");

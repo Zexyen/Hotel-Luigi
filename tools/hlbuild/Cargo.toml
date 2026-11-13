@@ -1,5 +1,5 @@
 [package]
-name = "wtbuild"
+name = "hlbuild"
 version = "0.1.0"
 edition = "2021"
 description = "Witch Time build pipeline: from your own dump to a runnable build, on Linux and Windows"

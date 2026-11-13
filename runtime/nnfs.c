@@ -123,7 +123,7 @@ static void remove_tree(const char *dir) {
  * else <exe folder>\..\mods; WT_MODS=none turns them off) that holds a romfs\ folder, itself or one level down (an
  * emulator pack's <mod>\romfs\..., or an archive unpacked into a folder of its own). Its files replace the game's file at
  * the same rom: path, or are added; the game sees them because it lists rom:/ at boot (CRI's loose files beside the CPKs).
- * Order: a mod whose name sorts later wins, as for the code mods (tools/wtbuild/src/pchtxt.rs). config\mods.ini (beside
+ * Order: a mod whose name sorts later wins, as for the code mods (tools/hlbuild/src/pchtxt.rs). config\mods.ini (beside
  * controllers.ini): [mods] <name> = off leaves a mod out; [prompts] playstation = <name> / xbox = <name> names the button
  * prompt mods (else guessed from the folder name: a word starting ds4, ds5, dualshock, dualsense, playstation, ps4, ps5 /
  * xbox, or the word ps; so DS4Prompts / XBOXPrompts of the GameBanana prompt mod 360121 need no [prompts] line). Prompt

@@ -14,12 +14,12 @@
 # left in older checkouts by the Python tools (gone since #110): the first is made from the dump, so never commit it
 /lifter/eh_main_tables.json
 **/__pycache__/
-# runtime/gen/: written by wtbuild tables from the dump
+# runtime/gen/: written by hlbuild tables from the dump
 /runtime/gen/
 *.elf
 *.nso
-!/tools/wtbuild/testdata/fake_main/main.nso
-!/tools/wtbuild/testdata/fake_main/sdk.nso
+!/tools/hlbuild/testdata/fake_main/main.nso
+!/tools/hlbuild/testdata/fake_main/sdk.nso
 *.nca
 *.nsp
 *.xci

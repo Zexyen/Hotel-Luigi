@@ -1,4 +1,4 @@
-//! `wtbuild check-freestanding` (a developer's and CI's check): the code compiled on the player's PC comes out the same
+//! `hlbuild check-freestanding` (a developer's and CI's check): the code compiled on the player's PC comes out the same
 //! with runtime/freestanding (no libc headers, as `compile` and `link` build it) as with the system's C library headers,
 //! byte for byte.
 //!

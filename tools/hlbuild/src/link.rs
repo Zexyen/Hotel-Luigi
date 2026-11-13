@@ -3,7 +3,7 @@
 //!
 //! The runtime holds nothing from the dump: the few values it needs from it (runtime/split) are data in game.so
 //! (runtime/wt_tables.c, with gen/sdkdata.c and gen/sdklift_gen.c). So a release ships the runtime prebuilt (prebuilt/,
-//! made by `wtbuild runtime` in CI) and the player's PC only compiles the tables and links game.so, with no system
+//! made by `hlbuild runtime` in CI) and the player's PC only compiles the tables and links game.so, with no system
 //! headers or libraries (runtime/freestanding). A checkout without prebuilt/, or whose runtime sources changed since,
 //! builds the runtime here, against the system's SDL3, FFmpeg, glslang and GL.
 //!
@@ -109,7 +109,7 @@ const WIN_LIBS: &[&str] = &[
     "-ladvapi32",
     "-luuid",
 ];
-/// the shader compiler shim's glslang: the system's shared libraries; WTBUILD_GLSLANG_LIBS replaces it (CI: a static glslang)
+/// the shader compiler shim's glslang: the system's shared libraries; HLBUILD_GLSLANG_LIBS replaces it (CI: a static glslang)
 const GLSLANG_LIBS: &str = "-lglslang -lglslang-default-resource-limits";
 /// what game.dll exports to witch-time-game.exe (runtime/split, gen/sdkdata.c, gen/sdklift_gen.c, game_shim_eh.c): the
 /// functions, then the data. A name the runtime uses and this list lacks fails the runtime's link (CI), not the player's.
@@ -161,7 +161,7 @@ const GAME_EXPORTS: (&[&str], &[&str]) = (
 );
 /// the UCRT's import library (mingw-w64's), which game.dll links against on the player's PC
 const UCRT_IMPLIB: &str = "libucrtbase.a";
-/// what `wtbuild runtime` makes (with the libraries it was linked against copied beside it beforehand); the .o and .a
+/// what `hlbuild runtime` makes (with the libraries it was linked against copied beside it beforehand); the .o and .a
 /// files are inputs of the player's link, not copied into build/
 fn runtime_files(t: Target) -> &'static [&'static str] {
     match t {
@@ -426,7 +426,7 @@ pub fn build_runtime(
 
     // 5. the shader compiler shim; LoadLibraryA("wt_glslang.dll") opens it beside the program
     let so = out.join("libwt_glslang.so");
-    let glslang = std::env::var("WTBUILD_GLSLANG_LIBS").unwrap_or_else(|_| GLSLANG_LIBS.into());
+    let glslang = std::env::var("HLBUILD_GLSLANG_LIBS").unwrap_or_else(|_| GLSLANG_LIBS.into());
     let mut a = strs(&["-shared", "-fPIC", "-O2", "-w", "-D_GNU_SOURCE", "-D__declspec(x)=", "-I"]);
     a.extend([s(&rt.join("posix")), "-I".into(), s(&rt), s(&rt.join("vk_glslang_shim.c"))]);
     a.extend(glslang.split_whitespace().map(String::from));
@@ -497,10 +497,10 @@ fn build_runtime_windows(repo: &Path, cl: &Clang, jobs: &[(PathBuf, PathBuf)], o
         return Err("witch-time-game.exe did not link".into());
     }
 
-    // 5. the shader compiler shim, which the program loads beside it; WTBUILD_GLSLANG_LIBS: a static glslang (CI)
+    // 5. the shader compiler shim, which the program loads beside it; HLBUILD_GLSLANG_LIBS: a static glslang (CI)
     let dll = out.join("wt_glslang.dll");
     make_way(&dll).map_err(|e| format!("{}: {}", s(&dll), e))?;
-    let glslang = std::env::var("WTBUILD_GLSLANG_LIBS").unwrap_or_else(|_| GLSLANG_LIBS.into());
+    let glslang = std::env::var("HLBUILD_GLSLANG_LIBS").unwrap_or_else(|_| GLSLANG_LIBS.into());
     let mut a = strs(&["-shared", "-O2", "-w", "-I"]);
     a.extend([s(&rt), s(&rt.join("vk_glslang_shim.c"))]);
     a.extend(glslang.split_whitespace().map(String::from));
@@ -638,7 +638,7 @@ fn prebuilt(repo: &Path, t: Target, log: &mut dyn FnMut(String)) -> Option<(Path
     Some((dir, files))
 }
 
-/// `wtbuild runtime --out <dir>` (CI): the runtime of a release, and its manifest.json. The libraries it is linked
+/// `hlbuild runtime --out <dir>` (CI): the runtime of a release, and its manifest.json. The libraries it is linked
 /// against and ships with (FFmpeg) are copied into <dir> beforehand and listed too.
 pub fn make_prebuilt(repo: &Path, clang: &str, t: Target, out: &Path, log: &mut dyn FnMut(String)) -> Result<(), String> {
     let objdir = repo.join("build").join(if t == Target::host() {

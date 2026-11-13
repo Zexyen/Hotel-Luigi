@@ -1,7 +1,7 @@
 //! Frame rates above 60 (Witch Time's docs/STATUS.md, "Frame rates above 60"): the game's per-frame accumulations, found by their
 //! form in the machine code. A site is a load of a field, an add or subtract on the loaded value (an immediate, a
 //! register, a float register) and a store of the result to the same field ([Xn + off]), in straight-line code (a
-//! conditional branch between them is allowed) with Xn unchanged. The census (WTBUILD_FPS_CENSUS=1 at lift time, then a
+//! conditional branch between them is allowed) with Xn unchanged. The census (HLBUILD_FPS_CENSUS=1 at lift time, then a
 //! run with WT_FPS_CENSUS=<file>, at 60 and at above 60) records what each visit adds: a site that adds as much per
 //! visit at 120 as at 60 is frame-locked; one that adds half as much takes the frame's time already. Many sites are
 //! not timers (loop counters in memory, reference counts): the frame-locked ones are read one by one.
@@ -275,11 +275,11 @@ pub fn sites(im: &Image, entry: i64, end: i64) -> Vec<Site> {
     out
 }
 
-/// WTBUILD_FPS_CENSUS=1 at lift time: every site's store reports its site, field and the value stored first
+/// HLBUILD_FPS_CENSUS=1 at lift time: every site's store reports its site, field and the value stored first
 /// (games/lm3/runtime/game_shim_eh.c fps_census; a test build: the normal lift writes the files back)
 pub fn census_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("WTBUILD_FPS_CENSUS").map(|v| v == "1").unwrap_or(false))
+    *ON.get_or_init(|| std::env::var("HLBUILD_FPS_CENSUS").map(|v| v == "1").unwrap_or(false))
 }
 
 /// the op statement of a listed site with its +/-1 made the frames due: Err when the lifted text is not one of the forms

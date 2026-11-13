@@ -6,7 +6,7 @@
 //! prototype cannot change an unchanged file's object, a removed or changed one compiles the files that name it again.
 //! Objects without a C file are deleted. Functions over OPTNONE statements get optnone; a file over the time limit is
 //! tried again with smaller thresholds, then at -O0. The code is compiled against runtime/freestanding instead of the
-//! system's C library headers (the same objects, without a libc development package: `wtbuild check-freestanding`).
+//! system's C library headers (the same objects, without a libc development package: `hlbuild check-freestanding`).
 //! On Windows the objects are MinGW ones (target.rs), for game.dll.
 
 use crate::target::{self, mtime_ns, Target};
@@ -415,10 +415,10 @@ pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&
     flags.extend(["-nostdlibinc", "-isystem", &free, "-I", &inc, "-I", &gen].map(String::from));
     // [lm3] the game is compiled on the PC that plays it: with FMA3 here, the lifted fmaf (NEON fmla: four a lane) is the
     // instruction instead of a call into game_shim.c's fmaf (11 % of the three game threads in the lobby, lprof
-    // 2026-11-12). The same result bit for bit. WTBUILD_NO_FMA=1: a game library that also runs on a CPU without FMA3.
+    // 2026-11-12). The same result bit for bit. HLBUILD_NO_FMA=1: a game library that also runs on a CPU without FMA3.
     // shortcut: such a library copied to a CPU without FMA3 stops with an illegal instruction; check at start if builds get shared.
     #[cfg(target_arch = "x86_64")]
-    if std::is_x86_feature_detected!("fma") && std::env::var_os("WTBUILD_NO_FMA").is_none() {
+    if std::is_x86_feature_detected!("fma") && std::env::var_os("HLBUILD_NO_FMA").is_none() {
         flags.push("-mfma".into());
     }
     let c = Cfg {

@@ -41,7 +41,7 @@ void sdk_host_call(Ctx *c, int index) { host.sdk_host_call(c, index); }
 void sdk_trap_call(Ctx *c, const char *name) { host.sdk_trap_call(c, name); }
 #endif
 #ifdef WT_GAME_NOSTDLIB
-/* [witchtime] game.dll as wtbuild links it on the player's PC: without the C runtime's start-up code (-nostdlib), so its
+/* [witchtime] game.dll as hlbuild links it on the player's PC: without the C runtime's start-up code (-nostdlib), so its
  * entry point is this; nothing in it needs initialising (no constructors, no thread-local data) */
 int __stdcall DllMainCRTStartup(void *module, unsigned long reason, void *reserved) {
     (void)module; (void)reason; (void)reserved;

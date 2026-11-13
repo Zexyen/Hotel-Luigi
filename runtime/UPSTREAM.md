@@ -30,15 +30,15 @@ Kept although test/diagnostic only: `hitch.c` (frame-timing log, woven into rend
 - `boot.c`: a crash-report dump of a Smash-specific `std::map` at 0x710593c3c0 switched off.
 - `nnsdk2.c`: `nn::mii` registration and self-test commented out.
 
-## Generated (`gen/`, by the tables step, `wtbuild tables`)
+## Generated (`gen/`, by the tables step, `hlbuild tables`)
 `image_layout.h`, `imports_all.txt`, `sdkdata.c` (8 `nn::util` constants from our sdk), empty audit lists, and `sdklift_gen.c` /
-`sdklift_install.h` / `sdklift_report.txt`: the SDK functions lifted from our sdk (`tools/wtbuild/src/sdklift.rs`; roots in
+`sdklift_install.h` / `sdklift_report.txt`: the SDK functions lifted from our sdk (`tools/hlbuild/src/sdklift.rs`; roots in
 `games/lm3/lifter/sdklift_roots.txt`, installed over the imports in `games/lm3/lifter/sdklift_install.txt`; on 2026-10-16 61 functions,
 4,662 instructions, about 385 KB of C). `targets/exefs/sdk.elf` is written too. The audit lists do not depend on the
 dump: they are copies of `gen_static/` (its README). The rest
 of `gen/` is made from the player's own dump and is never committed or published. The tables step was
 `gen/make_gen.py` (with `lifter/sdklift.py`) until 2026-11-02, the name the dated entries below use; it is now
-`tools/wtbuild/src/tables.rs` and `sdklift.rs`.
+`tools/hlbuild/src/tables.rs` and `sdklift.rs`.
 
 ## Known Smash leftovers, not yet dealt with
 - `[sdk 0x...]` citations: offsets in upstream's (Smash 13.0.4) sdk.elf, except where re-derived for ours (`nvn_sdk.c`).
@@ -64,7 +64,7 @@ a Smash address; `nvn_vk_m4.c` game tables; `nvn_vk_store.c`'s data.arc + zstd s
 self-test temp folders; the `ssbu_native.exe` / `ssbu_user.exe` window and sound rules dropped.
 
 ## Build
-`wtbuild setup --dump <dump>` (`tools/wtbuild/README.md`): its compile step builds the lifted main into `build/obj`, its
+`hlbuild setup --dump <dump>` (`tools/hlbuild/README.md`): its compile step builds the lifted main into `build/obj`, its
 link step links `build/game.so` (`game.dll` on Windows) and builds the runtime, or copies the prebuilt one.
 
 The Python build this replaced (`scripts/setup.py`, `compile_main.py`, `build_runtime.py`, `toolchain.py`, removed
@@ -190,7 +190,7 @@ disassembly of all 44 host objects is identical before and after):
 
 ## Windows split (2026-10-27)
 The Windows build follows the Linux one: the runtime is prebuilt as `witch-time-game.exe` (llvm-mingw) and the player
-links `game.dll` (`tools/wtbuild/README.md`, "Windows"). `game_shim.c` / `gamedll.c`: `GameHost` gains `sdk_dispatch`
+links `game.dll` (`tools/hlbuild/README.md`, "Windows"). `game_shim.c` / `gamedll.c`: `GameHost` gains `sdk_dispatch`
 and `sdk_host_call`, so `game.dll` calls them through the host table instead of importing them from the program, and
 under `WT_GAME_NOSTDLIB` defines `DllMainCRTStartup` (it links without the C runtime's startup). `pcmenu.c` includes
 `stdint.h` and `nvn_gl.c` `time.h` (mingw-w64's headers do not bring them in). `win32/`: the UTF-8 code page manifest.

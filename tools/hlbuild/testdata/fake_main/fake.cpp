@@ -1,4 +1,4 @@
-// A stand-in "main" for wtbuild's lift test: no game code. Built for AArch64 by `wtbuild fake-nso` (src/fake.rs),
+// A stand-in "main" for hlbuild's lift test: no game code. Built for AArch64 by `hlbuild fake-nso` (src/fake.rs),
 // into the committed main.nso and sdk.nso that the golden tests lift.
 extern "C" {
 void ext_log(int);

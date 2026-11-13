@@ -1,4 +1,4 @@
-# The launcher. Builds the game from the player's dump (wtbuild setup) and plays it in the same window
+# The launcher. Builds the game from the player's dump (hlbuild setup) and plays it in the same window
 # (build/libwitchtime.so). SDL3 + RmlUi on SDL's GPU API; Linux and Windows (llvm-mingw).
 #
 #     cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release

@@ -1,4 +1,4 @@
-/* The player's own tables as data, compiled into game.so by `wtbuild link` (runtime/split/README.md): the values of
+/* The player's own tables as data, compiled into game.so by `hlbuild link` (runtime/split/README.md): the values of
  * runtime/gen/image_layout.h, nvn_devinfo.h and nvn_sdk_addrs.h, which the runtime is built without. Compiled with
  * -I runtime/gen, never -I runtime/split, so these includes are the generated headers. */
 #include "image_layout.h"

@@ -1,4 +1,4 @@
-# roots for the sdk lift (tools/wtbuild/src/sdklift.rs), written for nnSdk 13.3.2, trimmed to what nnSdk 7.3.2 (Luigi's Mansion 3) has: names a main imports. B2's roots for SDK 3.6.0
+# roots for the sdk lift (tools/hlbuild/src/sdklift.rs), written for nnSdk 13.3.2, trimmed to what nnSdk 7.3.2 (Luigi's Mansion 3) has: names a main imports. B2's roots for SDK 3.6.0
 # (NVN texture-storage functions and the GM200 HAL by address, nn::mem::NumberLineAllocator) are not carried over: B3's main
 # imports no NumberLineAllocator; the NVN ones are found by name below (`nvn`, `vmethod`: no addresses in this file).
 
@@ -34,7 +34,7 @@ _ZN2nn3hid23VibrationNodeConnectionD1Ev
 _ZN2nn7friends12UserPresence5ClearEv
 _ZN2nn2os21SdkRecursiveMutexType10InitializeEv
 
-# [witchtime] NVN texture storage rules (runtime/nvn_sdk.c), by name from the sdk's proc table (tools/wtbuild/src/nvn_procs.rs, `wtbuild nvn-procs`), and the
+# [witchtime] NVN texture storage rules (runtime/nvn_sdk.c), by name from the sdk's proc table (tools/hlbuild/src/nvn_procs.rs, `hlbuild nvn-procs`), and the
 # GPU memory-kind chooser they end in: NvRmGpuDeviceChooseKind -> NvRmNvgpuDevice +0x30 (the HAL object) -> the GM200 HAL's
 # kind method +0x90 and the methods it calls (Witch Time's docs/RE_NOTES.md section 6).
 nvn nvnTextureBuilderGetStorageSize
