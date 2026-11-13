@@ -47,7 +47,8 @@ five rows, of which compiling is the long one; it is resumable, so closing the l
 game then runs in the launcher's own window. Settings, mods and updates are on the launcher's screens.
 
 A release archive brings everything the build needs (the launcher, the build tool, the runtime already built, clang
-and lld), so the PC needs no compiler or Python. There is no release yet: until the first one, build from source.
+and lld), so the PC needs no compiler or Python: take the one for your system from the
+[releases page](https://github.com/Zexyen/Hotel-Luigi/releases), unpack it and start the launcher in it.
 
 ## Build from source
 
