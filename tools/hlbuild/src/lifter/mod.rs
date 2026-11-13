@@ -1835,8 +1835,8 @@ mod tests {
         lift_words(N, &mut |_, l| h.update(l.as_bytes()));
         let digest = format!("{}\n", crate::util::hex(&h.finalize()));
         if std::fs::read_to_string(crate::golden::path("lift_words.sha256")).ok().as_deref() != Some(digest.as_str()) {
-            // another build's output for the same words: wtbuild lift-words < wtbuild-lift_words.in
-            let tmp = |x: &str| std::env::temp_dir().join(format!("wtbuild-lift_words-{}.{}", std::process::id(), x));
+            // another build's output for the same words: hlbuild lift-words < hlbuild-lift_words.in
+            let tmp = |x: &str| std::env::temp_dir().join(format!("hlbuild-lift_words-{}.{}", std::process::id(), x));
             let (i, o) = (tmp("in"), tmp("txt"));
             let (mut fi, mut fo) = (std::io::BufWriter::new(std::fs::File::create(&i).unwrap()), std::io::BufWriter::new(std::fs::File::create(&o).unwrap()));
             lift_words(N, &mut |j, l| {

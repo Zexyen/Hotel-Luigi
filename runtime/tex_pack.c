@@ -1,4 +1,4 @@
-/* [witchtime] #54: ASTC textures already turned into BC7 (`wtbuild textures`; bc7_textures in graphics.ini, on by default). A texture
+/* [witchtime] #54: ASTC textures already turned into BC7 (`hlbuild textures`; bc7_textures in graphics.ini, on by default). A texture
  * is found by a hash of its ASTC bytes, so nothing of the game's data changes, a mod's texture is simply not found, and
  * anything not found goes the way it always went (decoded here, BC3).
  *   <dir>/index.wtx   "WTXI", u32 version, u32 shards, u32 entries; shards x 32 bytes of file name; the entries, sorted by hash

@@ -1,5 +1,5 @@
 //! What the build makes differs between Linux and Windows: the file names, the compiler's target and the runtime's
-//! libraries. The player's build is always for the system it runs on; `wtbuild compile / link / runtime --target windows`
+//! libraries. The player's build is always for the system it runs on; `hlbuild compile / link / runtime --target windows`
 //! makes the Windows files elsewhere too (CI builds the Windows runtime on Linux with llvm-mingw).
 
 use std::fs;

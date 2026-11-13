@@ -1,6 +1,6 @@
 /* NVN texture storage rules answered by the SDK's own code, for Luigi's Mansion 3's sdk (nnSdk / NVN 7.3.2). Ported from
  * Witch Time's (13.3.2) by reading the same functions in both sdks; the SDK code is lifted from targets/exefs/sdk.elf by
- * tools/wtbuild/src/sdklift.rs and every address comes from runtime/gen/nvn_sdk_addrs.h.
+ * tools/hlbuild/src/sdklift.rs and every address comes from runtime/gen/nvn_sdk_addrs.h.
  *
  * The memory kind comes from the GPU library: nvnTextureBuilderGetStorageClass and the layout function call the NVN
  * chooser (device +0x920 -> NvRmGpuDeviceChooseKind on the object at device +0x928) -> NvRmNvgpuDevice method +0x30

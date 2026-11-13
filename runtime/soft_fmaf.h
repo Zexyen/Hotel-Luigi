@@ -3,7 +3,7 @@
  * AMD Piledriver) the C library's fmaf is software, and the UCRT's took most of the game thread (issue 155: 6 fps on an
  * Ivy Bridge). Only game_shim.c includes this: the lifted files do not, so nobody's game compiles again for it.
  *
- * Self-test (CI runs it, wtbuild.yml): clang -O1 -DSOFT_FMAF_TEST -x c runtime/soft_fmaf.h -o t && ./t */
+ * Self-test (CI runs it, hlbuild.yml): clang -O1 -DSOFT_FMAF_TEST -x c runtime/soft_fmaf.h -o t && ./t */
 #ifndef WT_SOFT_FMAF_H
 #define WT_SOFT_FMAF_H
 #if defined(__x86_64__)

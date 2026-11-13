@@ -1,4 +1,4 @@
-/* Code of the real SDK module (binaries\13.0.4\sdk.elf) lifted to C by tools/wtbuild/src/sdklift.rs, and the image it runs on.
+/* Code of the real SDK module (binaries\13.0.4\sdk.elf) lifted to C by tools/hlbuild/src/sdklift.rs, and the image it runs on.
  * See sdklift.rs for how calls out of the lifted code are bound, sdklift_rt.c for the loader. */
 #ifndef SDKLIFT_H
 #define SDKLIFT_H

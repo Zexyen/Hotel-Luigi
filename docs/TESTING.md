@@ -1,15 +1,15 @@
 # Testing the port
 
 What is checked, how, and what counts as a pass. Everything here runs from a built checkout
-(`tools/wtbuild/target/release/wtbuild setup --dump <dump>`; after a change to `runtime/` or `games/lm3/runtime/`
-use `wtbuild setup --from link`, a plain `setup` does not notice it).
+(`tools/hlbuild/target/release/hlbuild setup --dump <dump>`; after a change to `runtime/` or `games/lm3/runtime/`
+use `hlbuild setup --from link`, a plain `setup` does not notice it).
 
 ## 1. Without the game (seconds; every change)
 
 | Check | Command | Pass |
 |---|---|---|
-| Build tool and lifter | `cd tools/wtbuild && cargo test --release` | all pass, except `lift_words_digest` (fails on `main` too; its golden file was not updated with the lifter) |
-| Golden lift of the stand-in main | part of the above (`lift_fake_main`) | unchanged, or re-blessed on purpose with `WTBUILD_BLESS=1` after a lifter change |
+| Build tool and lifter | `cd tools/hlbuild && cargo test --release` | all pass, except `lift_words_digest` (fails on `main` too; its golden file was not updated with the lifter) |
+| Golden lift of the stand-in main | part of the above (`lift_fake_main`) | unchanged, or re-blessed on purpose with `HLBUILD_BLESS=1` after a lifter change |
 
 A change to the lifter that is meant to alter generated code is the only reason to bless.
 
@@ -45,7 +45,7 @@ change that makes the cutscene finish sooner or later has changed the game's clo
 
 1. Baseline first: run the configuration before the change, note the lobby line.
 2. `scripts/playtest.sh prof 300 frame_rate=120 WT_LPROF=240,15,$PWD/build/playtest/lprof.txt`, then
-   `tools/wtbuild/target/release/wtbuild lprof build/playtest/lprof.txt`: per thread, where the time goes. The first
+   `tools/hlbuild/target/release/hlbuild lprof build/playtest/lprof.txt`: per thread, where the time goes. The first
    thread listed with `render_thread` in its `incl:` list is the renderer; `f_71...` entries are the game's own code.
 3. In `run.log`, the last `nvn_vk_perf:` line splits the renderer's frame (batch replay, draw preparation, wait for the
    GPU) and the last `nvn_jobwait:` line shows how long the game waited for it (`Finish`).

@@ -3,7 +3,7 @@ mod fake;
 mod fps_census;
 mod freestanding_check;
 // the one game this checkout builds: a project made from this template points this at its own folder (and NAME in it)
-#[path = "../../../games/lm3/wtbuild/mod.rs"]
+#[path = "../../../games/lm3/hlbuild/mod.rs"]
 mod game;
 #[cfg(test)]
 mod golden;
@@ -26,7 +26,7 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 fn die(msg: impl std::fmt::Display) -> ! {
-    eprintln!("wtbuild: {}", msg);
+    eprintln!("hlbuild: {}", msg);
     std::process::exit(1)
 }
 
@@ -114,7 +114,7 @@ fn main() {
         }
         Some("smoke") => smoke::main(&args[1..]).unwrap_or_else(|e| die(e)),
         Some("runtime") => {
-            // the prebuilt runtime of a release (CI): wtbuild runtime --out <dir> [--repo <dir>] [--target windows]
+            // the prebuilt runtime of a release (CI): hlbuild runtime --out <dir> [--repo <dir>] [--target windows]
             let repo = repo_root(&args);
             let out = args
                 .iter()
@@ -152,7 +152,7 @@ fn main() {
                     Ok(())
                 })
             } else {
-                die("usage: see tools/wtbuild/README.md")
+                die("usage: see tools/hlbuild/README.md")
             };
             if let Err(pchtxt::ModError(e)) = r {
                 eprintln!("error: {}", e);
@@ -174,7 +174,7 @@ fn main() {
             // fps-census <census at 60> <census above 60> [<fps_sites.txt>] [--all]
             let files = positional(&args);
             if files.len() < 2 {
-                die("usage: see tools/wtbuild/README.md")
+                die("usage: see tools/hlbuild/README.md")
             }
             let read = |p: &Path| std::fs::read_to_string(p).unwrap_or_else(|e| die(format!("{}: {}", p.display(), e)));
             let sites = files.get(2).map(PathBuf::from).unwrap_or_else(|| repo_root(&args).join("build").join("gen_eh").join("fps_sites.txt"));
@@ -185,7 +185,7 @@ fn main() {
             // lprof <lprof.txt> [threads (6)] [functions per list (25)]
             let p = positional(&args);
             let count = |i: usize, default: usize| p.get(i).map_or(default, |s| s.parse().unwrap_or_else(|_| die(format!("lprof: {} is not a count", s))));
-            let path = p.first().unwrap_or_else(|| die("usage: see tools/wtbuild/README.md"));
+            let path = p.first().unwrap_or_else(|| die("usage: see tools/hlbuild/README.md"));
             let d = std::fs::read(path).unwrap_or_else(|e| die(format!("{}: {}", path, e)));
             print_all(Ok(lprof::report(&String::from_utf8_lossy(&d), count(1, 6), count(2, 25), &mut lprof::file_syms)));
         }
@@ -193,6 +193,6 @@ fn main() {
             // the launcher's updater checks a downloaded release with it
             println!("{}", util::sha256_file(Path::new(&args[1])).unwrap_or_else(|e| die(format!("{}: {}", args[1], e))));
         }
-        _ => die("usage: see tools/wtbuild/README.md"),
+        _ => die("usage: see tools/hlbuild/README.md"),
     }
 }

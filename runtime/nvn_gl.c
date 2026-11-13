@@ -5850,7 +5850,7 @@ int nvn_front_tex_changed(Tex *t, uint32_t gen) {
     return 1;
 }
 /* #54: the BC7 pack (tex_pack.c): bc7_textures in graphics.ini, on by default (WT_BC7_TEXTURES=0 or 1 wins), when
- * `wtbuild textures` has made one. */
+ * `hlbuild textures` has made one. */
 static int pack_on(void) {
     static volatile LONG on = -1;
     if (on < 0) {

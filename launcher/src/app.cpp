@@ -176,7 +176,7 @@ double folder_bytes(const std::string& dir)
 	return used;
 }
 
-// why BuildRunner::start failed: a checkout where wtbuild was never built is told how to build it
+// why BuildRunner::start failed: a checkout where hlbuild was never built is told how to build it
 const char* start_error(const std::string& repo)
 {
 	return build_command(repo, "setup").empty() ? NO_BUILD_TOOL : "The build tool cannot be started.";
@@ -1285,7 +1285,7 @@ void App::tick()
 			modified |= t.find("--accept-modified") != std::string::npos || t.rfind("warning:", 0) == 0;
 			if (t.find("--accept-modified") != std::string::npos)    // the command-line advice; the switch above is the launcher's way
 				t = "The dump differs from the supported version. Turn on \"Use a modified dump\" to build it anyway.";
-			if (!t.empty() && t.rfind("setup:", 0) != 0 && t.rfind("Start the game:", 0) != 0)    // wtbuild's closing lines are not checks
+			if (!t.empty() && t.rfind("setup:", 0) != 0 && t.rfind("Start the game:", 0) != 0)    // hlbuild's closing lines are not checks
 				checks.push_back({t, "", "done"});
 		}
 		if (modified && !dump_modified)
@@ -1323,8 +1323,8 @@ void App::tick()
 					build_error += (build_error.empty() ? "" : " ") + l.substr(std::min(l.size(), l.find_first_not_of(' ')));
 				after |= l.find("FAILED") != std::string::npos;
 			}
-			for (const std::string& l : runner.lines)       // else wtbuild's own reason (its die(): "wtbuild: ..."), as the textures fail
-				if (const size_t at = l.find("wtbuild: "); build_error.empty() && at != std::string::npos)
+			for (const std::string& l : runner.lines)       // else hlbuild's own reason (its die(): "hlbuild: ..."), as the textures fail
+				if (const size_t at = l.find("hlbuild: "); build_error.empty() && at != std::string::npos)
 					build_error = l.substr(at + 9);
 			if (build_error.empty())
 				build_error = !built_game ? "The texture conversion was stopped. Settings goes on with it."
@@ -1332,7 +1332,7 @@ void App::tick()
 		}
 		else if (built_game)
 			std::ofstream(paths.build + "/" BUILT_VERSION, std::ios::binary) << WT_VERSION;
-		else                                         // #158: made, but without the files that do not decode: wtbuild's warning
+		else                                         // #158: made, but without the files that do not decode: hlbuild's warning
 			for (const std::string& l : runner.lines)
 				if (const size_t at = l.find("warning: "); at != std::string::npos)
 					build_error = l.substr(at + 9);

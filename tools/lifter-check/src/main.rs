@@ -1,9 +1,9 @@
-//! The lifter's semantic check (developers): words lifted by the shipped lifter (`wtbuild lift-words`) run in Unicorn
+//! The lifter's semantic check (developers): words lifted by the shipped lifter (`hlbuild lift-words`) run in Unicorn
 //! and, as the lifted statement, in a generated C program built on the real runtime helpers (-I runtime); all 32 V
 //! registers, X0..X30, SP and a 256-byte buffer must come out the same. Replaces lifter/test_ext.py and
 //! lifter/test_b3.py, which checked the Python lifter. Never part of a release: Unicorn is GPL-2.0.
 //!
-//!   lifter-check [--main <main.elf> | --synthetic N] [--trials N] [--seed N] [--keep] [--wtbuild <path>]
+//!   lifter-check [--main <main.elf> | --synthetic N] [--trials N] [--seed N] [--keep] [--hlbuild <path>]
 //!
 //! --main (default targets/exefs/main.elf): every word of the player's .text in one of test_ext's FORMS, and every
 //! AdvSIMD word whose statement uses a [witchtime] form of test_b3 (b3_form) or that is a one-lane / replicate
@@ -242,7 +242,7 @@ impl Emu<'_> {
     }
 }
 
-/// .text and .plt: the first PT_LOAD's file size (wtbuild's lifter::layout)
+/// .text and .plt: the first PT_LOAD's file size (hlbuild's lifter::layout)
 fn text_size(img: &[u8]) -> usize {
     let rd = |o: usize, n: usize| {
         img.get(o..o + n)
@@ -261,17 +261,17 @@ fn text_size(img: &[u8]) -> usize {
         .unwrap_or_else(|| die("ELF without PT_LOAD"))
 }
 
-/// `wtbuild lift-words`, at BASE + 0x1000000 in a function BASE..end as both Python checks lifted
-fn lift(wtbuild: &Path, words: &[u32], end: u64) -> Vec<String> {
-    let mut child = Command::new(wtbuild)
+/// `hlbuild lift-words`, at BASE + 0x1000000 in a function BASE..end as both Python checks lifted
+fn lift(hlbuild: &Path, words: &[u32], end: u64) -> Vec<String> {
+    let mut child = Command::new(hlbuild)
         .arg("lift-words")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
         .unwrap_or_else(|e| {
             die(format!(
-                "{}: {} (cargo build --release --manifest-path tools/wtbuild/Cargo.toml)",
-                wtbuild.display(),
+                "{}: {} (cargo build --release --manifest-path tools/hlbuild/Cargo.toml)",
+                hlbuild.display(),
                 e
             ))
         });
@@ -416,17 +416,17 @@ fn main() {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--main" | "--synthetic" | "--trials" | "--seed" | "--wtbuild" if i + 1 < args.len() => i += 2,
+            "--main" | "--synthetic" | "--trials" | "--seed" | "--hlbuild" if i + 1 < args.len() => i += 2,
             "--keep" => i += 1,
-            _ => die("usage: lifter-check [--main <main.elf> | --synthetic N] [--trials N] [--seed N] [--keep] [--wtbuild <path>]"),
+            _ => die("usage: lifter-check [--main <main.elf> | --synthetic N] [--trials N] [--seed N] [--keep] [--hlbuild <path>]"),
         }
     }
     let opt = |k: &str| args.iter().position(|a| a == k).map(|i| args[i + 1].as_str());
     let num = |k: &str, d: u64| opt(k).map_or(d, |s| s.parse().unwrap_or_else(|_| die(format!("{} {}: not a number", k, s))));
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
-    let wtbuild = opt("--wtbuild").map(PathBuf::from).unwrap_or_else(|| {
-        repo.join("tools/wtbuild/target/release")
-            .join(format!("wtbuild{}", std::env::consts::EXE_SUFFIX))
+    let hlbuild = opt("--hlbuild").map(PathBuf::from).unwrap_or_else(|| {
+        repo.join("tools/hlbuild/target/release")
+            .join(format!("hlbuild{}", std::env::consts::EXE_SUFFIX))
     });
     let trials = num("--trials", 300);
     let mut rng = Rng(num("--seed", 1));
@@ -444,7 +444,7 @@ fn main() {
         let n = n.parse().unwrap_or_else(|_| die(format!("--synthetic {}: not a number", n)));
         let ws = synthetic(n, &mut rng, &mut emu);
         end = BASE + 0x2000000;
-        for (w, s) in ws.iter().zip(lift(&wtbuild, &ws, end)) {
+        for (w, s) in ws.iter().zip(lift(&hlbuild, &ws, end)) {
             let f = FORMS[form(*w).unwrap()];
             if s.contains(f.3) {
                 names.push(f.2);
@@ -463,7 +463,7 @@ fn main() {
         let ws: BTreeSet<u32> = text.chunks_exact(4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).collect();
         let ws: Vec<u32> = ws.into_iter().filter(|&w| form(w).is_some() || is_simd(w)).collect();
         end = BASE + size as u64;
-        for (w, s) in ws.iter().copied().zip(lift(&wtbuild, &ws, end)) {
+        for (w, s) in ws.iter().copied().zip(lift(&hlbuild, &ws, end)) {
             let name = match form(w) {
                 Some(f) if !s.contains(FORMS[f].3) => {
                     fails.push(format!("{:08x} {} lifts to: {}", w, FORMS[f].2, s));
@@ -483,7 +483,7 @@ fn main() {
     }
     // (word, its code slot, statement): a stlxp also after an LDXP, so that it stores (CLREX alone makes it fail)
     let stlxp: Vec<u32> = words.iter().filter(|(w, _)| form(*w) == Some(7)).map(|(w, _)| ldxp_for(*w)).collect();
-    let mut pre = stlxp.iter().zip(lift(&wtbuild, &stlxp, end));
+    let mut pre = stlxp.iter().zip(lift(&hlbuild, &stlxp, end));
     let mut cases: Vec<(u32, u64, String)> = vec![];
     for (w, s) in words {
         cases.push((w, emu.place(NOP, w), s.clone()));

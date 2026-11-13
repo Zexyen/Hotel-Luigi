@@ -1,7 +1,7 @@
-//! `wtbuild setup`: from a fresh clone and YOUR OWN dump to a runnable build, on Linux and Windows. The launcher follows
+//! `hlbuild setup`: from a fresh clone and YOUR OWN dump to a runnable build, on Linux and Windows. The launcher follows
 //! the step lines, build/setup_state.json and build/logs/; every step runs inside this program. The dump is one folder:
 //! exefs/ (main, sdk, subsdk0, rtld, main.npdm: plain NSO files of the build in VERSION) and romfs/ (*.pkz, movie/).
-//! Steps, resumable (a finished one is skipped; --from <step> repeats it and the rest; tools/wtbuild/README.md "Steps"):
+//! Steps, resumable (a finished one is skipped; --from <step> repeats it and the rest; tools/hlbuild/README.md "Steps"):
 //!   deps     the compiler and the libraries the link step needs (always runs)
 //!   verify   the dump is the exact version this port handles (SHA-256, NSO build ID, RomFS manifest)
 //!   convert  main, sdk, subsdk0 -> targets/exefs/*.elf (nso.rs); the ExeFS and RomFS placed under targets/
@@ -58,9 +58,9 @@ const WINDOWS_LIBS: [(&str, &str, &str); 4] = [
     ("FFmpeg", "libavformat/avformat.h", "-lavformat -lavcodec -lswscale -lswresample -lavutil"),
 ];
 
-const USAGE: &str = "usage: wtbuild setup [--dump <folder>] [--jobs N] [--only <step> | --from <step>] [--status] [--accept-modified] [--move-dump]
+const USAGE: &str = "usage: hlbuild setup [--dump <folder>] [--jobs N] [--only <step> | --from <step>] [--status] [--accept-modified] [--move-dump]
                      [--mods <folder>] [--llvm <folder>] [--repo <folder>]
-steps: deps verify convert mods tables lift compile link text check (tools/wtbuild/README.md, \"Steps\", describes them)";
+steps: deps verify convert mods tables lift compile link text check (tools/hlbuild/README.md, \"Steps\", describes them)";
 
 struct Fail(String);
 
@@ -130,7 +130,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
             "--toolchain" => {
                 let v = val()?;
                 if v != Target::host().name() {
-                    return Err(format!("--toolchain {}: wtbuild builds for this system ({})", v, Target::host().name()));
+                    return Err(format!("--toolchain {}: hlbuild builds for this system ({})", v, Target::host().name()));
                 }
             }
             _ => return Err(format!("unrecognized arguments: {}", k)),
@@ -211,7 +211,7 @@ impl Ctx {
             .append(true)
             .open(&path)
             .map_err(|e| Fail(format!("{}: {}", path.display(), e)))?;
-        let _ = write!(file, "\n$ wtbuild {}\n", step);
+        let _ = write!(file, "\n$ hlbuild {}\n", step);
         let t0 = Instant::now();
         let mut written = String::new();
         let r = f(&mut |l: String| {
@@ -405,7 +405,7 @@ fn step_deps(cx: &mut Ctx) -> Result<(), Fail> {
             ))
         })?;
         say(format!("  compiler builds and runs a {} program: ok", os));
-        if std::env::var_os("WTBUILD_SKIP_LIB_CHECK").is_none() {
+        if std::env::var_os("HLBUILD_SKIP_LIB_CHECK").is_none() {
             let mut missing = Vec::new();
             for (what, header, libs) in if t.windows() { &WINDOWS_LIBS[..] } else { &SYSTEM_LIBS[..] } {
                 let c = probe.join("lib.c");
@@ -530,7 +530,7 @@ fn step_verify(cx: &mut Ctx) -> Result<(), Fail> {
     }
     let mut warnings = Vec::new();
     if EXEFS.is_empty() {
-        return Err(Fail(format!("this checkout names no game yet: fill in games/{}/wtbuild/mod.rs", crate::game::NAME)));
+        return Err(Fail(format!("this checkout names no game yet: fill in games/{}/hlbuild/mod.rs", crate::game::NAME)));
     }
     for &(name, _size, digest, bid) in EXEFS {
         let p = exefs.join(name);
@@ -949,7 +949,7 @@ fn source_fingerprint(repo: &Path) -> String {
         }
     }
     if let Some(exe) = std::env::current_exe().ok().and_then(|p| fs::read(p).ok()) {
-        h.update(b"wtbuild\0");
+        h.update(b"hlbuild\0");
         h.update(Sha256::digest(exe));
     }
     crate::util::hex(&h.finalize())[..20].to_string()
@@ -967,7 +967,7 @@ pub fn main(args: &[String]) -> i32 {
     let a = match parse(args) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("{}\nwtbuild setup: error: {}", USAGE, e);
+            eprintln!("{}\nhlbuild setup: error: {}", USAGE, e);
             return 2;
         }
     };
@@ -1082,7 +1082,7 @@ pub fn main(args: &[String]) -> i32 {
                 .cloned()
                 .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
                 .unwrap_or_default();
-            Err(Fail(format!("internal error in wtbuild ({}); please report it with build/logs", what)))
+            Err(Fail(format!("internal error in hlbuild ({}); please report it with build/logs", what)))
         });
         if let Err(Fail(e)) = r {
             say(format!("[{}/{}] {}: FAILED\n{}", i + 1, n, s, e));
@@ -1115,7 +1115,7 @@ mod tests {
 
     #[test]
     fn place_folder_copies_resumes_and_moves() {
-        let t = std::env::temp_dir().join(format!("wtbuild_place_{}", std::process::id()));
+        let t = std::env::temp_dir().join(format!("hlbuild_place_{}", std::process::id()));
         let (src, dst) = (t.join("dump romfs"), t.join("targets").join("romfs"));
         fs::create_dir_all(src.join("movie")).unwrap();
         fs::write(src.join("a.pkz"), b"aa").unwrap();
@@ -1139,7 +1139,7 @@ mod tests {
 
     #[test]
     fn convert_runs_again_when_its_files_are_gone() {
-        let t = std::env::temp_dir().join(format!("wtbuild_lost_{}", std::process::id()));
+        let t = std::env::temp_dir().join(format!("hlbuild_lost_{}", std::process::id()));
         let (exefs, romfs) = (t.join("exefs"), t.join("romfs"));
         fs::create_dir_all(&exefs).unwrap();
         fs::create_dir_all(&romfs).unwrap();

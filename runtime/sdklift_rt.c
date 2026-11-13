@@ -1,4 +1,4 @@
-/* Loader and glue for the code lifted out of the real SDK module (sdklift_gen.c, made by tools/wtbuild/src/sdklift.rs).
+/* Loader and glue for the code lifted out of the real SDK module (sdklift_gen.c, made by tools/hlbuild/src/sdklift.rs).
  *
  * The SDK image (binaries\13.0.4\sdk.elf, the user's own dump converted with nso2elf) is mapped at
  * SDK_BASE with its three PT_LOAD segments and relocated like the game image, so the lifted functions
@@ -152,7 +152,7 @@ void sdk_dispatch(Ctx *c, uint64_t addr) {
             uint64_t off;
             const char *n = sdk_name_of(addr, &off);
             printf("\nsdklift: lifted SDK code (f_%llx) calls SDK address %llx (%s+0x%llx) through a pointer, and that function was not lifted.\n"
-                   "Add `addr %llx` to sdklift_roots.txt and run `wtbuild setup --from tables`.\n",
+                   "Add `addr %llx` to sdklift_roots.txt and run `hlbuild setup --from tables`.\n",
                    (unsigned long long)c->fn, (unsigned long long)(addr - SDK_BASE), n, (unsigned long long)off, (unsigned long long)(addr - SDK_BASE));
             guest_trap("indirect call to an SDK function that was not lifted", addr);
         }

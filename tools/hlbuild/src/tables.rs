@@ -648,7 +648,7 @@ mod tests {
         let here = Path::new(env!("CARGO_MANIFEST_DIR"));
         let (repo, fake) = (here.join("../.."), here.join("testdata/fake_main"));
         let st = repo.join("runtime/gen_static");
-        let t = std::env::temp_dir().join(format!("wtbuild-tables-{}", std::process::id()));
+        let t = std::env::temp_dir().join(format!("hlbuild-tables-{}", std::process::id()));
         let _ = fs::remove_dir_all(&t);
         let put = |rel: &str, b: &[u8]| {
             let p = t.join(rel);

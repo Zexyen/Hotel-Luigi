@@ -1,5 +1,5 @@
 //! Every NVN entry point of YOUR sdk by name, read from the sdk's own proc table, and what runtime/nvn_sdk.c's GPU
-//! model points at (`wtbuild nvn-procs` lists them). Nothing is hard-coded; Witch Time's docs/RE_NOTES.md "NVN" has the details.
+//! model points at (`hlbuild nvn-procs` lists them). Nothing is hard-coded; Witch Time's docs/RE_NOTES.md "NVN" has the details.
 
 use crate::lifter::layout;
 use crate::util::{cstr, hx, i64_at, sext, u32_at, u64_at};
@@ -125,7 +125,7 @@ pub fn procs(d: &[u8]) -> Result<BTreeMap<String, i64>, String> {
     Err("sdk.elf: no NVN proc table found (not nnSdk 13.3.2?)".into())
 }
 
-/// `wtbuild nvn-procs`: "addr <offset> <name>" per name (every entry point when none is given), for games/lm3/lifter/sdklift_roots.txt
+/// `hlbuild nvn-procs`: "addr <offset> <name>" per name (every entry point when none is given), for games/lm3/lifter/sdklift_roots.txt
 pub fn listing(table: &BTreeMap<String, i64>, names: &[&str]) -> Vec<String> {
     let all: Vec<&str> = table.keys().map(String::as_str).collect();
     let names = if names.is_empty() { &all[..] } else { names };

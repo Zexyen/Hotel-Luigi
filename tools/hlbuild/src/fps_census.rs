@@ -1,5 +1,5 @@
-//! `wtbuild fps-census`: the frame-rate census report (Witch Time's docs/STATUS.md, "Frame rates above 60"). Per counter site, what
-//! one visit adds to its field at 60 and above 60 (census files from a WTBUILD_FPS_CENSUS=1 build run with WT_FPS_CENSUS,
+//! `hlbuild fps-census`: the frame-rate census report (Witch Time's docs/STATUS.md, "Frame rates above 60"). Per counter site, what
+//! one visit adds to its field at 60 and above 60 (census files from a HLBUILD_FPS_CENSUS=1 build run with WT_FPS_CENSUS,
 //! games/lm3/runtime/game_shim_eh.c): frame-locked sites add as much per visit when the frames are shorter. Lists the
 //! frame-locked per-update sites, busiest first; --all lists every site.
 

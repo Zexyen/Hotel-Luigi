@@ -513,7 +513,7 @@ fn has_romfs(m: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// every mod, file and block with its switch: the launcher's Mods window (`wtbuild mods-tree`)
+/// every mod, file and block with its switch: the launcher's Mods window (`hlbuild mods-tree`)
 pub fn tree(folder: &Path, main_nso: Option<&Path>, settings: &HashMap<String, bool>) -> R<Vec<String>> {
     let want = main_nso.map(nso_build_id).transpose()?;
     let on = |k: &str, d: bool| (*settings.get(&norm_key(k)).unwrap_or(&d) as u8).to_string();
@@ -884,8 +884,8 @@ mod tests {
     /// the golden was pchtxt.py's output on the same folders
     #[test]
     fn random_mod_folders() {
-        // WTBUILD_CASES=<dir> keeps the cases there
-        let keep = std::env::var_os("WTBUILD_CASES").map(|d| PathBuf::from(d).join("pchtxt"));
+        // HLBUILD_CASES=<dir> keeps the cases there
+        let keep = std::env::var_os("HLBUILD_CASES").map(|d| PathBuf::from(d).join("pchtxt"));
         let t = keep
             .clone()
             .unwrap_or_else(|| std::env::temp_dir().join(format!("wt_pchtxt_{}", std::process::id())));

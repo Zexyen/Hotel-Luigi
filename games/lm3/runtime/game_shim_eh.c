@@ -1,4 +1,4 @@
-/* Shim of the game DLL generated WITH landing-pad resume entries (tools/wtbuild/src/lifter/eh.rs).
+/* Shim of the game DLL generated WITH landing-pad resume entries (tools/hlbuild/src/lifter/eh.rs).
  * Everything of game_shim.c, plus what the exception unwinder needs from main: the resume table, and the host's
  * nro_catch_call for the functions that have a catch handler. The host finds game_eh_bind with GetProcAddress
  * (nncxxrt.c), so an exe works with either kind of DLL. */
@@ -18,7 +18,7 @@ __declspec(dllexport) void game_eh_bind(void (*catch_call)(Ctx *, void (*)(Ctx *
 }
 
 /* Host versions of game functions go here: the lifter sends the direct calls of an address listed in HOST_OVERRIDES
- * (../wtbuild/mod.rs) to h_<name>(Ctx *c), defined in this file, and so does the function table (calls through a pointer). */
+ * (../hlbuild/mod.rs) to h_<name>(Ctx *c), defined in this file, and so does the function table (calls through a pointer). */
 
 /* graphics.ini aspect_ratio (the 21:9 mod, built in; RECOMPS_ASPECT from gfx_options.c): main's screen-shape function
  * (0x67be0: the screen's width / height) answers the shape asked for. The game's own function still runs: its first

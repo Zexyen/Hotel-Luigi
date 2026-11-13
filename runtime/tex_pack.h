@@ -1,4 +1,4 @@
-/* #54: the pack of BC7 textures `wtbuild textures` makes from the game's ASTC textures. docs in tex_pack.c */
+/* #54: the pack of BC7 textures `hlbuild textures` makes from the game's ASTC textures. docs in tex_pack.c */
 #ifndef TEX_PACK_H
 #define TEX_PACK_H
 #include <stddef.h>
@@ -10,7 +10,7 @@ typedef struct {
     uint32_t stored, raw, format, width, height;
     uint16_t levels, layers, shard, pad;
     uint32_t pad2;
-} TexPackEntry;                                    /* the same 56 bytes in the index and at a shard's end (games/lm3/wtbuild/texpack.rs) */
+} TexPackEntry;                                    /* the same 56 bytes in the index and at a shard's end (games/lm3/hlbuild/texpack.rs) */
 #pragma pack(pop)
 uint64_t tex_pack_hash(const uint8_t *p, size_t n);
 int tex_pack_open(const char *dir);                /* the number of textures, 0 = no usable pack */

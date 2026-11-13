@@ -1,6 +1,6 @@
-//! The game this checkout builds: what wtbuild knows about one game only. The dump it accepts, the addresses the lifter
+//! The game this checkout builds: what hlbuild knows about one game only. The dump it accepts, the addresses the lifter
 //! patches or sends to host functions (../runtime/game_shim_eh.c), and the runtime sources only this game needs.
-//! tools/wtbuild/src/main.rs includes this file as `crate::game`.
+//! tools/hlbuild/src/main.rs includes this file as `crate::game`.
 //!
 //! Luigi's Mansion 3.
 
