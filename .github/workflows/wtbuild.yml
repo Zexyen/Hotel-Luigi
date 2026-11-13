@@ -1,0 +1,84 @@
+# Builds and tests wtbuild (tools/wtbuild, the Rust build): its regression tests compare against committed goldens
+# (tools/wtbuild/testdata/golden) made from stand-in programs in tools/wtbuild/testdata (no game code), and the lifted
+# code must compile to the same objects without system headers. Nothing of a dump is needed. The link step is checked by
+# release.yml (wtbuild smoke).
+name: wtbuild
+
+on:
+  pull_request:
+    paths: ['tools/wtbuild/**', 'lifter/**', 'games/**', 'runtime/gen_static/**', 'runtime/freestanding/**',
+            'runtime/*.h', 'runtime/mx_translate.c', 'runtime/tex_decode.c', 'runtime/tex_pack.c', 'tests/bc7_encode_test.c', 'tests/tex_pack_test.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/mx_quad_test.c', 'tools/lifter-check/**', '.gitattributes', '.github/workflows/wtbuild.yml']
+  workflow_dispatch:
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          echo 'nameserver 1.1.1.1' | sudo tee /etc/resolv.conf      # 2026-11-11: the runners' own resolver timed out on the Ubuntu mirrors' names (20 s a try); take this line out when it answers again
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld libssl-dev
+
+      - name: Build and unit tests
+        run: |
+          cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
+          cargo test --release --locked --manifest-path tools/wtbuild/Cargo.toml
+
+      - name: Freestanding compile (runtime/freestanding against the system's headers)
+        run: tools/wtbuild/target/release/wtbuild check-freestanding --words 200000 --seed 1 --jobs 4
+
+      - name: The runtime's own SHA-1 and MD5 (runtime/plat_hash.h) against OpenSSL
+        run: |
+          clang -O2 -Wall -I runtime tests/plat_hash_test.c -lcrypto -o "$RUNNER_TEMP/plat_hash_test"
+          "$RUNNER_TEMP/plat_hash_test"
+
+      - name: The fmaf of a CPU without FMA3 (runtime/soft_fmaf.h) against the instruction
+        run: |
+          clang -O1 -DSOFT_FMAF_TEST -x c runtime/soft_fmaf.h -o "$RUNNER_TEMP/soft_fmaf_test"
+          "$RUNNER_TEMP/soft_fmaf_test"
+
+      - name: The BC7 pack's reader and the fallback encoder (runtime/tex_pack.c, tex_decode.c, issue 54)
+        run: |
+          clang -O2 -Wall -I runtime tests/tex_pack_test.c runtime/tex_pack.c -o "$RUNNER_TEMP/tex_pack_test"
+          (cd "$RUNNER_TEMP" && ./tex_pack_test)
+          clang -O2 -I runtime tests/bc7_encode_test.c runtime/tex_decode.c -lm -o "$RUNNER_TEMP/bc7_encode_test"
+          "$RUNNER_TEMP/bc7_encode_test"
+
+      - name: The shader translator's loop guard (runtime/mx_translate.c, issue 26)
+        run: |
+          clang -O2 -Wall -I runtime tests/mx_loop_guard_test.c runtime/mx_translate.c -o "$RUNNER_TEMP/mx_loop_guard_test"
+          "$RUNNER_TEMP/mx_loop_guard_test"
+
+      - name: Fragment stages work on quads, not lane numbers (runtime/mx_translate.c, issue 66)
+        run: |
+          clang -O2 -Wall -I runtime tests/mx_quad_test.c runtime/mx_translate.c -o "$RUNNER_TEMP/mx_quad_test"
+          "$RUNNER_TEMP/mx_quad_test"
+
+      - name: The depth pyramid at a resolution scale and FSR's dither phases (runtime/rs_pyramid.h, runtime/fsr_dither.h)
+        run: |
+          clang -O2 -Wall -I runtime tests/rs_pyramid_test.c -o "$RUNNER_TEMP/rs_pyramid_test"
+          "$RUNNER_TEMP/rs_pyramid_test"
+          clang -O2 -Wall -I runtime tests/fsr_dither_test.c -o "$RUNNER_TEMP/fsr_dither_test"
+          "$RUNNER_TEMP/fsr_dither_test"
+
+  lifter-check:
+    # the shipped lifter against Unicorn: random words of the forms added to the lifter, run in Unicorn and as their lifted C
+    # (no dump needed)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          echo 'nameserver 1.1.1.1' | sudo tee /etc/resolv.conf      # 2026-11-11: the runners' own resolver timed out on the Ubuntu mirrors' names (20 s a try); take this line out when it answers again
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang libclang-dev cmake ninja-build
+
+      - name: Lifter against Unicorn (tools/lifter-check)
+        run: |
+          cargo build --release --locked --manifest-path tools/wtbuild/Cargo.toml
+          cargo test --release --locked --manifest-path tools/lifter-check/Cargo.toml
+          cargo run --release --locked --manifest-path tools/lifter-check/Cargo.toml -- --synthetic 2000 --seed 1

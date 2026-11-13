@@ -1,0 +1,505 @@
+/* Track O (options), first set (track V session 4): config\graphics.ini.
+ *
+ * Path: WT_GRAPHICS_CONFIG=<file> when set; else graphics.ini beside the file WT_CONFIG names (WT_CONFIG is the
+ * path of controllers.ini, nnpad_sdl.c); else <exe folder>\..\config\graphics.ini. Written with the defaults and their
+ * documentation when it does not exist, brought up to a new version's by gfx_ini_refresh when it does.
+ * Read ONCE at start (the window, the device and the swapchain are made from it).
+ * Environment switches of the test scripts (WT_RENDERER, WT_VK_DEVICE, WT_VK_PRESENT) win over the file.
+ * The controllers.ini reader of nnpad_sdl.c is built around its device sections and is not reusable here: this file has
+ * its own 30-line reader (key = value, ';' or '#' comments, section headers ignored). */
+#include <windows.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "gfx_options.h"
+#ifndef L1_LATENCY_DEFAULT
+#define L1_LATENCY_DEFAULT 0      /* track L1: normal (coordinator 2026-10-14); low is an option */
+#endif
+static int g_gfx_latency = L1_LATENCY_DEFAULT;      /* track L1: latency = normal 0 | low 1 | lowest 2 (display.c); read with gfx_latency() */
+int gfx_latency(void) { gfx_options(); return g_gfx_latency; }
+
+static const char *const k_default_ini =
+"; graphics.ini: display and rendering options of the native build (read once at start by gfx_options.c).\r\n"
+"; Delete the file to get it written again with these defaults. A line starting with ';' is a comment.\r\n"
+"; A new version updates these comments and adds its new keys when the game starts. Your values stay; the file as it was\r\n"
+"; goes to graphics.ini.bak, which is where your own comments are then.\r\n"
+"; Every value below is the default; the defaults draw exactly what the game draws on the console.\r\n"
+"\r\n"
+"; renderer = vulkan | opengl\r\n"
+";   vulkan: the default since 2026-10-09. opengl: the first renderer (NVIDIA only), kept as a fallback.\r\n"
+"renderer = vulkan\r\n"
+"\r\n"
+"; window = windowed | borderless | fullscreen\r\n"
+";   windowed:   a normal window with the client size below.\r\n"
+";   borderless: no frame, covers the monitor the window is on (the desktop keeps its resolution).\r\n"
+";   fullscreen: as borderless, and always on top. (Exclusive fullscreen with a mode change is not implemented.)\r\n"
+"window = windowed\r\n"
+"width = 1280\r\n"
+"height = 720\r\n"
+"\r\n"
+"; vsync = auto | display | clock | off | on | mailbox      (Vulkan)\r\n"
+";   auto:    the refresh rate of the monitor is measured at start. 60, 120, 240 Hz (within 1.1 %: 59.94, 119.88 too):\r\n"
+";            as 'display', and checked every 5 s: when the game's speed leaves 60 +-1.1 % (a variable refresh rate:\r\n"
+";            G-Sync / FreeSync), as 'clock' until the refresh is steady again. Any other rate (75, 100, 144, 165 Hz):\r\n"
+";            as 'clock'. The log says which ('display:' lines).\r\n"
+";   display: the game's frame clock IS the display's refresh (every refresh at 60 Hz, every second one at 120 Hz):\r\n"
+";            each frame is on screen for exactly the same time. No tearing. The game runs at refresh / k frames per\r\n"
+";            second (59.94 on a 119.88 Hz panel). Falls back to 'clock' when the rate is not a multiple of 60 at start;\r\n"
+";            keeps the lock if the refresh drifts later (the game then runs slower or faster than real time).\r\n"
+";   clock:   the program's own 60.000 Hz clock; a finished frame is shown at the next tick of that clock (mailbox when\r\n"
+";            the GPU offers it, else FIFO: no tearing). On a display that is not 60 / 120 / 240 Hz some frames stay on screen\r\n"
+";            one refresh longer than others: that cannot be avoided there.\r\n"
+";   off:     immediate presentation as soon as a frame is ready, tearing allowed. Lowest latency. Still 60 frames per second.\r\n"
+";   on:      the swapchain's own vertical sync (FIFO) next to the program's clock: two clocks, not recommended. (auto,\r\n"
+";            display and clock use FIFO too on a GPU without mailbox, e.g. AMD on Windows.)\r\n"
+";   mailbox: as clock; FIFO when the GPU has no mailbox.\r\n"
+"vsync = auto\r\n"
+"\r\n"
+"; latency = normal | low | lowest      (track L1, input latency; Vulkan)\r\n"
+";   normal:  the game is let go at the tick. (The game's picture is shown one frame sooner than before 2026-10-14 in\r\n"
+";            every mode: it goes to the window as soon as the game has submitted it.)\r\n"
+";   low:     the game is let go late in each frame, just in time for its picture to be ready for the next tick, so it\r\n"
+";            reads the controller 2-5 ms later = closer to the screen. Same cadence; with four players a few more late frames.\r\n"
+";   lowest:  as low, and the picture goes to the window as soon as it is ready (no wait for the tick): about 4 ms\r\n"
+";            less again, but the frames are no longer all on screen for the same time (judder).\r\n"
+"latency = normal\r\n"
+"\r\n"
+"; gpu = auto | <number> | <part of the name>      (Vulkan)\r\n"
+";   auto: a discrete GPU first, then an integrated one. The log lists the devices with their numbers:\r\n"
+";   'nvn_vk: device 0: ...'. Examples: gpu = 1      gpu = Intel      gpu = RTX\r\n"
+"gpu = auto\r\n"
+"\r\n"
+"; console_mode = docked | handheld\r\n"
+";   What nn::oe::GetOperationMode answers. It does not set the render size (resolution_scale does); kept for study,\r\n"
+";   leave it at docked.\r\n"
+"console_mode = docked\r\n"
+"\r\n"
+"; resolution_scale = 1.0\r\n"
+/* PR #8 (stephenjayakar): the range goes above 1.0 (supersampling); capped at 2.0 there (review 2026-10-16), strong GPUs only */
+/* [witchtime] Bayonetta 3's sizes (1600x900) and the measurements of 2026-10-25 (Witch Time's docs/STATUS.md, "Resolution scale") */
+";   Internal resolution scale, 0.25 to 3.0 (Vulkan only; OpenGL ignores it). 1.0 = the game's own size. For a game that\r\n"
+";   renders at 1600x900: 1.2 = 1920x1080, 1.6 = 2560x1440, 2.4 = 3840x2160 (4K): drawn larger, shown at the window's\r\n"
+";   size (width / height above). Measured on an RX 9070 XT (2026-10-25): 59.6-59.9 fps in a fight at every one of\r\n"
+";   them; 2.4 takes about 1 GB of video memory more. The first run at a scale other than 1.0 holds the loading screens\r\n"
+";   for about two minutes once, while the shaders are translated for it.\r\n"
+"resolution_scale = 1.0\r\n"
+"\r\n"
+"; shader_wait = hold | skip      (Vulkan)\r\n"
+";   What happens when a draw needs a shader or pipeline that is not ready yet (mostly the first time something is shown\r\n"
+";   on this PC). hold: the frame waits for it (a late frame, a correct picture). skip: in and around a fight the draw is\r\n"
+";   left out until it is ready (no late frame; the object or effect is missing for some frames). The log counts both.\r\n"
+"shader_wait = hold\r\n"
+"\r\n"
+"; shader_prepare = first_run | background | off      (Vulkan)\r\n"
+";   Every shader of the game (shader.dat and the effect shaders, about 8,000 stages) is compiled ahead into ..\\cache\\vk.\r\n"
+";   first_run: the first start on a GPU / driver shows PREPARING SHADERS NN % until it is done (once; ~20 s on 16 threads);\r\n"
+";   background or off: no screen, prepared while the game runs at low priority (WT_VK_PREP=0 skips it).\r\n"
+"shader_prepare = first_run\r\n"
+"\r\n"
+"; profile = custom | low\r\n"
+";   custom: every key of this file as written. low: the set measured for a weak or integrated GPU (2026-10-12, Intel\r\n"
+";   integrated: 4.2 ms of GPU time per fight frame instead of 9.0): resolution_scale = 0.5, the game's own texture\r\n"
+";   filtering, vsync = clock; those keys of the file are then not used. The log says which profile is active.\r\n"
+"profile = custom\r\n"
+"\r\n"
+"; aspect = keep | stretch      (Vulkan)\r\n"
+";   [Recomps#1] keep: the game's 16:9 picture keeps its shape; a wider or taller window (an ultrawide monitor in\r\n"
+";   borderless or fullscreen mode) gets black bars at the sides or at the top and bottom. stretch: the picture fills\r\n"
+";   the window whatever its shape.\r\n"
+"aspect = keep\r\n"
+"\r\n"
+"; aspect_ratio = 16:9 | auto | <width>:<height>      (Vulkan; experimental; applies at the next start)\r\n"
+";   The shape of the game's own picture. 16:9: as made (\"Fixed\" in the game's Options). auto: the window's shape\r\n"
+";   at the start (borderless and fullscreen: the monitor's; \"Unlocked\"). Or a shape: 21:9, 32:9, 16:10, 9:10 ...\r\n"
+";   (or a number, 2.37). Wider than 16:9 shows more at the sides, narrower more above and below.\r\n"
+"aspect_ratio = 16:9\r\n"
+"\r\n"
+"; hud_area = screen | 16:9      (with aspect_ratio wider than 16:9; at once)\r\n"
+";   screen: the HUD's corners (health, gauges, score) at the screen's edges. 16:9: kept in a 16:9 area in the middle.\r\n"
+"hud_area = screen\r\n"
+"\r\n"
+"; frame_time_overlay = off | on\r\n"
+";   on: the average frame time of the last second in the window title ('.. fps - 16.67 ms per frame') and as a\r\n"
+";   'frame-time:' line in the log. (Bars drawn into the picture are not implemented yet.)\r\n"
+"frame_time_overlay = off\r\n"
+"\r\n"
+"; frame_rate = 30 | 60 .. 120\r\n"
+";   30: the game as made. 60: what the 60 FPS mod does, built in: every display refresh gets a frame (the game asks for\r\n"
+";   every second one), its frame time is 16.67 ms and its own limiter is off. Above 60 (90, 120 ...): the same at that\r\n"
+";   rate; the game's speed stays the same. Applies at the next start.\r\n"
+"frame_rate = 30\r\n"
+"\r\n"
+"; cutscene_fps = 30 | 60\r\n"
+";   30: the game's own 30 fps mode on the title, in menus and in cutscenes, as on the console.\r\n"
+";   60: those run in its 60 fps mode, as gameplay does (timing stays real time). Movies keep their own rate.\r\n"
+"cutscene_fps = 30\r\n"
+"\r\n"
+"; model_lod = game | highest\r\n"
+";   game: models lose detail with distance and far ones disappear, as on the console. highest: every model with detail\r\n"
+";   levels stays at its finest and stays drawn far away; weaker GPUs may lose frame rate. Applies while the game runs.\r\n"
+"model_lod = game\r\n"
+"\r\n"
+"; film_grain = on | off      (Vulkan)\r\n"
+";   on: the game's moving noise over the picture. off: a clean picture; the vignette stays. Applies while the game runs.\r\n"
+"film_grain = on\r\n"
+"\r\n"
+"; upscaler = off | fsr3 | fsr3_quality | fsr3_balanced | fsr3_performance | fsr3_ultra_performance      (Vulkan; experimental)\r\n"
+";   fsr3: AMD FSR 3.1 as anti-aliasing at the internal resolution: jagged edges, shimmer and the screen-door of fading\r\n"
+";   objects are smoothed over frames.\r\n"
+";   Characters and effects that move on their own can leave faint trails. About 0.5 to 2 ms of\r\n"
+";   GPU time a frame, more at higher internal resolutions.\r\n"
+";   fsr3_quality .. fsr3_ultra_performance: the scene is drawn smaller (1/1.5, 1/1.7, 1/2, 1/3 of the internal resolution\r\n"
+";   across, never below 900p) and FSR 3.1 upscales it to the internal resolution: faster, a little softer. Above 900p only.\r\n"
+";   Applies when the PC settings panel closes.\r\n"
+"upscaler = off\r\n"
+"\r\n"
+"; bc7_textures = off | on      (Vulkan, GPUs without ASTC)\r\n"
+";   on: the game's ASTC textures come ready-made from build/cache/bc7 instead of being decoded on the CPU as they appear:\r\n"
+";   less work for the CPU, and a sharper picture. The launcher makes that folder after a build, about 16 GB: 12 minutes on 4\r\n"
+";   cores, roughly 25 on a Steam Deck. off, or a drive without the room: textures are decoded as they appear. Settings,\r\n"
+";   Converted textures, Remove sets this to off and gives the space back. A mod's textures are always decoded.\r\n"
+"bc7_textures = on\r\n"
+"\r\n"
+/* [Recomps#1] finding 147 */
+"; hdr = auto | off | on      (Vulkan)\r\n"
+";   auto: while HDR is on for the monitor the game is on (Windows' HDR switch; on Linux a Wayland desktop with HDR on),\r\n"
+";   the picture goes out as HDR: the game's colours at the brightness below, and the bright parts of the scene (lights,\r\n"
+";   fire, the sky) up to hdr_peak. Menus, the HUD and movies stay at hdr_paper_white. on: always. off: never.\r\n"
+"hdr = auto\r\n"
+"\r\n"
+"; hdr_format = hdr10 | scrgb\r\n"
+";   hdr10: 10 bits a colour, PQ, BT.2020 (what HDR monitors take). scrgb: 16-bit floating point, linear.\r\n"
+"hdr_format = hdr10\r\n"
+"\r\n"
+"; hdr_paper_white = auto | 80 .. 1000\r\n"
+";   How bright the game's white is with HDR on, in nits. auto: the desktop's brightness of SDR programs on that monitor\r\n"
+";   (Windows: Settings > System > Display > HDR, 'SDR content brightness'), followed while the game runs.\r\n"
+"hdr_paper_white = auto\r\n"
+"\r\n"
+"; hdr_peak = auto | 80 .. 10000\r\n"
+";   How bright the brightest parts of the scene get with HDR on, in nits: your monitor's peak brightness. The game's own\r\n"
+";   tone curve is kept up to where it starts to flatten, and from there it rises to this value instead of to white.\r\n"
+";   At or below hdr_paper_white: nothing is brighter than white, as before 2026-11. auto: what the desktop says the monitor\r\n"
+";   does (Linux), 1000 on Windows.\r\n"
+"hdr_peak = auto\r\n"
+"\r\n"
+"; hdr_gamma = 2.2 | srgb\r\n"
+";   How the game's colours are read with HDR on. 2.2: as an SDR monitor shows them (deep blacks). srgb: as Windows\r\n"
+";   shows SDR programs in HDR (lighter dark parts).\r\n"
+"hdr_gamma = 2.2\r\n";
+
+
+#define GFX_LOW_SCALE 0.5f
+#define GFX_LOW_SCALE_TEXT "0.50"
+static GfxOptions g_opt;
+static INIT_ONCE g_once = INIT_ONCE_STATIC_INIT;
+
+static void trim(char *s) {
+    char *e = s + strlen(s);
+    while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' || e[-1] == '\n')) *--e = 0;
+    char *b = s;
+    while (*b == ' ' || *b == '\t') b++;
+    if (b != s) memmove(s, b, strlen(b) + 1);
+}
+static void opt_path(char *out) {
+    const char *e = getenv("WT_GRAPHICS_CONFIG"), *c = getenv("WT_CONFIG");
+    char tmp[MAX_PATH], exe[MAX_PATH];
+    if (e && e[0]) { snprintf(out, MAX_PATH, "%s", e); return; }
+    if (c && c[0]) {
+        snprintf(tmp, sizeof tmp, "%s", c);
+        char *s = strrchr(tmp, '\\'), *s2 = strrchr(tmp, '/');
+        if (s2 > s) s = s2;
+        if (s) { *s = 0; snprintf(out, MAX_PATH, "%s\\graphics.ini", tmp); } else snprintf(out, MAX_PATH, "graphics.ini");
+        return;
+    }
+    GetModuleFileNameA(NULL, exe, MAX_PATH);
+    char *s = strrchr(exe, '\\'), *s2 = strrchr(exe, '/');      /* [witchtime] '/' on Linux: build/witch-time-game/../config was not a folder, the file was never read */
+    if (s2 > s) s = s2;
+    if (s) *s = 0;
+    snprintf(tmp, sizeof tmp, "%s\\..\\config\\graphics.ini", exe);
+    if (!_fullpath(out, tmp, MAX_PATH)) snprintf(out, MAX_PATH, "%s", tmp);
+}
+static int upscaler_of(const char *v) {      /* [witchtime] issue 118: GfxOptions.upscaler; an unknown value is off */
+    static const char *const k[] = {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance"};
+    for (int i = 1; i < 6; i++) if (!_stricmp(v, k[i])) return i;
+    return 0;
+}
+static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
+    (void)once; (void)ctx;
+    GfxOptions *o = arg ? (GfxOptions *)arg : &g_opt;      /* [witchtime] arg: gfx_option_set reads the file again into a copy */
+    int written = 0, unknown = 0;
+    memset(o, 0, sizeof *o);
+    o->bc7_textures = 1;                       /* #54: a graphics.ini from before the key */
+    o->aniso = 16; o->texture_lod_bias = -1.0f;      /* [witchtime] fixed at the sharpest since 2026-11-10: no keys, no menu rows (profile = low and WT_TEXTURE_LOD_BIAS still change them) */
+    o->width = 1280; o->height = 720; o->scale = 1.0f; o->present = 5;      /* vsync = auto when the key is missing (track V session 14) */
+    opt_path(o->path);
+    if (!arg && !getenv("WT_GRAPHICS_CONFIG") && !getenv("WT_CONFIG")) gfx_ini_refresh(o->path);      /* [witchtime] a test's file stays as it is */
+    FILE *f = fopen(o->path, "rb");
+    if (!f) {
+        char b[MAX_PATH];
+        snprintf(b, sizeof b, "%s", o->path);
+        for (char *p = b + 3; *p; p++) if (*p == '\\' || *p == '/') { *p = 0; CreateDirectoryA(b, NULL); *p = '\\'; }
+        if ((f = fopen(o->path, "wb")) != NULL) { fwrite(k_default_ini, 1, strlen(k_default_ini), f); fclose(f); written = 1; }
+        f = fopen(o->path, "rb");
+    }
+    char line[512];
+    while (f && fgets(line, sizeof line, f)) {
+        char *eq, *key = line, *val;
+        trim(line);
+        if (!line[0] || line[0] == ';' || line[0] == '#' || line[0] == '[' || !(eq = strchr(line, '='))) continue;
+        *eq = 0; val = eq + 1;
+        trim(key); trim(val);
+        if (!_stricmp(key, "renderer")) o->renderer = !_stricmp(val, "opengl") || !_stricmp(val, "gl");
+        else if (!_stricmp(key, "window")) o->window_mode = !_stricmp(val, "borderless") ? 1 : !_stricmp(val, "fullscreen") ? 2 : 0;
+        else if (!_stricmp(key, "width")) { int v = atoi(val); if (v >= 320 && v <= 16384) o->width = v; }
+        else if (!_stricmp(key, "height")) { int v = atoi(val); if (v >= 180 && v <= 16384) o->height = v; }
+        else if (!_stricmp(key, "vsync")) o->present = !_stricmp(val, "on") ? 1 : !_stricmp(val, "off") ? 2 : !_stricmp(val, "mailbox") ? 3 : !_stricmp(val, "display") ? 4 : !_stricmp(val, "auto") ? 5 : 0;
+        else if (!_stricmp(key, "gpu")) { if (_stricmp(val, "auto")) snprintf(o->gpu, sizeof o->gpu, "%s", val); }
+        else if (!_stricmp(key, "console_mode")) o->handheld = !_stricmp(val, "handheld");
+        else if (!_stricmp(key, "resolution_scale")) { float v = (float)atof(val); if (v > 0) o->scale = v; }
+        else if (!_stricmp(key, "anisotropic_filtering") || !_stricmp(key, "texture_lod_bias")) { }      /* [witchtime] keys of older files: not used any more */
+        else if (!_stricmp(key, "frame_time_overlay")) o->overlay = !_stricmp(val, "on") || !strcmp(val, "1");
+        else if (!_stricmp(key, "profile")) o->profile = !_stricmp(val, "low");
+        else if (!_stricmp(key, "shader_wait")) o->shader_skip = !_stricmp(val, "skip");
+        else if (!_stricmp(key, "latency")) g_gfx_latency = !_stricmp(val, "lowest") ? 2 : !_stricmp(val, "low") ? 1 : 0;      /* track L1 (display.c latency_mode) */
+        else if (!_stricmp(key, "model_lod")) o->model_lod_high = !_stricmp(val, "highest");      /* [witchtime] issue 86 */
+        else if (!_stricmp(key, "film_grain")) o->no_film_grain = !_stricmp(val, "off");      /* [witchtime] issue 86 */
+        else if (!_stricmp(key, "upscaler")) o->upscaler = upscaler_of(val);      /* [witchtime] issue 118 */
+        else if (!_stricmp(key, "aspect")) o->aspect_stretch = !_stricmp(val, "stretch");      /* [Recomps#1] */
+        else if (!_stricmp(key, "shader_prepare")) o->shader_prepare = !_stricmp(val, "background") ? 1 : !_stricmp(val, "off") ? 2 : 0;
+        else if (!_stricmp(key, "frame_rate")) { int v = atoi(val); o->frame_rate = v < 60 ? 30 : v > 120 ? 120 : v; }      /* [lm3] 30 (the game as made) | 60 .. 120 (lm3_imports.c lm3_image_options, display.c display_set_interval) */
+        else if (!_stricmp(key, "hdr")) o->hdr = !_stricmp(val, "off") ? 1 : !_stricmp(val, "on") ? 2 : 0;      /* [Recomps#1] finding 147 */
+        else if (!_stricmp(key, "hdr_format")) o->hdr_scrgb = !_stricmp(val, "scrgb");
+        else if (!_stricmp(key, "hdr_paper_white")) { float v = (float)atof(val); o->hdr_paper_white = v >= 80.0f && v <= 1000.0f ? v : 0.0f; }      /* auto, or a value out of range */
+        else if (!_stricmp(key, "hdr_gamma")) o->hdr_srgb = !_stricmp(val, "srgb");
+        else if (!_stricmp(key, "hdr_peak")) { float v = (float)atof(val); o->hdr_peak = v >= 80.0f && v <= 10000.0f ? v : 0.0f; }      /* [witchtime] auto, or a value out of range */
+        else if (!_stricmp(key, "cutscene_fps")) o->cutscene_fps = atoi(val) == 60 ? 60 : 30;      /* [witchtime] */
+        else if (!_stricmp(key, "bc7_textures")) o->bc7_textures = !_stricmp(val, "on");      /* #54 */
+        else if (!_stricmp(key, "hud_area")) o->hud_centre = !strcmp(val, "16:9");      /* [witchtime] */
+        else if (!_stricmp(key, "aspect_ratio")) { float a, b; int n = sscanf(val, "%f:%f", &a, &b); o->aspect_ratio = !_stricmp(val, "auto") ? -1.0f : n == 2 && b > 0 ? a / b : n == 1 ? a : 0.0f; }      /* [witchtime] */
+        else unknown++;
+    }
+    if (f) fclose(f);
+    if (!o->frame_rate) o->frame_rate = 30;
+    if (getenv("WT_UPSCALER")) o->upscaler = upscaler_of(getenv("WT_UPSCALER"));      /* [witchtime] issue 118 */
+    {   /* [witchtime] the mip bias: -1, or WT_TEXTURE_LOD_BIAS (-3 .. 3) */
+        const char *e = getenv("WT_TEXTURE_LOD_BIAS");
+        if (e) o->texture_lod_bias = (float)atof(e);
+        if (o->texture_lod_bias < -3.0f) o->texture_lod_bias = -3.0f;
+        if (o->texture_lod_bias > 3.0f) o->texture_lod_bias = 3.0f;
+        if (o->texture_lod_bias != 0.0f) printf("graphics options: texture_lod_bias=%.2f (%s): added to the mip level of every texture sampler that uses mip maps\n", o->texture_lod_bias, e ? "WT_TEXTURE_LOD_BIAS" : "graphics.ini");
+    }
+    {   /* [witchtime] WT_WINDOW=<w>x<h> wins over width / height (window size in the desktop's units, as the keys) */
+        const char *e = getenv("WT_WINDOW"); int w, h;
+        if (e && sscanf(e, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 180 && w <= 16384 && h <= 16384) { o->width = w; o->height = h; }
+    }
+    if (!getenv("WT_MODEL_LOD")) _putenv_s("WT_MODEL_LOD", o->model_lod_high ? "highest" : "game");      /* [witchtime] read by the game library */
+    else o->model_lod_high = !_stricmp(getenv("WT_MODEL_LOD"), "highest");
+    {   /* [witchtime] cutscene_fps: the game library (game_shim_eh.c) reads WT_CUTSCENE_FPS; a set variable (test runs) wins */
+        const char *e = getenv("WT_CUTSCENE_FPS");
+        if (e) o->cutscene_fps = atoi(e) == 60 ? 60 : 30;
+        else { if (!o->cutscene_fps) o->cutscene_fps = 30; _putenv_s("WT_CUTSCENE_FPS", o->cutscene_fps == 60 ? "60" : "30"); }
+        printf("graphics options: cutscene_fps=%d (%s)%s\n", o->cutscene_fps, e ? "WT_CUTSCENE_FPS" : "graphics.ini",
+               o->cutscene_fps == 60 ? ": the title, menus and cutscenes run at 60 (the game's 60 fps mode; movies keep their own rate)" : ": the title, menus and cutscenes at 30, as on the console");
+    }
+    /* [witchtime] aspect_ratio: the game library and the renderer read RECOMPS_ASPECT; a set variable (test runs) wins */
+    if (o->aspect_ratio != -1.0f && (!(o->aspect_ratio >= 0.25f && o->aspect_ratio <= 8.0f) || fabsf(o->aspect_ratio - 16.0f / 9.0f) < 0.001f)) o->aspect_ratio = 0.0f;
+    if (o->aspect_ratio > 0.0f && !getenv("RECOMPS_ASPECT")) { char n[32]; snprintf(n, sizeof n, "%.6f", o->aspect_ratio); _putenv_s("RECOMPS_ASPECT", n); }
+    if (o->hud_centre && !getenv("RECOMPS_HUD_CENTRE")) _putenv_s("RECOMPS_HUD_CENTRE", "1");
+    if (getenv("RECOMPS_ASPECT")) printf("graphics options: aspect_ratio %s (the game's screen width / height; experimental, Witch Time's docs/STATUS.md \"Aspect ratios\")\n", getenv("RECOMPS_ASPECT"));
+    /* [Recomps#1] frame_rate above 60: switch on the game library's uncapped clock (game_shim_eh.c h_frame_clock), which reads
+     * RECOMPS_UNCAP with getenv the first time the game's clock runs (after this, at the first frame).
+     * The UCRT environment is one per process, so game.dll sees what is set here. Set variables (test runs) win. */
+    if (o->frame_rate > 60 && !getenv("RECOMPS_UNCAP")) {
+        char n[16]; snprintf(n, sizeof n, "%d", o->frame_rate);
+        const char *pe = getenv("WT_PACE_120");      /* [Recomps#1] long frames at 120: the runtime paces (gfx_pace_rate below), not the lifted limiter */
+        int paced = !(pe && !atoi(pe));
+        _putenv_s("RECOMPS_UNCAP", "1");
+        if (!getenv("RECOMPS_UNCAP_FPS")) _putenv_s("RECOMPS_UNCAP_FPS", paced ? "0" : n);
+        printf("graphics options: frame_rate=%d: the game's clock measures real time, %s %d fps (experimental; Witch Time's docs/STATUS.md, \"Frame rates above 60\")\n", o->frame_rate,
+               paced ? "the game released and its pictures presented on a steady tick of" : "NOT capped (WT_PACE_120=0; B3 has no lifted limiter), not paced at", o->frame_rate);
+    }
+    if (o->profile == 1) {       /* the low-end profile wins over the three keys it sets, wherever they stand in the file (values: O1_options.md, session 9) */
+        o->scale = GFX_LOW_SCALE; o->aniso = 0; o->texture_lod_bias = 0.0f; o->present = 0;
+    }
+    printf("graphics profile: %s\n", o->profile == 1 ? "low (weak or integrated GPU): resolution_scale=" GFX_LOW_SCALE_TEXT ", the game's own texture filtering, vsync=clock; these keys of the file are not used"
+                                                     : "custom (every key of graphics.ini as written; 'profile = low' is the set for a weak or integrated GPU)");
+    static const char *const k_win[3] = {"windowed", "borderless", "fullscreen"}, *const k_vs[6] = {"clock", "on", "off", "mailbox", "display", "auto"};
+    printf("graphics options: %s (%s): renderer=%s window=%s %dx%d vsync=%s gpu=%s console_mode=%s resolution_scale=%.2f anisotropic_filtering=%d frame_time_overlay=%s aspect=%s%s\n", o->path,
+           written ? "written with the defaults" : f ? "read" : "NOT readable, defaults used", o->renderer ? "opengl" : "vulkan", k_win[o->window_mode], o->width, o->height, k_vs[o->present],
+           o->gpu[0] ? o->gpu : "auto", o->handheld ? "handheld" : "docked", o->scale, o->aniso, o->overlay ? "on" : "off", o->aspect_stretch ? "stretch" : "keep", unknown ? " (lines with an unknown key were ignored)" : "");
+    {   char pw[16]; static const char *const k_hdr[3] = {"auto", "off", "on"};      /* [Recomps#1] finding 147 */
+        if (o->hdr_paper_white > 0) snprintf(pw, sizeof pw, "%.0f", o->hdr_paper_white); else snprintf(pw, sizeof pw, "auto");
+        printf("graphics options: hdr=%s hdr_format=%s hdr_paper_white=%s hdr_gamma=%s hdr_peak=%.0f (0 = auto)\n", k_hdr[o->hdr], o->hdr_scrgb ? "scrgb" : "hdr10", pw, o->hdr_srgb ? "srgb" : "2.2", o->hdr_peak); }
+    if (o->scale != 1.0f && o->renderer) printf("graphics options: resolution_scale=%.2f is ignored by the OpenGL renderer (Vulkan only)\n", o->scale);
+    if (o->scale != 1.0f && (o->scale < 0.25f || o->scale > 3.0f)) printf("graphics options: resolution_scale=%.2f is outside 0.25 .. 3.0: the nearest of the two is used\n", o->scale);      /* PR #8 (stephenjayakar): above 1.0 allowed (nvn_vk_draw.c RS_MAX = 2.0) */
+    fflush(stdout);
+    return TRUE;
+}
+const GfxOptions *gfx_options(void) {
+    InitOnceExecuteOnce(&g_once, opt_load, NULL, NULL);
+    return &g_opt;
+}
+/* [Recomps#1] long frames at 120 fps (2026-10-21): the rate display.c paces the game at. Above 60 fps the lifted limiter
+ * started every frame on its own 120.000 Hz clock and each picture was presented the moment it was ready, so every
+ * millisecond of jitter in the game's logic and our replay reached the screen (on a 238 Hz panel 10-20 % of the frames
+ * were not shown for two refreshes, against 1 % at 60). Now display.c paces at frame_rate as it does at 60: the game is
+ * released on a tick (the display's vblank when the refresh is k x frame_rate, else our own clock) and its picture is
+ * held for the next tick. WT_PACE_120=0: the lifted limiter and pictures as soon as ready, as before. */
+int gfx_pace_rate(void) {
+    static int r = -1;
+    if (r < 0) {
+        const GfxOptions *o = gfx_options();
+        const char *e = getenv("WT_PACE_120"), *u = getenv("RECOMPS_UNCAP_FPS");
+        r = o->frame_rate > 60 && !(e && !atoi(e)) && u && !atoi(u) ? o->frame_rate : 60;      /* a test's own limiter rate (RECOMPS_UNCAP_FPS) keeps the old way */
+    }
+    return r;
+}
+
+/* [witchtime] The PC settings menu (pcmenu.c) changes graphics.ini while the game runs. gfx_ini_get reads one key as the reader
+ * above sees it (the last line with the key wins); gfx_option_set rewrites the value of every line with that key and keeps
+ * everything else of the file byte for byte (comments, unknown keys, line endings), appends the key when it is missing,
+ * writes through a temporary file, then reads the file again into a copy and takes over the keys that apply live. */
+static int ini_line_split(const char *l, size_t n, size_t *k0, size_t *k1, size_t *vs, size_t *ve) {      /* a key line: l[*k0, *k1) the key, l[*vs, *ve) the value */
+    size_t i = 0;
+    while (i < n && (l[i] == ' ' || l[i] == '\t')) i++;
+    if (i == n || l[i] == ';' || l[i] == '#' || l[i] == '[') return 0;
+    *k0 = i;
+    while (i < n && l[i] != '=') i++;
+    if (i == n) return 0;
+    *k1 = i++;
+    while (*k1 > *k0 && (l[*k1 - 1] == ' ' || l[*k1 - 1] == '\t')) --*k1;
+    while (i < n && (l[i] == ' ' || l[i] == '\t')) i++;
+    *vs = i;
+    while (n > i && (l[n - 1] == ' ' || l[n - 1] == '\t' || l[n - 1] == '\r' || l[n - 1] == '\n')) n--;
+    *ve = n;
+    return 1;
+}
+static int ini_line_kv(const char *l, size_t n, const char *key, size_t *vs, size_t *ve) {      /* l[*vs, *ve): the value */
+    size_t k0, k1;
+    return ini_line_split(l, n, &k0, &k1, vs, ve) && k1 - k0 == strlen(key) && !_strnicmp(l + k0, key, k1 - k0);
+}
+static int ini_find(const char *b, size_t len, const char *key, size_t *vs, size_t *ve) {      /* b[*vs, *ve): the value; the last line with the key wins */
+    size_t a, z;
+    int found = 0;
+    for (size_t s = 0; s < len; ) {
+        size_t e = s;
+        while (e < len && b[e] != '\n') e++;
+        if (ini_line_kv(b + s, e - s, key, &a, &z)) { *vs = s + a; *ve = s + z; found = 1; }
+        s = e + 1;
+    }
+    return found;
+}
+static char *ini_read_all(const char *path, size_t *len) {
+    FILE *f = fopen(path, "rb");
+    char *b = NULL;
+    *len = 0;
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
+    if (n >= 0 && (b = malloc((size_t)n + 1)) != NULL) { *len = fread(b, 1, (size_t)n, f); b[*len] = 0; }
+    fclose(f);
+    return b;
+}
+/* [witchtime] aspect_ratio = auto: the game's screen takes the window's shape (its client size in pixels; borderless and
+ * fullscreen: the monitor's), told before the game starts (display.c, before g_ready). 16:9 within 1 % stays the game's own. */
+void gfx_aspect_window(int w, int h) {
+    if (gfx_options()->aspect_ratio != -1.0f || getenv("RECOMPS_ASPECT") || w <= 0 || h <= 0) return;
+    float a = (float)w / (float)h;
+    if (a < 0.25f || a > 8.0f || fabsf(a / (16.0f / 9.0f) - 1.0f) < 0.01f) { printf("graphics options: aspect_ratio auto: the window is %dx%d, the game's 16:9\n", w, h); return; }
+    char n[32]; snprintf(n, sizeof n, "%.6f", a); _putenv_s("RECOMPS_ASPECT", n);
+    printf("graphics options: aspect_ratio auto: the window is %dx%d, the game's screen %s (width / height)\n", w, h, n);
+}
+int gfx_ini_get(const char *key, char *out, size_t on) {
+    size_t len, vs, ve;
+    char *b = ini_read_all(gfx_options()->path, &len);
+    int found = b && ini_find(b, len, key, &vs, &ve);
+    if (found) { size_t n = ve - vs < on - 1 ? ve - vs : on - 1; memcpy(out, b + vs, n); out[n] = 0; }
+    free(b);
+    return found;
+}
+static int ini_write(const char *path, const char *s, size_t n) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return 0;
+    size_t w = fwrite(s, 1, n, f);
+    return !fclose(f) && w == n;
+}
+/* [witchtime] An update leaves config/ alone (launcher/src/update.cpp), and it is the old launcher that installs it, so the new
+ * version's text arrives here: when a comment or a key of the defaults is missing from the file, the file becomes the defaults
+ * with the player's values (filling in a key changes nothing: the reader's default for a missing key is the same), then the
+ * keys the defaults do not have. Its line endings stay; the old file goes to <file>.bak first. A file that has every line is
+ * not touched, so the player's own comments last until a version changes the defaults. 1 = rewritten. */
+int gfx_ini_refresh(const char *path) {
+    size_t len, tl = strlen(k_default_ini), n = 0, k0, k1, vs, ve, fs, fe;
+    char *b = ini_read_all(path, &len), *out = b ? malloc(tl + 3 * len + 8) : NULL, key[128], line[512], tmp[MAX_PATH + 8], bak[MAX_PATH + 8];
+    const char *nl = b && strstr(b, "\r\n") ? "\r\n" : "\n";
+    int stale = 0, tail = 0, ok = 0;
+    if (!out) { free(b); return 0; }
+    for (const char *t = k_default_ini, *e; *t; t = e + 2) {      /* every line of the defaults ends in CRLF */
+        e = strchr(t, '\r');
+        const char *v = "";
+        size_t tn = (size_t)(e - t), vn = 0;
+        if (ini_line_split(t, tn, &k0, &k1, &vs, &ve)) {
+            snprintf(key, sizeof key, "%.*s", (int)(k1 - k0), t + k0);
+            if (ini_find(b, len, key, &fs, &fe)) { v = b + fs; vn = fe - fs; } else { v = t + vs; vn = ve - vs; stale = 1; }
+            tn = vs;
+        } else if (tn) {
+            snprintf(line, sizeof line, "%.*s", (int)tn, t);
+            if (!strstr(b, line)) stale = 1;
+        }
+        n += (size_t)sprintf(out + n, "%.*s%.*s%s", (int)tn, t, (int)vn, v, nl);
+    }
+    for (size_t s = 0; stale && s < len; ) {
+        size_t e = s;
+        while (e < len && b[e] != '\n') e++;
+        if (ini_line_split(b + s, e - s, &k0, &k1, &vs, &ve)) {
+            snprintf(key, sizeof key, "%.*s", (int)(k1 - k0), b + s + k0);
+            if (!ini_find(k_default_ini, tl, key, &fs, &fe)) n += (size_t)sprintf(out + n, "%s%.*s%s", tail++ ? "" : nl, (int)ve, b + s, nl);
+        }
+        s = e + 1;
+    }
+    if (stale) {
+        snprintf(tmp, sizeof tmp, "%s.tmp", path);
+        snprintf(bak, sizeof bak, "%s.bak", path);
+        ok = ini_write(bak, b, len) && ini_write(tmp, out, n) && MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING);
+        if (!ok) DeleteFileA(tmp);
+        printf(ok ? "graphics options: %s has this version's comments and keys now, your values kept (the old file: %s)\n"
+                  : "graphics options: %s NOT brought up to this version (%s)\n", path, bak);
+    }
+    free(out);
+    free(b);
+    return ok;
+}
+int gfx_option_set(const char *key, const char *val) {
+    const char *path = gfx_options()->path;
+    size_t len, vs, ve, vl = strlen(val), done = 0;
+    char *b = ini_read_all(path, &len), tmp[MAX_PATH + 8];
+    int crlf = !b || strstr(b, "\r\n") != NULL;
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);
+    FILE *f = fopen(tmp, "wb");
+    if (!f) { free(b); return 0; }
+    for (size_t s = 0; b && s < len; ) {
+        size_t e = s;
+        while (e < len && b[e] != '\n') e++;
+        if (e < len) e++;                                   /* the line with its newline */
+        if (ini_line_kv(b + s, e - s, key, &vs, &ve)) { fwrite(b + s, 1, vs, f); fwrite(val, 1, vl, f); fwrite(b + s + ve, 1, e - s - ve, f); done = 1; }
+        else fwrite(b + s, 1, e - s, f);
+        s = e;
+    }
+    if (!done) fprintf(f, "%s%s = %s%s", len && b[len - 1] != '\n' ? (crlf ? "\r\n" : "\n") : "", key, val, crlf ? "\r\n" : "\n");
+    free(b);
+    if (fclose(f) || !MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) { DeleteFileA(tmp); printf("graphics options: %s = %s NOT written to %s\n", key, val, path); return 0; }
+    if (!_stricmp(key, "model_lod")) _putenv_s("WT_MODEL_LOD", val);
+    if (!_stricmp(key, "cutscene_fps")) _putenv_s("WT_CUTSCENE_FPS", val);      /* the reader takes the variable it set itself at start */
+    GfxOptions t;
+    opt_load(NULL, &t, NULL);
+    /* the keys that apply while the game runs (each is acted on by pcmenu.c); a key added later that applies live: one line here */
+    g_opt.window_mode = t.window_mode; g_opt.width = t.width; g_opt.height = t.height;
+    g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch; g_opt.cutscene_fps = t.cutscene_fps;
+    g_opt.texture_lod_bias = t.texture_lod_bias; g_opt.scale = t.scale; g_opt.hud_centre = t.hud_centre;
+    g_opt.model_lod_high = t.model_lod_high; g_opt.no_film_grain = t.no_film_grain; g_opt.upscaler = t.upscaler;
+    g_opt.hdr = t.hdr; g_opt.hdr_paper_white = t.hdr_paper_white; g_opt.hdr_peak = t.hdr_peak;      /* [witchtime] nvn_vk_draw.c reads them at every present */
+    printf("graphics options: %s = %s written to %s\n", key, val, path);
+    fflush(stdout);
+    return 1;
+}
