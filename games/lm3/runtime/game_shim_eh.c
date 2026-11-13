@@ -34,3 +34,33 @@ void h_aspect(Ctx *c) {
 /* What the runtime's FSR pass (runtime/nvn_vk_fsr.c) tells the game while it runs: the scene image's size (0 = off) and
  * AMD's jitter phase count. A game that supports FSR shifts its projection by them, each frame, in a host override. */
 __declspec(dllexport) volatile int game_fsr_w, game_fsr_h, game_fsr_phases;
+
+/* graphics.ini frame_rate = 60 .. 120: the game's step keeps the time a hitch takes (cutscene sound ahead of the picture).
+ * FrameTimer::Update (0x79f320) steps by 0.8 x the last step + 0.2 x the mean of the middle 7 of the last 11 frame times
+ * (main+0x13c91ec, +0x13c90a8), so a long frame is left out of the mean and its time is never stepped, while Wwise plays
+ * the cutscene's sound on in real time. A console at 30 fps does not hitch; a PC at 60 and above does, and every hitch put the
+ * picture further behind (measured, 100 ms hitches: 95 ms each lost at 120 fps). Here the time not stepped is owed: what
+ * is over one step is paid at once, in steps of at most 1/30 s (the game's own at 30 fps), so a hitch's time lands within
+ * a few frames of it (one just before a cutscene's sound starts must not put the picture ahead); the rest, the jitter of
+ * frames, an eighth a frame, so the game's smoothing still smooths. The timer (main+0x1c73e78), as
+ * floats: [2] this frame's time in s (the game caps it at 0.35), [3] the time scale, [4] step x scale, [5] step; [5] is
+ * also the game's "last step", so its own value goes back before it runs again. 30 fps (the game as made): unchanged. */
+void f_710079f320(Ctx *c);
+void h_frame_timer(Ctx *c) {
+    static int on = -1;
+    static float own;
+    static double owed;
+    float *t = (float *)(uintptr_t)0x7101c73e78ULL;
+    if (on < 0) on = *(const float *)(uintptr_t)0x71013c94dcULL != 100.0f / 3.0f;      /* the frame time lm3_imports.c sets for 60 and above */
+    if (!on) { f_710079f320(c); return; }
+    if (own > 0.0f) t[5] = own;
+    f_710079f320(c);
+    own = t[5];
+    owed += (double)t[2] - own;
+    if (owed > 1.0) owed = 1.0; else if (owed < -1.0) owed = -1.0;      /* a stall longer than a second is not made up */
+    double pay = owed > own ? owed - own : owed / 8.0, most = 1.0 / 30.0 - own;
+    if (pay > most) pay = most > 0.0 ? most : 0.0; else if (pay < -0.5 * own) pay = -0.5 * own;
+    owed -= pay;
+    t[5] = own + (float)pay;
+    t[4] = t[5] * t[3];
+}
