@@ -402,11 +402,17 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     int cw = go->width, ch = go->height, px = CW_USEDEFAULT, py = CW_USEDEFAULT;
     POINT origin = {0, 0};
     UINT dpi = dpi_of(MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY), 1);
+    MONITORINFO mi;
+    memset(&mi, 0, sizeof mi); mi.cbSize = sizeof mi;
+    int have = GetMonitorInfoA(MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY), &mi) != 0;
+    if (have) gfx_aspect_window(mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top);      /* [witchtime] aspect_ratio = auto: the monitor's shape */
     if (go->window_mode) {
-        MONITORINFO mi;
-        memset(&mi, 0, sizeof mi); mi.cbSize = sizeof mi;
-        if (GetMonitorInfoA(MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY), &mi)) { cw = mi.rcMonitor.right - mi.rcMonitor.left; ch = mi.rcMonitor.bottom - mi.rcMonitor.top; px = mi.rcMonitor.left; py = mi.rcMonitor.top; }
-    } else { cw = MulDiv(cw, (int)dpi, 96); ch = MulDiv(ch, (int)dpi, 96); }      /* finding 131: the size it had when Windows scaled it */
+        if (have) { cw = mi.rcMonitor.right - mi.rcMonitor.left; ch = mi.rcMonitor.bottom - mi.rcMonitor.top; px = mi.rcMonitor.left; py = mi.rcMonitor.top; }
+    } else {
+        /* [lm3] the picture's shape, inside the work area (gfx_window_size, in graphics.ini's units) */
+        gfx_window_size(have ? MulDiv(mi.rcWork.right - mi.rcWork.left, 96, (int)dpi) : 0, have ? MulDiv(mi.rcWork.bottom - mi.rcWork.top, 96, (int)dpi) : 0, &cw, &ch);
+        cw = MulDiv(cw, (int)dpi, 96); ch = MulDiv(ch, (int)dpi, 96);      /* finding 131: the size it had when Windows scaled it */
+    }
     RECT r = {0, 0, cw, ch};
     adjust_rect(&r, style, dpi_of(MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY), 0));      /* the frame at the monitor's real scaling */
     printf("display: window %s, client %dx%d (graphics.ini; the screen's scaling %u %%%s)\n", go->window_mode == 2 ? "fullscreen (borderless, topmost)" : go->window_mode ? "borderless" : "windowed", cw, ch,
@@ -434,7 +440,6 @@ static DWORD WINAPI window_thread(LPVOID arg) {
         RegisterRawInputDevices(&rid, 1, sizeof rid);
         atexit(mouse_release);
     }
-    gfx_aspect_window(cw, ch);                       /* [witchtime] aspect_ratio = auto: the client size (borderless / fullscreen: the monitor) */
     InterlockedExchange(&g_ready, 1);
     MSG msg;
     while (GetMessageA(&msg, NULL, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageA(&msg); }
@@ -600,10 +605,20 @@ int display_mouse_pixels(int *x, int *y) {
     *x = (int)(g_ptr_x * d); *y = (int)(g_ptr_y * d);
     return 1;
 }
+/* [lm3] the windowed client size on display d (gfx_options.c gfx_window_size), after aspect_ratio = auto has the monitor's shape */
+static void window_size(SDL_DisplayID d, int *w, int *h) {
+    const SDL_DisplayMode *dm = SDL_GetDesktopDisplayMode(d);
+    SDL_Rect b = {0, 0, 0, 0};
+    if (dm) gfx_aspect_window(dm->w, dm->h);
+    SDL_GetDisplayUsableBounds(d, &b);
+    gfx_window_size(b.w, b.h, w, h);
+}
 static void window_apply(SDL_Window *w) {
     const GfxOptions *go = gfx_options();
+    int cw, ch;
+    window_size(SDL_GetDisplayForWindow(w), &cw, &ch);
     SDL_SetWindowFullscreen(w, go->window_mode != 0);
-    if (!go->window_mode) SDL_SetWindowSize(w, go->width, go->height);
+    if (!go->window_mode) SDL_SetWindowSize(w, cw, ch);
     int pw = 0, ph = 0;
     SDL_SyncWindow(w);                                   /* (waits for the compositor, at most about a second) */
     SDL_GetWindowSizeInPixels(w, &pw, &ph);
@@ -624,16 +639,12 @@ static DWORD WINAPI window_thread(LPVOID arg) {
         SDL_SetWindowTitle(w, g_title);
         window_apply(w);
         if (visible) SDL_ShowWindow(w);
-    } else w = SDL_CreateWindow(g_title, go->width, go->height, flags);
+    } else { int cw, ch; window_size(SDL_GetPrimaryDisplay(), &cw, &ch); w = SDL_CreateWindow(g_title, cw, ch, flags); }
     if (!w) { printf("display: the window cannot be made: %s%c", SDL_GetError(), 10); fflush(stdout); ExitProcess(5); }
     int pw = 0, ph = 0;
     SDL_GetWindowSizeInPixels(w, &pw, &ph);
     printf("display: window %s, client %dx%d pixels (SDL %s video%s)%c", go->window_mode ? "desktop fullscreen" : "windowed", pw, ph,
            SDL_GetCurrentVideoDriver(), visible ? "" : ", hidden (WT_SHOW=0)", 10);
-    {   /* [witchtime] aspect_ratio = auto: the window's shape; borderless / fullscreen: the monitor's (the window may not have its size yet) */
-        const SDL_DisplayMode *dm = go->window_mode ? SDL_GetDesktopDisplayMode(SDL_GetDisplayForWindow(w)) : NULL;
-        gfx_aspect_window(dm ? dm->w : pw, dm ? dm->h : ph);
-    }
     g_hwnd = (HWND)w;
     InterlockedExchange(&g_ready, 1);
     { const char *ks = getenv("WT_KBM_SCRIPT"); if (ks && ks[0]) { g_kbm_test = 1; CreateThread(NULL, 0, kbm_script_thread, (LPVOID)ks, 0, NULL); } }
