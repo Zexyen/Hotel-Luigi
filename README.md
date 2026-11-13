@@ -1,5 +1,7 @@
 # Hotel-Luigi
 
+<p align="center"><img src="docs/logo/hotel-luigi-lockup.svg" alt="Hotel Luigi logo" width="440"></p>
+
 A native PC port of Luigi's Mansion 3, made by static recompilation: the Switch program's ARM64 code is translated to C
 on your PC, compiled, and linked against a runtime that stands in for the console (Vulkan for the GPU, SDL3 for
 window, sound and controllers). It is not an emulator, and it contains nothing of the game: you build it from your own
