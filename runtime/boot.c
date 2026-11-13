@@ -286,7 +286,7 @@ static int b3_main(int argc, char **argv) {
     if (argc <= 1) {    /* started by hand with no path (issues #17, #20): say how it is started instead of "cannot open main.elf" */
         FILE *f = fopen(g_elf, "rb");
         if (!f) {
-            fprintf(stderr, "witch-time-game: no main.elf given. Start the game with the launcher (recomp-launcher, its Play button): it passes\n"
+            fprintf(stderr, "witch-time-game: no main.elf given. Start the game with the launcher (hotel-luigi-game, its Play button): it passes\n"
                             "the path of targets/exefs/main.elf and the game's folders and settings. By hand, as the launcher does, from build/run:\n"
                             "  WT_ROMFS=<Witch Time folder>/targets/romfs ../witch-time-game ../../targets/exefs/main.elf\n");
             return 1;

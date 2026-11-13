@@ -42,7 +42,7 @@ The game is not distributed here in any form, and will not be. Do not ask for it
 
 ## Play
 
-Start `recomp-launcher` (Windows: `recomp-launcher.exe`), point it at the dump folder, and let it build. The build has
+Start `hotel-luigi-game` (Windows: `hotel-luigi-game.exe`), point it at the dump folder, and let it build. The build has
 five rows, of which compiling is the long one; it is resumable, so closing the launcher loses nothing finished. The
 game then runs in the launcher's own window. Settings, mods and updates are on the launcher's screens.
 
@@ -64,7 +64,7 @@ tools/hlbuild/target/release/hlbuild setup --dump <dump>
 # the launcher (fetches RmlUi 6.3), then start it
 cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/launcher
-build/recomp-launcher
+build/hotel-luigi-game
 ```
 
 `hlbuild setup` runs these steps, each with its log in `build/logs/`:

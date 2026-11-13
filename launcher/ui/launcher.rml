@@ -9,7 +9,7 @@
 <div class="screen title" data-if="screen == 'title'" data-class-leaving="leaving">
 	<div class="bg lobby"><div class="ground"></div><div class="g1"></div><div class="g2"></div><div class="g3"></div><div class="pil p1"></div><div class="pil p2"></div><div class="pil p3"></div><div class="pil p4"></div><div class="vg"></div></div>
 	<div class="stage">
-		<div class="logo">{{ app_name }}<span class="sub">LAUNCHER</span></div>
+		<div class="logo"><img class="mark" src="img/logo.bmp"/>{{ app_name }}<span class="sub">LAUNCHER</span></div>
 		<div class="menu">
 			<div data-for="m, i : menu" class="mi autofocus" data-class-dim="m.dim" data-style-animation="leaving ? '0.22s cubic-in stair-out' : (0.35 + 0.08 * i) + 's cubic-out stair-in'" data-event-click="menu(i)">
 				<div class="fill"></div><div class="ptr"></div>

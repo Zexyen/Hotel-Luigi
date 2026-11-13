@@ -12,7 +12,7 @@
 #define APP_ID "recomp"
 #define UPDATE_REPO ""
 // this program's file name, in build/ and (a release) at the top of the folder
-#define LAUNCHER_NAME "recomp-launcher"
+#define LAUNCHER_NAME "hotel-luigi-game"
 
 #ifdef _WIN32
 #define WT_EXE ".exe"
