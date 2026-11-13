@@ -4538,7 +4538,7 @@ int nvn_front_tex_overlapping(const Tex *t, Tex **out, int max) {
     LeaveCriticalSection(&g_live_lock);
     return n;
 }
-void prompts_texture(uint8_t *mem, const uint8_t *limit, int format, int width, int height);   /* [Recomps#1] the game's prompts.c */
+void prompts_texture(uint8_t *mem, const uint8_t *limit, const TexLayout *L);   /* [Recomps#1] the game's prompts.c */
 void prompts_texture_gone(const uint8_t *mem);
 static void tex_retire(Tex *t, uint64_t header) {      /* header: the NVNtexture to clear (0: its bytes are no longer this texture's) */
     gl_barrier();
@@ -4573,7 +4573,7 @@ static void tex_initialize(Ctx *c) {                   /* (texture, builder) */
     if (t->mem) { Tex **p = live_mem_slot(t->mem); t->mem_next = *p; *p = t; }
     LeaveCriticalSection(&g_live_lock);
     do { t->all_next = g_all_tex; } while (InterlockedCompareExchangePointer((void *volatile *)&g_all_tex, t, t->all_next) != t->all_next);
-    prompts_texture(t->mem, t->limit, t->b.format, t->b.width, t->b.height);
+    { TexLayout L; tex_lay(&t->b, &L); prompts_texture(t->mem, t->limit, &L); }
     RET(1);
 }
 static void tex_finalize(Ctx *c) {

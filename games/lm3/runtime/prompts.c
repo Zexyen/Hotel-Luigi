@@ -11,7 +11,12 @@
  * Face buttons: by position (default layout) Switch A, the right button, is Circle / Xbox B, and so on; Xbox takes the
  * game's own letters, swapped. By printed letter (nnpad_prompts_by_letter) A is the bottom button: the letters are right,
  * but the pictures that show WHERE a button sits (four dots) swap the same way.
- * Keyboard: the keys bound in [keyboard] (the first of a binding), the mouse as a mouse. */
+ * Keyboard: the keys bound in [keyboard] (the first of a binding), the mouse as a mouse.
+ *
+ * In the rooms and on dialog buttons the game shows pictures instead: small ASTC 4x4 images with mip levels, one or two
+ * buttons each, a dark letter on a shaded cap (ICONS: their hashes and where the letter is). The cap stays; the letter is
+ * painted over with the cap's shade and the family's symbol or name is drawn there, every level, as luminance + alpha
+ * ASTC blocks (astc_la). Not replaced: SL / SR, sticks, HOME, the four-dot pictures; and the pictures of the level archives. */
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -227,6 +232,186 @@ static void paint(int family, int by_letter) {
     }
 }
 
+/* ---------------------------------------------------------------- the buttons that are pictures */
+#define FMT_ASTC4 0x87
+typedef struct { uint64_t hash; uint8_t g, x, y, w, h, cut; } Icon;      /* the letter's box; cut: the symbol is a hole in a white disc */
+static const Icon ICONS[] = {                               /* the entries of one picture follow each other */
+    {0x06ffb48253c64b6eull, G_Y, 21, 19, 20, 28, 0},
+    {0x110fa4f6150eeba1ull, G_ZL, 16, 23, 32, 22, 0},
+    {0x29e3cfb888e1fa74ull, G_PLUS, 16, 16, 32, 32, 1},
+    {0x2c9b06afafd95a0cull, G_B, 20, 17, 26, 28, 0},
+    {0x3d723ea118afe615ull, G_ZR, 15, 23, 35, 23, 0},
+    {0x51c7827dffdf48deull, G_L, 21, 17, 19, 29, 0},
+    {0x63b1add11b8b6cecull, G_A, 17, 16, 29, 31, 0},
+    {0x8d9abb1d6af23e93ull, G_X, 18, 18, 28, 27, 0},
+    {0x99ed12cbe733e6f9ull, G_MINUS, 16, 16, 32, 32, 1},
+    {0xa3156c54b8131a61ull, G_X, 19, 14, 27, 28, 0},
+    {0xa3daadea0789d2beull, G_A, 19, 17, 25, 27, 0},
+    {0xb6fba4e09c2bfbf6ull, G_A, 21, 19, 22, 25, 0},
+    {0xb750fb0a60e39214ull, G_ZR, 14, 26, 35, 18, 0},
+    {0xddbac903937c712dull, G_ZR, 14, 18, 35, 18, 0},
+    {0xf0b15025669b8505ull, G_A, 22, 20, 19, 21, 0},
+    {0x7185d291b97d43dcull, G_ZR, 27, 52, 71, 37, 0},
+    {0xa15e384387c2c1bbull, G_ZR, 27, 36, 71, 37, 0},
+    {0xc4c00a35bdb769cdull, G_ZL, 15, 19, 28, 17, 0},
+    {0xc4c00a35bdb769cdull, G_ZR, 85, 19, 31, 17, 0},
+    {0xc4c00a35bdb769cdull, G_ZL, 16, 91, 28, 16, 0},
+    {0xc4c00a35bdb769cdull, G_ZR, 84, 91, 31, 16, 0},
+    {0xccaee50316dd20b8ull, G_ZL, 37, 52, 64, 37, 0},
+    {0xceec63d09a72089dull, G_ZL, 37, 36, 64, 37, 0},
+    {0x1bb4596939ef7fc8ull, G_A, 19, 12, 25, 27, 0},
+    {0x1bb4596939ef7fc8ull, G_A, 86, 28, 19, 21, 0},
+    {0x69dbb3c01f7c2ff5ull, G_ZR, 14, 17, 35, 18, 0},
+    {0x69dbb3c01f7c2ff5ull, G_ZR, 79, 24, 35, 18, 0},
+    {0xc27171f7f4a24923ull, G_X, 19, 14, 27, 28, 0},
+    {0xc27171f7f4a24923ull, G_X, 86, 31, 20, 20, 0},
+    {0xc757c1e66b8f892bull, G_ZL, 17, 21, 32, 18, 0},
+    {0xc757c1e66b8f892bull, G_ZR, 80, 21, 35, 18, 0},
+    {0xccf9faeae1859cdaull, G_Y, 21, 13, 23, 29, 0},
+    {0xccf9faeae1859cdaull, G_Y, 88, 29, 17, 21, 0},
+    {0xd938fc0b76712c0eull, G_ZL, 19, 17, 32, 18, 0},
+    {0xd938fc0b76712c0eull, G_ZL, 84, 25, 32, 18, 0},
+    {0x17c28e08ebe051adull, G_A, 74, 46, 104, 111, 0},
+    {0x76d20b5feb0ada12ull, G_A, 74, 68, 106, 113, 0},
+};
+#define ICON_N (sizeof ICONS / sizeof ICONS[0])
+typedef struct { const Icon *first; uint8_t *mem, *orig, *shown; TexLayout L; } LiveIcon;
+enum { ICON_MAX = 96 };
+static LiveIcon g_icon[ICON_MAX];
+
+/* 4x4 texels (RGBA, grey) as one ASTC block: one partition, luminance + alpha endpoints of 8 bits, 16 weights of 3 bits */
+static void astc_la(const uint8_t *px, uint8_t *out) {
+    int a = 0, b = 0, best = 0;
+    for (int i = 0; i < 16; i++) for (int j = i + 1; j < 16; j++) {      /* the two texels farthest apart are the endpoints */
+        int dl = px[i * 4] - px[j * 4], da = px[i * 4 + 3] - px[j * 4 + 3], d = dl * dl + da * da;
+        if (d > best) { best = d; a = i; b = j; }
+    }
+    int l0 = px[a * 4], a0 = px[a * 4 + 3], dl = px[b * 4] - l0, da = px[b * 4 + 3] - a0;
+    uint64_t lo = 0x53 | 4ull << 13 | (uint64_t)l0 << 17 | (uint64_t)px[b * 4] << 25 | (uint64_t)a0 << 33 | (uint64_t)px[b * 4 + 3] << 41, hi = 0;
+    for (int i = 0; i < 16; i++) {
+        int t = best ? ((px[i * 4] - l0) * dl + (px[i * 4 + 3] - a0) * da) * 14 / best : 0, q = t < 0 ? 0 : t > 13 ? 7 : (t + 1) / 2;
+        for (int k = 0; k < 3; k++) if (q >> k & 1) hi |= 1ull << (63 - (i * 3 + k));      /* weights come from the block's end, backwards */
+    }
+    memcpy(out, &lo, 8); memcpy(out + 8, &hi, 8);
+}
+/* astc_la against the decoder the renderers use: 0 = it cannot be trusted here, and the pictures stay the game's */
+static int astc_ok(void) {
+    static int ok = -1;
+    if (ok < 0) {
+        uint8_t px[64], blk[16], back[64];
+        for (int i = 0; i < 16; i++) { px[i * 4] = px[i * 4 + 1] = px[i * 4 + 2] = (uint8_t)(40 + i * 12); px[i * 4 + 3] = (uint8_t)(255 - i * 9); }
+        astc_la(px, blk);
+        ok = tex_decode_block_rgba8(FMT_ASTC4, blk, back, 16) == 0;
+        for (int i = 0; ok && i < 64; i++) ok = abs(px[i] - back[i]) <= 14;
+        if (!ok) printf("button prompts: the ASTC self-check failed, the game's button pictures stay\n");
+    }
+    return ok;
+}
+/* what stands for glyph g: s = 1 everywhere, 0 where the symbol is; 0 = the game's own letter stays */
+static int symbol(uint8_t *s, int g, int family, int by_letter) {
+    static const uint8_t ids[] = {G_A, G_B, G_X, G_Y, G_L, G_ZL, G_ZR, G_PLUS, G_MINUS};
+    static const char *const ps[] = {0, 0, 0, 0, "L1", "L2", "R2"}, *const xbox[] = {"B", "A", "Y", "X", "LB", "LT", "RT"};
+    static const int kb[] = {0, 1, 2, 3, 6, 8, 9, 10, 11};
+    typedef void Face(uint8_t *);
+    int i = 0;
+    while (i < (int)sizeof ids && ids[i] != g) i++;
+    if (i == (int)sizeof ids) return 0;
+    memset(s, 1, S * S);
+    if (family == 4) {
+        int vk = bound(kb[i]);
+        char t[4];
+        if (vk == 1 || vk == 2 || vk == 4) snprintf(t, sizeof t, "M%d", vk == 4 ? 3 : vk); else key_label(vk, t);
+        if (!t[0]) return 0;
+        text(s, t);
+    } else if (i >= 7) (i == 7 ? bars_across : family == 2 ? bars_up : view)(s);
+    else if (family == 2 && i < 4) ((Face *[]){by_letter ? ps_cross : ps_circle, by_letter ? ps_circle : ps_cross, by_letter ? ps_square : ps_triangle, by_letter ? ps_triangle : ps_square})[i](s);
+    else if (family == 3 && i < 4 && by_letter) return 0;
+    else text(s, family == 2 ? ps[i] : xbox[i]);
+    return 1;
+}
+/* the symbol in the letter's box of an image w wide (was: as the game made it): the cap's shade row by row, the letter's
+ * darkness for the symbol; the box grows by 2 texels to take the letter's soft edge along */
+static void stamp(uint8_t *rgba, const uint8_t *was, int w, int h, const Icon *ic, const uint8_t *s, int *box) {
+    int sx0 = S, sx1 = -1, sy0 = S, sy1 = -1;
+    for (int j = 0; j < S; j++) for (int i = 0; i < S; i++) if (!s[j * S + i]) { sx0 = i < sx0 ? i : sx0; sx1 = i > sx1 ? i : sx1; sy0 = j < sy0 ? j : sy0; sy1 = j > sy1 ? j : sy1; }
+    if (sx1 < 0) return;
+    int side = ic->w > ic->h ? ic->w : ic->h;                /* a name of two letters may be wider than the game's one */
+    float k = (float)side * SS / (sx1 - sx0 + 1), ky = (float)side * SS / (sy1 - sy0 + 1);      /* texels a unit of the art */
+    k = k < ky ? k : ky;
+    float cx = ic->x + ic->w / 2.f, cy = ic->y + ic->h / 2.f, mx = (sx0 + sx1 + 1) / (2.f * SS), my = (sy0 + sy1 + 1) / (2.f * SS);
+    int gw = (int)(k * (sx1 - sx0 + 1) / SS) + 1, gh = (int)(k * (sy1 - sy0 + 1) / SS) + 1;
+    gw = gw > ic->w ? gw : ic->w; gh = gh > ic->h ? gh : ic->h;
+    int x0 = (int)(cx - gw / 2.f) - 2, y0 = (int)(cy - gh / 2.f) - 2, x1 = x0 + gw + 5, y1 = y0 + gh + 5;
+    x0 = x0 < 0 ? 0 : x0; y0 = y0 < 0 ? 0 : y0; x1 = x1 > w ? w : x1; y1 = y1 > h ? h : y1;
+    box[0] = x0 < box[0] ? x0 : box[0]; box[1] = y0 < box[1] ? y0 : box[1]; box[2] = x1 > box[2] ? x1 : box[2]; box[3] = y1 > box[3] ? y1 : box[3];
+    long frame = 0, fn = 0;
+    int lo = 255, hi = 0;
+    for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) {
+        int v = was[((size_t)y * w + x) * 4];
+        if (x < ic->x || x >= ic->x + ic->w || y < ic->y || y >= ic->y + ic->h) { frame += v; fn++; }
+        lo = v < lo ? v : lo; hi = v > hi ? v : hi;
+    }
+    int light = !fn || frame / fn > 127, inkv = light ? lo : hi;      /* a dark letter on a light cap, or the other way round */
+    for (int y = y0; y < y1; y++) {
+        int face = light ? 0 : 255;
+        for (int x = x0 > 2 ? x0 - 2 : 0; x < (x1 + 2 < w ? x1 + 2 : w); x++) { int v = was[((size_t)y * w + x) * 4]; face = light ? (v > face ? v : face) : (v < face ? v : face); }
+        for (int x = x0; x < x1; x++) {
+            int i0 = (int)floorf(((x - cx) / k + mx) * SS + .5f), i1 = (int)floorf(((x + 1 - cx) / k + mx) * SS + .5f);
+            int j0 = (int)floorf(((y - cy) / k + my) * SS + .5f), j1 = (int)floorf(((y + 1 - cy) / k + my) * SS + .5f), n = 0;
+            if (i1 <= i0) i1 = i0 + 1;
+            if (j1 <= j0) j1 = j0 + 1;
+            for (int j = j0; j < j1; j++) for (int i = i0; i < i1; i++) n += i >= 0 && i < S && j >= 0 && j < S && !s[j * S + i];
+            int c = n * 255 / ((i1 - i0) * (j1 - j0));
+            uint8_t *px = rgba + ((size_t)y * w + x) * 4;
+            if (ic->cut) { px[0] = px[1] = px[2] = 255; px[3] = (uint8_t)(255 - c); }
+            else px[0] = px[1] = px[2] = (uint8_t)(face + (inkv - face) * c / 255);
+        }
+    }
+}
+/* every live picture from the game's own blocks, like paint() */
+static void paint_icons(int family, int by_letter) {
+    uint8_t *s = family > 1 && astc_ok() ? malloc(S * S) : NULL;
+    for (LiveIcon *l = g_icon; l < g_icon + ICON_MAX; l++) {
+        if (!l->mem) continue;
+        const TexLayout *L = &l->L;
+        int w = L->lvl_w[0], h = L->lvl_h[0], box[4] = {w, h, 0, 0};
+        size_t n = (size_t)w * h * 4;
+        uint8_t *rgba = s ? malloc(n * 2 + L->lvl_linear_size[0]) : NULL;
+        memcpy(l->shown, l->orig, L->layer_size);
+        if (rgba) {
+            uint8_t *was = rgba + n, *lin = was + n;
+            tex_deswizzle_level(L, 0, l->orig, lin);
+            tex_decode_rgba8(FMT_ASTC4, lin, w, h, was);
+            memcpy(rgba, was, n);
+            for (const Icon *ic = l->first; ic < ICONS + ICON_N && ic->hash == l->first->hash; ic++) if (symbol(s, ic->g, family, by_letter))
+                stamp(rgba, was, w, h, ic, s, box);
+            int x0 = box[0], y0 = box[1], x1 = box[2], y1 = box[3];
+            for (int lv = 0; x1 > x0 && lv < L->levels; lv++) {      /* the blocks under the letters, at every level; rgba halves in place */
+                int lw = L->lvl_w[lv], lh = L->lvl_h[lv], wb = L->lvl_wb[lv], hb = L->lvl_hb[lv];
+                if (lv) for (int y = 0; y < lh; y++) for (int x = 0; x < lw; x++) for (int c = 0; c < 4; c++) {
+                    int pw = L->lvl_w[lv - 1], ph = L->lvl_h[lv - 1], xa = x * 2, xb = xa + 1 < pw ? xa + 1 : xa, ya = y * 2, yb = ya + 1 < ph ? ya + 1 : ya;
+                    rgba[((size_t)y * lw + x) * 4 + c] = (uint8_t)((rgba[((size_t)ya * pw + xa) * 4 + c] + rgba[((size_t)ya * pw + xb) * 4 + c] + rgba[((size_t)yb * pw + xa) * 4 + c] + rgba[((size_t)yb * pw + xb) * 4 + c] + 2) / 4);
+                }
+                tex_deswizzle_level(L, lv, l->orig + L->lvl_offset[lv], lin);
+                int bx0 = x0 >> lv >> 2, by0 = y0 >> lv >> 2, bx1 = ((x1 - 1) >> lv >> 2) + 1, by1 = ((y1 - 1) >> lv >> 2) + 1;
+                for (int by = by0; by < by1 && by < hb; by++) for (int bx = bx0; bx < bx1 && bx < wb; bx++) {
+                    uint8_t px[64];
+                    for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++) {
+                        int tx = bx * 4 + x < lw ? bx * 4 + x : lw - 1, ty = by * 4 + y < lh ? by * 4 + y : lh - 1;
+                        memcpy(px + (y * 4 + x) * 4, rgba + ((size_t)ty * lw + tx) * 4, 4);
+                    }
+                    astc_la(px, lin + ((size_t)by * wb + bx) * 16);
+                }
+                tex_swizzle_level(L, lv, lin, l->shown + L->lvl_offset[lv]);
+            }
+            free(rgba);
+        }
+        memcpy(l->mem, l->shown, L->layer_size);
+        nvn_gl_memory_written((uint64_t)(uintptr_t)l->mem, L->layer_size);
+    }
+    free(s);
+}
+
 /* From player 1's pad poll: repaint when the device in use, the bindings or the settings change, or a page came. */
 void prompts_tick(void) {
     int family = nnpad_button_prompts(), by_letter = family > 1 && family < 4 && nnpad_prompts_by_letter(), any = 0;
@@ -237,17 +422,44 @@ void prompts_tick(void) {
         if (l->mem && memcmp(l->mem, l->shown, bytes_of(l->p))) { free(l->orig); *l = (Live){0}; }      /* not what we left there: the game has reused the memory */
         any |= l->mem != NULL;
     }
+    for (LiveIcon *l = g_icon; l < g_icon + ICON_MAX; l++) {
+        if (l->mem && memcmp(l->mem, l->shown, l->L.layer_size)) { free(l->orig); *l = (LiveIcon){0}; }
+        any |= l->mem != NULL;
+    }
     if (any && (g_dirty || family != g_family || sig != g_sig)) {
         int said = family != g_family || sig != g_sig;
         paint(family, by_letter);
+        paint_icons(family, by_letter);
         g_family = family; g_sig = sig; g_dirty = 0;
         if (said) printf("button prompts: %s%s\n", family == 2 ? "PlayStation" : family == 3 ? "Xbox" : family == 4 ? "keyboard" : "Switch", by_letter ? ", face buttons by printed letter" : "");
     }
     ReleaseSRWLockExclusive(&g_lock);
 }
 
-/* nvn_gl.c tex_initialize: is this a font page with prompts? */
-void prompts_texture(uint8_t *mem, const uint8_t *limit, int format, int width, int height) {
+/* a picture of ICONS? */
+static void icon_texture(uint8_t *mem, const uint8_t *limit, const TexLayout *L) {
+    if (L->width > 256 || L->height > 256 || L->layers != 1 || L->linear || L->levels > TEX_MAX_LEVELS || (limit && mem + L->layer_size > limit)) return;
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (size_t i = 0; i < L->lvl_size[0]; i++) h = (h ^ mem[i]) * 0x100000001b3ull;
+    for (const Icon *ic = ICONS; ic < ICONS + ICON_N; ic++) if (ic->hash == h && ic->x + ic->w <= L->width && ic->y + ic->h <= L->height) {
+        AcquireSRWLockExclusive(&g_lock);
+        LiveIcon *l = g_icon;
+        while (l < g_icon + ICON_MAX && l->mem) l++;
+        uint8_t *copy = l < g_icon + ICON_MAX ? malloc(L->layer_size * 2) : NULL;
+        if (copy) {
+            *l = (LiveIcon){.first = ic, .mem = mem, .orig = copy, .shown = copy + L->layer_size, .L = *L};
+            memcpy(l->orig, mem, L->layer_size); memcpy(l->shown, mem, L->layer_size);
+            g_dirty = 1;
+        }
+        ReleaseSRWLockExclusive(&g_lock);
+        prompts_tick();
+        return;
+    }
+}
+/* nvn_gl.c tex_initialize: is this a font page with prompts, or a picture of a button? */
+void prompts_texture(uint8_t *mem, const uint8_t *limit, const TexLayout *L) {
+    int format = L->format, width = L->width, height = L->height;
+    if (format == FMT_ASTC4 && mem) { icon_texture(mem, limit, L); return; }
     if (format != FMT_BC3 || width != height || (width != 512 && width != 1024) || !mem) return;
     size_t n = (size_t)width * width;
     if (limit && mem + n > limit) return;
@@ -273,5 +485,6 @@ void prompts_texture(uint8_t *mem, const uint8_t *limit, int format, int width, 
 void prompts_texture_gone(const uint8_t *mem) {
     AcquireSRWLockExclusive(&g_lock);
     for (Live *l = g_live; l < g_live + LIVE_MAX; l++) if (l->mem == mem) { free(l->orig); *l = (Live){0}; }
+    for (LiveIcon *l = g_icon; l < g_icon + ICON_MAX; l++) if (l->mem == mem) { free(l->orig); *l = (LiveIcon){0}; }
     ReleaseSRWLockExclusive(&g_lock);
 }
