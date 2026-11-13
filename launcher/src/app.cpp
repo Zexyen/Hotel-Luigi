@@ -74,6 +74,8 @@ const std::vector<SettingDef>& setting_defs()
 			{{"1280x720", "1280 × 720"}, {"1600x900", "1600 × 900"}, {"1920x1080", "1920 × 1080"}, {"2560x1440", "2560 × 1440"}, {"3840x2160", "3840 × 2160"}}, 0},
 		{"vsync", "Vertical sync", "Auto locks to a 60 / 120 / 240 Hz display",
 			{{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}, {"on", "On"}, {"mailbox", "Mailbox"}}, 0},
+		{"frame_rate", "Frame rate", "30 is the game as made; its speed stays the same",
+			{{"30", "30 fps"}, {"60", "60 fps"}, {"90", "90 fps"}, {"120", "120 fps"}}, 0},
 		// the launcher's own (config/launcher.ini; the game never reads it): App::sound
 		{"sounds", "Launcher sounds", "Soft ticks as you move through these screens", {{"on", "On"}, {"off", "Off"}}, 0, nullptr, "/launcher.ini"},
 		{"resolution_scale", "Internal resolution", "What the game renders at, times its own size",
@@ -84,6 +86,8 @@ const std::vector<SettingDef>& setting_defs()
 			{{"auto", "Auto"}, {"100", "100 nits"}, {"150", "150 nits"}, {"200", "200 nits"}, {"250", "250 nits"}, {"300", "300 nits"}, {"400", "400 nits"}}, 1},
 		{"hdr_peak", "HDR peak", "Your monitor's peak brightness, for the scene's lights",
 			{{"auto", "Auto"}, {"400", "400 nits"}, {"600", "600 nits"}, {"800", "800 nits"}, {"1000", "1000 nits"}, {"1500", "1500 nits"}, {"2000", "2000 nits"}, {"4000", "4000 nits"}}, 1},
+		{"aspect_ratio", "Picture shape", "Wider shows more at the sides; Auto is the screen's",
+			{{"16:9", "16:9"}, {"auto", "Auto"}, {"21:9", "21:9"}, {"32:9", "32:9"}}, 1},
 		{"aspect", "Picture fit", "Keep the picture's shape, or fill the window", {{"keep", "Keep shape"}, {"stretch", "Stretch"}}, 1},
 		{"button_prompts", "Button prompts", "Auto follows what you use",
 			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, 2, nullptr, "/controllers.ini", "general"},
