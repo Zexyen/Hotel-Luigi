@@ -39,6 +39,7 @@ typedef struct {
     unsigned smem_words;
     int uses_smem;
     int uses_fcs, uses_tf;                    /* MxIn.screen_scale: gl_FragCoord.xy was scaled / a texelFetch was mapped */
+    int quad_abs;                             /* [lm3] a fragment SHFL from a fixed lane: the stage works its 2 x 2 quad as one unit (mx_fcx) */
     int uses_sg;                              /* [witchtime] Vulkan: KHR subgroup functions (SHFL, VOTE, lane masks) */
     int nbar;                                 /* [issue 163] compute: BAR sites that leave the dispatcher (see MXOP_BAR) */
     int has_back, seq;                        /* [issue 92] a jump to an earlier word; seq: a stage with none that runs its blocks in order (see the blocks in mx_translate) */
@@ -250,7 +251,7 @@ static const char *attr_in(Mx *e, unsigned a, const char *vx) {
         if (a == 0x60) return "uint(gl_PrimitiveIDIn)";
     }
     if (st == MX_FRAGMENT) {
-        if (a >= 0x70 && a < 0x80 && c < 2 && e->in->screen_scale && e->in->target == 1) { e->uses_fcs = 1; return S(e, c ? "U(gl_FragCoord[1] * mx_fcs_y)" : "U(gl_FragCoord[0] * mx_fcs)"); }      /* track O: the game's pixel position */
+        if (a >= 0x70 && a < 0x80 && c < 2 && e->in->screen_scale && e->in->target == 1) { e->uses_fcs = 1; return S(e, c ? "U(mx_fcy())" : "U(mx_fcx())"); }      /* track O: the game's pixel position */
         if (a >= 0x70 && a < 0x80) return S(e, "U(gl_FragCoord[%u])", c);
         if (a == 0x3fc) return "(gl_FrontFacing ? 0xffffffffu : 0u)";
         if ((a == 0x2e0 || a == 0x2e4) && e->in->target == 1 && c == 1) return "U(1.0 - gl_PointCoord[1])";      /* Vulkan: t runs the other way (flipped viewport) */
@@ -908,6 +909,7 @@ static void insn(Mx *e, unsigned pc, uint64_t i) {
             "mx = (tid & seg) | (cl & ~seg); src = tid ^ sa; ib = int(src) <= int(mx);"};
         if (e->in->target != 1) { fail(e, "SHFL", "warp shuffle (OpenGL target)"); break; }
         if (e->in->stage == MX_FRAGMENT) e->uses_quad = 1; else e->uses_sg = 1;
+        if (e->in->stage == MX_FRAGMENT && MXB(i, 30, 2) == 0) e->quad_abs = 1;
         b = MXB(i, 28, 1) ? S(e, "%uu", (unsigned)MXB(i, 20, 5)) : R20;
         c = MXB(i, 29, 1) ? S(e, "%uu", (unsigned)MXB(i, 34, 13)) : R39;
         emit(e, "uint sv = %s, sa = %s, sb = %s, tid = %s & 31u, seg = (sb >> 8) & 31u, cl = sb & 31u, mx, src; bool ib; %s", A8, b, c, vk_lane(e), range[MXB(i, 30, 2)]);
@@ -1985,7 +1987,17 @@ int mx_translate(const MxIn *in, MxOut *out) {
             for (int k = 0; k < e->nqcase; k++) if (e->qcase_mask[k]) emit(&h, " case %uu: return 0x%xu;", e->qcase_pc[k], e->qcase_mask[k]);
             emit(&h, " default: return 0u; } }\n");
         }
-        if (vk && in->stage == MX_FRAGMENT && in->screen_scale && e->uses_fcs) emit(&h, "layout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; float mx_fcs; float mx_fcs_y; };\n");      /* track O */
+        if (vk && in->stage == MX_FRAGMENT && in->screen_scale && e->uses_fcs) {      /* track O */
+            emit(&h, "layout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; float mx_fcs; float mx_fcs_y; };\n");
+            /* [lm3] The game's pixel position. LM3's small point lights shade four lights per 2 x 2 quad, one in each lane picked by
+             * the parity of its own position, at the G-buffer texel of lane 0, and add the four up with shuffles. A quad is 2 x 2
+             * pixels of the image, so on a scaled image the parity must follow the image's pixels (counted in the game's pixels, all four
+             * pixels of a quad had the same one: one light in four was drawn, as a grid). Such a stage (a shuffle from a fixed lane) gets the
+             * origin of its 2 x 2 block of game pixels plus its lane: the game's own values on an image that is not scaled. */
+            if (e->quad_abs) emit(&h, "float mx_fcx() { return 2.0 * floor(gl_FragCoord.x * mx_fcs * 0.5) + float(uint(gl_FragCoord.x) & 1u) + 0.5; }\n"
+                                      "float mx_fcy() { return 2.0 * floor(gl_FragCoord.y * mx_fcs_y * 0.5) + float(uint(gl_FragCoord.y) & 1u) + 0.5; }\n");
+            else emit(&h, "float mx_fcx() { return (gl_FragCoord.x * mx_fcs); }\nfloat mx_fcy() { return (gl_FragCoord.y * mx_fcs_y); }\n");
+        }
         else
         if (vk && (in->stage == MX_VERTEX || (in->stage == MX_FRAGMENT && e->uses_alpha))) emit(&h, "layout(push_constant) uniform MXPC { uvec2 mx_alpha; float mx_point_size; };\n");
         if (vk && e->uses_tf) emit(&h, "ivec2 mx_tf(ivec2 p, ivec2 real, uint gw, uint gh) { ivec2 g = ivec2(int(gw), int(gh)); return (g.x <= 0 || g.y <= 0 || g == real) ? p : ivec2(floor((vec2(p) + 0.5) * vec2(real) / vec2(g))); }\n");

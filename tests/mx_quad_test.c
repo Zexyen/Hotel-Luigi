@@ -59,6 +59,24 @@ int main(void) {
         if (!ok2 && s) puts(s);
         ok = ok && ok2;
     }
+    {   /* [lm3] internal resolution scale: a stage that shuffles from a fixed lane (IPA pixel x, SHFL lane 0: LM3's point lights)
+         * takes its pixel position by quad; one that only reads its neighbours (SHFL.XOR) keeps the game's pixel position */
+        MxIn in; MxOut out[2];
+        for (int k = 0; k < 2; k++) {
+            w[1] = 0xe000000000000000ull | 7ull << 16 | 1 | 255ull << 8 | 0x1cull << 30;                                 /* IPA R1, pixel x */
+            w[2] = 0xef10000000000000ull | 7ull << 16 | 2 | 1ull << 8 | (uint64_t)k << 20 | 3ull << 28 | (k ? 3ull : 0ull) << 30 | 0x1c03ull << 34;
+            w[3] = w[6];
+            memcpy(code + 0x50, w, sizeof w);
+            memset(&in, 0, sizeof in); memset(&out[k], 0, sizeof out[k]);
+            in.stage = 1; in.code = code; in.code_len = sizeof code; in.target = 1; in.screen_scale = 1;
+            mx_translate(&in, &out[k]);
+        }
+        int ok3 = out[0].glsl && out[1].glsl && strstr(out[0].glsl, "r1 = U(f)") && strstr(out[0].glsl, "U(mx_fcx())") &&
+                  strstr(out[0].glsl, "float mx_fcx() { return 2.0 * floor(gl_FragCoord.x * mx_fcs * 0.5) + float(uint(gl_FragCoord.x) & 1u) + 0.5; }") &&
+                  strstr(out[1].glsl, "float mx_fcx() { return (gl_FragCoord.x * mx_fcs); }") && !strstr(out[1].glsl, "floor(gl_FragCoord");
+        if (!ok3) { if (out[0].glsl) puts(out[0].glsl); if (out[1].glsl) puts(out[1].glsl); }
+        ok = ok && ok3;
+    }
     printf("mx_quad_test: %s\n", ok ? "ok" : "FAILED");
     return !ok;
 }
