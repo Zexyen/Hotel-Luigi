@@ -1,15 +1,13 @@
 /* [witchtime] The PC settings menu on the screen (Vulkan; included by nvn_vk.c after nvn_vk_draw.c). pcmenu.c draws the panel into
  * BGRA pixels on the CPU when its content changes; here they are copied over the presented picture (after the game's frame, the
  * bars and the first-run text: never into the game's textures), at the size of the window.
- *   - The GPU path (pcm_gpu_*): the panel and the first-start screen are composed on the GPU every frame: the ground pcmenu.c
- *     drew (once a version) is copied into a canvas of the panel's size, the moving parts (the wheels' rings and gears, the
- *     hands) are drawn over it as turned textured quads from pcmenu_gpu_scene, with the hubs and the words (layers pcmenu.c
- *     drew once a version) between, and the canvas is copied over the picture. The art is 16 textures uploaded once.
- *     While the panel opens or closes, the canvas starts instead from the game's picture under it (when it can be read:
- *     the swapchain images with TRANSFER_SRC, or the HDR picture) and the whole panel is sprites over it (the ground and a
- *     flat pearl as textures too), so the wedge can slide in and the rows step in. pcmenu.c then never draws a frame for
- *     the turning wheel; WT_PCMENU_CPU=1 keeps the CPU path (the fallback when the pipeline cannot be made; it has no
- *     opening or closing motion).
+ *   - The GPU path (pcm_gpu_*): the panel is composed on the GPU every frame: the ground pcmenu.c drew (once a version)
+ *     is copied into a canvas of the panel's size, the words (a layer pcmenu.c drew once a version) are drawn over it as
+ *     a textured quad from pcmenu_gpu_scene, and the canvas is copied over the picture. While the panel opens or
+ *     closes, the canvas starts instead from the game's picture under it (when it can be read: the swapchain images with
+ *     TRANSFER_SRC, or the HDR picture) and the ground is a sprite too, so the monitor can slide in and the rows step in.
+ *     WT_PCMENU_CPU=1 keeps the CPU path (the fallback when the pipeline cannot be made; it has no opening or closing
+ *     motion).
  *   - nvn_vk_pcmenu_job: a job of the render thread that pcmenu.c posts about 60 times a second while the menu holds the game:
  *     the work the menu asks for (a sampler flush for anisotropic filtering / texture detail, the present mode for vsync, the images and stages of a new resolution scale), the panel's pixels
  *     into a staging buffer when they changed, then the game's last picture presented again with the panel (vk_present2's
@@ -22,62 +20,50 @@ int pcmenu_is_open(void), pcmenu_visible(void), pcmenu_kind(void), pcmenu_settle
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen);      /* pcmenu.c: 0 = closed; r = x, y, w, h in the window's pixels */
 void pcmenu_panel_read(void *dst, int w, int h);
 int pcmenu_take_work(void);                                         /* 1 flush the samplers, 2 present mode again, 4 resolution scale */
-typedef struct {                                   /* as pcmenu.c */
-    int art; float x, y, w, h, deg, alpha, ann0, ann1;
-    float clip_top; int clip_right; float clip2_top; int clip2_right; float y0, y1;
-} PcmSprite;
+typedef struct { int layer; float x, alpha, clip, y0, y1; } PcmSprite;      /* as pcmenu.c */
 void pcmenu_gpu(int on); int pcmenu_gpu_scene(int W, int H, PcmSprite *out, int max, int *over_game);
-void *pcmenu_art_pixels(int id, int *w, int *h); int pcmenu_layer_read(int which, void *dst, int w, int h);
-#define PCM_NART 17                                /* pcmenu_art_pixels' ids: 16 pieces of art and a flat pearl (16) */
-#define PCM_NTEX (PCM_NART + 3)                    /* then the hubs layer, the words layer and the ground, of the canvas's size */
+int pcmenu_layer_read(void *dst, int w, int h);
+#define PCM_NTEX 2                                 /* the ground and the words layer, of the canvas's size (PcmSprite's layer) */
 #define PCM_NSPR 64
 typedef struct { VkImage img; VMem mem; VkImageView view; VkDescriptorSet set; int w, h, ready; } PcmTex;      /* ready: it holds pixels the shaders may read */
 static struct {
     int tried, on;                                 /* on: the GPU path; decided at the first upload */
     VkSampler smp; VkDescriptorSetLayout dl; VkPipelineLayout pl; VkDescriptorPool dp; VkShaderModule vs, fs; VkPipeline pipe;
-    PcmTex tex[PCM_NTEX];                          /* the art (PCM_NART), then the hubs layer, the words layer and the ground, of the canvas's size */
+    PcmTex tex[PCM_NTEX];
     VkImage canvas; VMem canvas_mem; VkImageView canvas_view; int cw, ch;
-    VkBuffer art_buf; VMem art_mem; uint64_t art_off[PCM_NART]; int art_staged, art_uploaded;      /* the art's staging: filled once, copied by a present, then freed */
-    unsigned layers_gen;                           /* the panel version whose layers the layer textures hold */
-    int have[2];                                   /* the staging buffer holds a hubs / words layer for this version */
+    unsigned layers_gen;                           /* the panel version whose words the layer texture holds */
+    int have;                                      /* the staging buffer holds a words layer for this version */
     unsigned ground_gen;                           /* the panel version whose ground the ground texture holds (~0u: none) */
 } g_gpu;
 static struct { VkBuffer buf; VMem mem; uint64_t size; unsigned gen; int r[4], ready, panel; } g_pcm;      /* panel: whose pixels these are (pcmenu_kind) */
 static struct { VkBuffer buf; VMem mem; uint64_t size; int w, h, pending, n, said; } g_pcm_shot;
 
 /* ---- the GPU path ---- */
-/* One pipeline draws every sprite: a quad of half size h about the centre c, turned by rot (cos, sin), its texture
- * premultiplied, at the opacity alpha, over the canvas (ONE, ONE_MINUS_SRC_ALPHA, as pcmenu.c's put_pre); the fragment
- * stage keeps the ring ann (inner and outer radius, in pixels; none when the outer is 0), the side of the slanted edge
- * (clip.x + y * tan 22, the same integer edge as art_blit's; clip.y: 0 all, 1 left of it, -1 right of it), the side of a
- * second such edge (clip2), and the band of rows band.x <= y < band.y (none when band.y <= band.x). */
+/* One pipeline draws every sprite: the whole canvas as a quad moved right by dx, its texture premultiplied, at the opacity
+ * alpha, over the canvas (ONE, ONE_MINUS_SRC_ALPHA, as pcmenu.c's layer_over); the fragment stage keeps what is at clip
+ * or right of it, and the band of rows band.x <= y < band.y (all when band.y <= band.x). */
 static const char k_pcm_vs[] =
     "#version 460\n"
-    "layout(push_constant) uniform PC { vec2 c; vec2 h; vec2 rot; vec2 view; vec2 ann; vec2 clip; vec2 clip2; vec2 band; float alpha; float pad; } pc;\n"
+    "layout(push_constant) uniform PC { vec2 view; vec2 band; float dx; float clip; float alpha; float pad; } pc;\n"
     "layout(location = 0) out vec2 v_uv;\n"
     "void main() {\n"
-    "    const vec2 k[6] = vec2[](vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0), vec2(-1.0, 1.0), vec2(1.0, -1.0), vec2(1.0, 1.0));\n"
-    "    vec2 l = k[gl_VertexIndex] * pc.h;\n"
-    "    vec2 p = pc.c + vec2(l.x * pc.rot.x - l.y * pc.rot.y, l.x * pc.rot.y + l.y * pc.rot.x);\n"
-    "    v_uv = k[gl_VertexIndex] * 0.5 + 0.5;\n"
-    "    gl_Position = vec4(p / pc.view * 2.0 - 1.0, 0.0, 1.0);\n"
+    "    const vec2 k[6] = vec2[](vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, 1.0), vec2(1.0, 0.0), vec2(1.0, 1.0));\n"
+    "    v_uv = k[gl_VertexIndex];\n"
+    "    gl_Position = vec4(v_uv * 2.0 - 1.0 + vec2(pc.dx / pc.view.x * 2.0, 0.0), 0.0, 1.0);\n"
     "}\n";
 static const char k_pcm_fs[] =
     "#version 460\n"
     "layout(set = 0, binding = 0) uniform sampler2D u_pic;\n"
-    "layout(push_constant) uniform PC { vec2 c; vec2 h; vec2 rot; vec2 view; vec2 ann; vec2 clip; vec2 clip2; vec2 band; float alpha; float pad; } pc;\n"
+    "layout(push_constant) uniform PC { vec2 view; vec2 band; float dx; float clip; float alpha; float pad; } pc;\n"
     "layout(location = 0) in vec2 v_uv;\n"
     "layout(location = 0) out vec4 o_col;\n"
     "void main() {\n"
-    "    vec2 d = gl_FragCoord.xy - pc.c;\n"
-    "    if (pc.ann.y > 0.0) { float rr = dot(d, d); if (rr < pc.ann.x * pc.ann.x || rr > pc.ann.y * pc.ann.y) discard; }\n"
-    "    float x = floor(gl_FragCoord.x), y = floor(gl_FragCoord.y);\n"
+    "    float y = floor(gl_FragCoord.y);\n"
     "    if (pc.band.y > pc.band.x && (y < pc.band.x || y >= pc.band.y)) discard;\n"
-    "    if (pc.clip.y != 0.0) { float e = floor(pc.clip.x + y * 0.4040); if (pc.clip.y > 0.0 ? x >= e : x < e) discard; }\n"
-    "    if (pc.clip2.y != 0.0) { float e = floor(pc.clip2.x + y * 0.4040); if (pc.clip2.y > 0.0 ? x >= e : x < e) discard; }\n"
+    "    if (floor(gl_FragCoord.x) < floor(pc.clip)) discard;\n"
     "    o_col = texture(u_pic, v_uv) * pc.alpha;\n"
     "}\n";
-typedef struct { float c[2], h[2], rot[2], view[2], ann[2], clip[2], clip2[2], band[2], alpha, pad; } PcmPush;
+typedef struct { float view[2], band[2], dx, clip, alpha, pad; } PcmPush;
 static void pcm_tex_free(PcmTex *t) {
     if (t->view) vkDestroyImageView(V.device, t->view, NULL);
     if (t->img) { vkDestroyImage(V.device, t->img, NULL); vmem_free(t->mem); }
@@ -169,36 +155,16 @@ static VkPipeline pcm_gpu_pipeline(void) {
     if (r != VK_SUCCESS) { printf("pcmenu: THE DRIVER REFUSED the panel's pipeline (%s): the panel is composed on the CPU\n", vk_result_name(r)); fflush(stdout); g_gpu.pipe = NULL; return NULL; }
     return g_gpu.pipe;
 }
-/* the art into a staging buffer and its textures (render thread, once); the next present copies it across */
-static void pcm_gpu_art_stage(void) {
-    void *px[PCM_NART];
-    int w[PCM_NART], h[PCM_NART];
-    uint64_t total = 0;
-    g_gpu.art_staged = 1;
-    for (int i = 0; i < PCM_NART; i++) {
-        px[i] = pcmenu_art_pixels(i, &w[i], &h[i]);
-        if (!px[i]) { w[i] = h[i] = 0; continue; }
-        g_gpu.art_off[i] = total; total += (uint64_t)w[i] * h[i] * 4;
-    }
-    if (!total) return;
-    g_gpu.art_buf = vbuf_new(total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &g_gpu.art_mem);
-    for (int i = 0; i < PCM_NART; i++) {
-        if (!px[i]) continue;
-        memcpy((uint8_t *)g_gpu.art_mem.map + g_gpu.art_off[i], px[i], (size_t)w[i] * h[i] * 4);
-        free(px[i]);
-        pcm_tex_new(&g_gpu.tex[i], w[i], h[i]);
-    }
-}
 /* the canvas and the layer textures at the panel's size (render thread; 0 x 0: gone) */
 static void pcm_gpu_canvas(int w, int h) {
     if (g_gpu.canvas && g_gpu.cw == w && g_gpu.ch == h) return;
     cmd_wait_all();                                /* a present may still draw with them */
     if (g_gpu.canvas) { vkDestroyImageView(V.device, g_gpu.canvas_view, NULL); vkDestroyImage(V.device, g_gpu.canvas, NULL); vmem_free(g_gpu.canvas_mem); g_gpu.canvas = NULL; g_gpu.canvas_view = NULL; }
-    for (int k = 0; k < 3; k++) pcm_tex_free(&g_gpu.tex[PCM_NART + k]);
+    for (int k = 0; k < PCM_NTEX; k++) pcm_tex_free(&g_gpu.tex[k]);
     g_gpu.cw = w; g_gpu.ch = h; g_gpu.layers_gen = g_gpu.ground_gen = ~0u;
     if (!w || !h) return;
     pcm_image_new(w, h, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, &g_gpu.canvas, &g_gpu.canvas_mem, &g_gpu.canvas_view);
-    for (int k = 0; k < 3; k++) pcm_tex_new(&g_gpu.tex[PCM_NART + k], w, h);
+    for (int k = 0; k < PCM_NTEX; k++) pcm_tex_new(&g_gpu.tex[k], w, h);
 }
 static void pcm_tex_upload(PcmTex *t, VkBuffer buf, uint64_t off) {      /* the staging buffer's pixels into the texture, in the present's commands */
     VkBufferImageCopy c;
@@ -214,9 +180,9 @@ static void pcm_tex_upload(PcmTex *t, VkBuffer buf, uint64_t off) {      /* the 
 /* the panel composed on the canvas and copied over the picture at r (in the present's commands, tgt in TRANSFER_DST) */
 static void pcm_gpu_draw(VkImage tgt, const int r[4]) {
     uint64_t one = (uint64_t)r[2] * (uint64_t)r[3] * 4;
-    if (!g_gpu.art_uploaded && g_gpu.art_buf) { for (int i = 0; i < PCM_NART; i++) if (g_gpu.tex[i].img) pcm_tex_upload(&g_gpu.tex[i], g_gpu.art_buf, g_gpu.art_off[i]); g_gpu.art_uploaded = 1; }
     if (g_gpu.layers_gen != g_pcm.gen) {
-        for (int k = 0; k < 2; k++) { PcmTex *t = &g_gpu.tex[PCM_NART + k]; t->ready = 0; if (g_gpu.have[k]) pcm_tex_upload(t, g_pcm.buf, one * (1 + k)); }
+        g_gpu.tex[1].ready = 0;
+        if (g_gpu.have) pcm_tex_upload(&g_gpu.tex[1], g_pcm.buf, one);
         g_gpu.layers_gen = g_pcm.gen;
     }
     PcmSprite sp[PCM_NSPR];
@@ -232,7 +198,7 @@ static void pcm_gpu_draw(VkImage tgt, const int r[4]) {
     ic.extent = c.imageExtent;
     image_barrier(g_gpu.canvas, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     if (over) {                                    /* the game's picture under the panel, and the ground as a texture */
-        if (g_gpu.ground_gen != g_pcm.gen) { pcm_tex_upload(&g_gpu.tex[PCM_NART + 2], g_pcm.buf, 0); g_gpu.ground_gen = g_pcm.gen; }
+        if (g_gpu.ground_gen != g_pcm.gen) { pcm_tex_upload(&g_gpu.tex[0], g_pcm.buf, 0); g_gpu.ground_gen = g_pcm.gen; }
         xfer_wait();                               /* after the blit of the game's picture */
         image_barrier(tgt, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         ic.srcOffset.x = r[0]; ic.srcOffset.y = r[1];
@@ -252,13 +218,9 @@ static void pcm_gpu_draw(VkImage tgt, const int r[4]) {
     vkCmdSetViewport(R.cmd, 0, 1, &vp); vkCmdSetScissor(R.cmd, 0, 1, &sc);
     for (int i = 0; i < n; i++) {
         const PcmSprite *s = &sp[i];
-        PcmTex *t = s->art >= 0 && s->art < PCM_NART ? &g_gpu.tex[s->art] : s->art == -1 ? &g_gpu.tex[PCM_NART] : s->art == -2 ? &g_gpu.tex[PCM_NART + 1]
-                  : s->art == -3 ? &g_gpu.tex[PCM_NART + 2] : s->art == -4 ? &g_gpu.tex[PCM_NART - 1] : NULL;
-        if (!t || !t->ready) continue;
-        float a = s->deg * 3.14159265f / 180;
-        PcmPush pc = {{s->x + s->w / 2, s->y + s->h / 2}, {s->w / 2, s->h / 2}, {cosf(a), sinf(a)}, {(float)r[2], (float)r[3]},
-                      {s->ann1 > 0 ? s->ann0 * s->w / 2 : 0, s->ann1 > 0 ? s->ann1 * s->w / 2 : 0}, {s->clip_top, s->clip_top > -1e8f ? (s->clip_right ? -1.0f : 1.0f) : 0},
-                      {s->clip2_top, s->clip2_top > -1e8f ? (s->clip2_right ? -1.0f : 1.0f) : 0}, {s->y0, s->y1}, s->alpha, 0};      /* (NOCLIP: -1e9) */
+        PcmTex *t = &g_gpu.tex[s->layer];
+        if (!t->ready) continue;
+        PcmPush pc = {{(float)r[2], (float)r[3]}, {s->y0, s->y1}, s->x, s->clip, s->alpha, 0};
         vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_gpu.pl, 0, 1, &t->set, 0, NULL);
         vkCmdPushConstants(R.cmd, g_gpu.pl, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, &pc);
         vkCmdDraw(R.cmd, 6, 1, 0, 0);
@@ -313,22 +275,16 @@ static void pcm_upload(int wait) {
         pcmenu_gpu(g_gpu.on);
         printf("pcmenu: the panel is composed on the %s\n", g_gpu.on ? "GPU" : "CPU"); fflush(stdout);
     }
-    if (g_gpu.art_buf && g_gpu.art_uploaded) {     /* the art reached its textures: the staging goes */
-        if (wait) cmd_wait_all();
-        vkDestroyBuffer(V.device, g_gpu.art_buf, NULL); vmem_free(g_gpu.art_mem); g_gpu.art_buf = VK_NULL_HANDLE;
-    }
     if (pcmenu_panel_size((int)V.extent.width, (int)V.extent.height, r, &gen) && (gen != g_pcm.gen || !g_pcm.ready)) {
-        uint64_t one = (uint64_t)r[2] * (uint64_t)r[3] * 4, need = g_gpu.on ? 3 * one : one;
+        uint64_t one = (uint64_t)r[2] * (uint64_t)r[3] * 4, need = g_gpu.on ? 2 * one : one;
         if (wait) cmd_wait_all();                          /* the staging buffer may be read by a present in flight */
         if (need > g_pcm.size) {
             if (g_pcm.buf) { vkDestroyBuffer(V.device, g_pcm.buf, NULL); vmem_free(g_pcm.mem); }
             g_pcm.buf = vbuf_new(need, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, &g_pcm.mem); g_pcm.size = need;
         }
         pcmenu_panel_read(g_pcm.mem.map, r[2], r[3]);
-        if (g_gpu.on) {                            /* the layers after the ground; the canvas and the layer textures at the panel's size */
-            g_gpu.have[0] = pcmenu_layer_read(1, (uint8_t *)g_pcm.mem.map + one, r[2], r[3]);
-            g_gpu.have[1] = pcmenu_layer_read(2, (uint8_t *)g_pcm.mem.map + 2 * one, r[2], r[3]);
-            if (!g_gpu.art_staged) pcm_gpu_art_stage();
+        if (g_gpu.on) {                            /* the words after the ground; the canvas and the textures at the panel's size */
+            g_gpu.have = pcmenu_layer_read((uint8_t *)g_pcm.mem.map + one, r[2], r[3]);
             pcm_gpu_canvas(r[2], r[3]);
         }
         memcpy(g_pcm.r, r, sizeof r); g_pcm.gen = gen; g_pcm.ready = 1; g_pcm.panel = pcmenu_kind();
@@ -366,7 +322,6 @@ static void pcm_vk_draw(VkImage tgt) {
 static void pcm_vk_free(void) {                    /* the shutdown, the device idle */
     if (g_pcm.buf) { vkDestroyBuffer(V.device, g_pcm.buf, NULL); vmem_free(g_pcm.mem); g_pcm.buf = VK_NULL_HANDLE; }
     if (g_pcm_shot.buf) { vkDestroyBuffer(V.device, g_pcm_shot.buf, NULL); vmem_free(g_pcm_shot.mem); g_pcm_shot.buf = VK_NULL_HANDLE; }
-    if (g_gpu.art_buf) { vkDestroyBuffer(V.device, g_gpu.art_buf, NULL); vmem_free(g_gpu.art_mem); g_gpu.art_buf = VK_NULL_HANDLE; }
     for (int i = 0; i < PCM_NTEX; i++) pcm_tex_free(&g_gpu.tex[i]);
     pcm_gpu_canvas(0, 0);
     if (g_gpu.pipe) vkDestroyPipeline(V.device, g_gpu.pipe, NULL);

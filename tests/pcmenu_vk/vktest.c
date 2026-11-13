@@ -4,8 +4,7 @@
  *   RT=../../runtime; FL="-O1 -w -I $RT/posix -I $RT -I $RT/gen -D_GNU_SOURCE -D__declspec(x)= -D__stdcall= -D__cdecl="
  *   clang $FL -c t_pcm.c && clang $FL -I . -c vktest.c && clang $FL -c $RT/plat_posix.c && clang t_pcm.o vktest.o plat_posix.o -lvulkan -lm -lpthread -o vktest
  *   VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation ./vktest 1920 1080 1
- * (the clock is frozen in t_pcm.c; the hands follow the wall clock, so a second's change between the two renders shows as a
- * hand's difference)
+ * (the clock is frozen in t_pcm.c)
  * A fourth argument renders the panel's motion instead: <ms> milliseconds into the opening, or -<ms> into the closing
  * (the CPU path has no motion: no comparison; the picture under the panel is a gradient with a grid, as the game's would be):
  *   ./vktest 1920 1080 1 120 -> gpu1_open120.bmp;  ./vktest 1920 1080 1 -100 -> gpu1_close100.bmp */
@@ -143,7 +142,7 @@ int main(int argc, char **argv) {
     long bad = 0, worst = 0; double sum = 0; uint8_t *diff = calloc((size_t)W * H, 4);
     float sc = (float)W / 1280 < (float)H / 720 ? (float)W / 1280 : (float)H / 720; if (sc < 0.45f) sc = 0.45f;      /* (scale_of) */
     for (long i = 0; i < (long)W * H; i++) {
-        if (which == 1 && (i % W) < 360 * sc + (i / W) * 0.4040f + 1) continue;      /* left of the panel's edge the game shows: the CPU fallback's flat indigo is not compared */
+        if (which == 1 && (i % W) < W - 600 * sc + 1) continue;      /* left of the panel's edge (panel_edge) the game shows: the CPU fallback's flat fill is not compared */
         int d = 0; for (int k = 0; k < 3; k++) { int e = abs(cpu[i * 4 + k] - gpu[i * 4 + k]); if (e > d) d = e; } sum += d; if (d > worst) worst = d; if (d > 16) bad++; diff[i * 4] = diff[i * 4 + 1] = diff[i * 4 + 2] = d > 255 ? 255 : d * 4 > 255 ? 255 : d * 4;
     }
     printf("%dx%d screen %d: %d sprites; worst channel difference %ld, mean %.3f, pixels over 16: %ld of %ld (%.3f%%)\n", W, H, which, nspr, worst, sum / ((double)W * H), bad, (long)W * H, 100.0 * bad / ((double)W * H));
