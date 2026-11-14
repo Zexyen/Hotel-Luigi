@@ -33,6 +33,9 @@ static inline int64_t vsext(uint64_t x, int sz) {
 enum { F_ADD, F_SUB, F_MUL, F_DIV, F_MLA, F_MLS, F_MAX, F_MIN, F_MAXNM, F_MINNM, F_ABD,
        F_CMEQ, F_CMGE, F_CMGT, F_RECPS, F_RSQRTS, F_ADDP, F_MAXP, F_MINP };
 
+/* frecps / frsqrts: infinity x zero is not an invalid operation there, the step is 2.0 / 1.5 (Arm ARM FPRecipStepFused,
+ * FPRSqrtStepFused). Havok's 1 / x of an infinite x (frecpe 0, then the step) is 0 that way, not NaN. */
+#define FP_INF_ZERO(a, b) ((isinf(a) && (b) == 0) || ((a) == 0 && isinf(b)))
 static inline float f3s(int op, float acc, float a, float b, uint32_t *mask, int *is_mask) {
     switch (op) {
     case F_ADD: return a + b;
@@ -46,8 +49,8 @@ static inline float f3s(int op, float acc, float a, float b, uint32_t *mask, int
     case F_MAXNM: return fp_maxmin32(a, b, 0, 1);
     case F_MINNM: return fp_maxmin32(a, b, 1, 1);
     case F_ABD: return fabsf(a - b);
-    case F_RECPS: return fmaf(-a, b, 2.0f);
-    case F_RSQRTS: return fmaf(-a, b, 3.0f) / 2.0f;
+    case F_RECPS: return FP_INF_ZERO(a, b) ? 2.0f : fmaf(-a, b, 2.0f);
+    case F_RSQRTS: return FP_INF_ZERO(a, b) ? 1.5f : fmaf(-a, b, 3.0f) / 2.0f;
     case F_CMEQ: *is_mask = 1; *mask = a == b ? ~0u : 0; return 0;
     case F_CMGE: *is_mask = 1; *mask = a >= b ? ~0u : 0; return 0;
     case F_CMGT: *is_mask = 1; *mask = a > b ? ~0u : 0; return 0;
@@ -67,8 +70,8 @@ static inline double f3d(int op, double acc, double a, double b, uint64_t *mask,
     case F_MAXNM: return fp_maxmin64(a, b, 0, 1);
     case F_MINNM: return fp_maxmin64(a, b, 1, 1);
     case F_ABD: return fabs(a - b);
-    case F_RECPS: return fma(-a, b, 2.0);
-    case F_RSQRTS: return fma(-a, b, 3.0) / 2.0;
+    case F_RECPS: return FP_INF_ZERO(a, b) ? 2.0 : fma(-a, b, 2.0);
+    case F_RSQRTS: return FP_INF_ZERO(a, b) ? 1.5 : fma(-a, b, 3.0) / 2.0;
     case F_CMEQ: *is_mask = 1; *mask = a == b ? ~0ull : 0; return 0;
     case F_CMGE: *is_mask = 1; *mask = a >= b ? ~0ull : 0; return 0;
     case F_CMGT: *is_mask = 1; *mask = a > b ? ~0ull : 0; return 0;

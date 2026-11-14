@@ -567,6 +567,26 @@ static void stack_signal(int sig) {
     }
     b[n++] = '\n';
     if (write(1, b, (size_t)n) < 0) {}
+    /* a thread inside lifted code (a loop that does not end): the registers a callee keeps, and the memory around
+     * the pointers among x19..x22, as 32-bit words (floats show as their bits) */
+    if (c && c->x[29] >= c->x[31] && c->x[29] - c->x[31] < (8u << 20)) {
+        n = snprintf(b, sizeof b, "  x19..x28");
+        for (int i = 19; i <= 28; i++) n += snprintf(b + n, sizeof b - (size_t)n, " %llx", (unsigned long long)c->x[i]);
+        n += snprintf(b + n, sizeof b - (size_t)n, "\n  v8..v21 lanes 0,1 as floats:");
+        for (int i = 8; i <= 21; i++) n += snprintf(b + n, sizeof b - (size_t)n, " %g,%g", (double)c->v[i].f[0], (double)c->v[i].f[1]);
+        b[n++] = '\n';
+        if (write(1, b, (size_t)n) < 0) {}
+        for (int i = 19; i <= 22; i++) {
+            MEMORY_BASIC_INFORMATION mi;
+            uint64_t p = c->x[i] & ~3ULL, lo = p - 0xc0, hi = p + 0xc0;
+            if (p < 0x10000 || !VirtualQuery((void *)(uintptr_t)lo, &mi, sizeof mi) || mi.State != MEM_COMMIT || mi.Protect == PAGE_NOACCESS ||
+                (uint64_t)(uintptr_t)mi.BaseAddress + mi.RegionSize < hi) continue;
+            n = snprintf(b, sizeof b, "  x%d-0xc0:", i);
+            for (uint64_t a = lo; a < hi; a += 4) n += snprintf(b + n, sizeof b - (size_t)n, "%s%08x", a == p ? " | " : " ", *(const uint32_t *)(uintptr_t)a);
+            b[n++] = '\n';
+            if (write(1, b, (size_t)n) < 0) {}
+        }
+    }
     g_stack_done = 1;
 }
 static void stacks_signal(int sig) {

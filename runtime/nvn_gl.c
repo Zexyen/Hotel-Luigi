@@ -4627,6 +4627,22 @@ static void tex_write_texels(Ctx *c) {                 /* (texture, view, region
     gl_run(g_rb->write_texels, &j);
 }
 static void tex_flush_texels(Ctx *c) { Tex *t = hobj(A0, K_TEX); if (t) t->dirty = 1; }
+/* nnmovie_mf.c (the SDK decoder's native-texture mode): the size and byte order of the game's texture, 1 = RGBA,
+ * 2 = BGRA, 0 = not an 8-bit four-channel 2D texture; with px (rows of *w * 4 bytes) the whole picture is written into it */
+int nvn_gl_movie_picture(uint64_t texture, const void *px, int *w, int *h) {
+    Tex *t = hobj(texture, K_TEX);
+    int f = t && !t->dead && t->b.target == 1 ? t->b.format : 0;
+    int order = f == 0x25 || f == 0x37 || f == 0x38 ? 1 : f >= 0x99 && f <= 0x9c ? 2 : 0;
+    if (!order) return 0;
+    *w = t->b.width; *h = t->b.height;
+    if (px) {
+        WriteJob j;
+        memset(&j, 0, sizeof j);
+        j.tex = t; j.data = px; j.region[3] = *w; j.region[4] = *h; j.region[5] = 1;
+        gl_run(g_rb->write_texels, &j);
+    }
+    return order;
+}
 
 #define TV ((View *)P(A0))
 static void view_defaults(Ctx *c) { memset(P(A0), 0, sizeof(View)); TV->set = 0x80; }

@@ -15,6 +15,17 @@ int main(void) {
     v_f3v(&r, &a, &b, F_MINP, 0, 2); assert(r.f[0] == -2 && r.f[1] == 5);                       /* fminp v.2s */
     a.f[0] = NAN; v_f3v(&r, &a, &b, F_MAXP, 0, 2); assert(isnan(r.f[0]));                        /* FPMax propagates NaN */
 
+    a.f[0] = INFINITY; a.f[1] = 0; b.f[0] = 0; b.f[1] = -INFINITY;                               /* frecps / frsqrts: inf x 0 */
+    v_f3v(&r, &a, &b, F_RECPS, 0, 2); assert(r.f[0] == 2.0f && r.f[1] == 2.0f);
+    v_f3v(&r, &a, &b, F_RSQRTS, 0, 2); assert(r.f[0] == 1.5f && r.f[1] == 1.5f);
+    a.f[0] = 3; b.f[0] = 0.25f; v_f3v(&r, &a, &b, F_RECPS, 0, 2); assert(r.f[0] == 1.25f);
+
+    {   /* msr FPCR with FZ: a denormal product is 0, so Havok's length of a tiny vector is 0 and not infinite */
+        volatile float t = 1.98e-20f;
+        guest_set_fpcr(GUEST_FPCR_FZ); assert(guest_fpcr() == GUEST_FPCR_FZ); assert(t * t == 0);
+        guest_set_fpcr(0); assert(guest_fpcr() == 0); assert(t * t != 0);
+    }
+
     a.d[0] = 0x80000000fffffffbull; a.d[1] = 0x0000000700000000ull;                              /* -5, INT_MIN, 0, 7 */
     v_i1v(&r, &a, I1_CMGT0, 2, 4); assert(r.d[0] == 0 && r.d[1] == 0xffffffff00000000ull);
     v_i1v(&r, &a, I1_CMGE0, 2, 4); assert(r.d[0] == 0 && r.d[1] == ~0ull);
