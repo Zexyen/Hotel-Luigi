@@ -64,6 +64,14 @@ static void ret0(Ctx *c) { RET(0); }
 
 static const ImportDef movie_imports[] = {
     {"_ZN5movie9ExtractorC1ENS_13ContainerTypeENS_9CacheSizeE", extractor_ctor},      /* [witchtime] SDK 13's form (x2 = cache size) */
+    /* nnSdk 7.3.2 (Luigi's Mansion 3): the Extractor's functions are imports; they fail like the vtable's entries */
+    {"_ZN5movie9ExtractorC1ENS_13ContainerTypeE", extractor_ctor}, {"_ZN5movie9ExtractorD1Ev", nothing},
+    {"_ZN5movie9Extractor13SetDataSourceEPKvi", virtual_call}, {"_ZN5movie9Extractor13GetTrackCountEPi", virtual_call},
+    {"_ZN5movie9Extractor21GetTrackConfigurationEiPNS_9MediaDataE", virtual_call},
+    {"_ZN5movie9Extractor11SelectTrackEi", virtual_call}, {"_ZN5movie9Extractor6SeekToEl", virtual_call},
+    {"_ZN5movie9Extractor29GetTrackIndexForAvailableDataEPm", virtual_call},
+    {"_ZN5movie9Extractor4ReadEPNS_6BufferE", virtual_call}, {"_ZN5movie9Extractor7AdvanceEv", virtual_call},
+    {"_ZN5movie9Extractor13GetSampleTimeEPl", virtual_call},
     {"_ZN5movie7DecoderC1ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11DecoderModeEi", decoder_ctor},
     {"_ZN5movie12SetAllocatorEPFPvmmS0_EPFvS0_S0_EPFS0_S0_mS0_ES0_", nothing}, {"_ZN5movie11SetCoreMaskEm", nothing},
     {"_ZN5movie17SetThreadPriorityEi", nothing}, {"_ZN5movie17GetThreadPriorityEv", ret0},

@@ -270,6 +270,8 @@ typedef struct {
     int w, h, rate, ch;
     unsigned long long in_count, out_count, copied, dropped, flushes;
     int warned_small, warned_token;
+    struct SwsContext *sws;                           /* mode 2: NV12 to the game's texture */
+    unsigned char *rgba;
     uint32_t last_error;                              /* DecoderImpl +0xd8 [subsdk 0x1fc80] */
 } Dec;
 
@@ -797,6 +799,7 @@ static void dec_dtor_common(Ctx *c, int deleting) {
         printf("movie: Decoder(%s) destroyed: %llu input buffers, %llu output buffers, %llu copied to the game, %llu refused, %llu flushes\n",
                d->is_video ? "video" : "audio", d->in_count, d->out_count, d->copied, d->dropped, d->flushes);
         free(d->mem);
+        sws_freeContext(d->sws); free(d->rgba);
         free(d);
         wr64(A0 + 8, 0);
     }
@@ -1050,6 +1053,33 @@ static size_t copy_sample(Dec *d, OutBuf *s, unsigned char *dst, size_t cap) {  
     return n;
 }
 
+/* Mode 2 (native texture; the only output format it has is 3 [subsdk1 IsOutputFormatSupported 0x1d6d0]): the Buffer's
+ * base is the game's NVNtexture, capacity 8, and the decoder draws the picture into it [LM3 0x7100b76c84: one of a ring
+ * of three textures]. Scaled to the texture's size; BT.709 above SD, limited range.  Returns the bytes written. */
+int nvn_gl_movie_picture(uint64_t texture, const void *px, int *w, int *h);      /* nvn_gl.c */
+static size_t texture_sample(Dec *d, OutBuf *s, uint64_t texture) {
+    int tw = 0, th = 0, order = nvn_gl_movie_picture(texture, NULL, &tw, &th);
+    if (!s->s || !s->s->data || s->s->len < (size_t)d->w * d->h + (size_t)d->w * ((d->h + 1) / 2)) return 0;
+    if (!order) {
+        if (!d->warned_small) { d->warned_small = 1; printf("movie: the game's output texture (%llx) is not an RGBA8 / BGRA8 2D texture: no picture\n", (unsigned long long)texture); }
+        return 0;
+    }
+    struct SwsContext *sws = sws_getCachedContext(d->sws, d->w, d->h, AV_PIX_FMT_NV12, tw, th, order == 2 ? AV_PIX_FMT_BGRA : AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
+    if (!sws) return 0;
+    if (sws != d->sws) {
+        sws_setColorspaceDetails(sws, sws_getCoefficients(d->h > 576 ? SWS_CS_ITU709 : SWS_CS_ITU601), 0, sws_getCoefficients(SWS_CS_DEFAULT), 1, 0, 1 << 16, 1 << 16);
+        d->sws = sws;
+        free(d->rgba); d->rgba = malloc((size_t)tw * th * 4);
+        printf("movie: Decoder(video): pictures of %dx%d go into the game's %dx%d %s texture\n", d->w, d->h, tw, th, order == 2 ? "BGRA8" : "RGBA8");
+    }
+    const uint8_t *src[4] = {s->s->data, s->s->data + (size_t)d->w * d->h, NULL, NULL};
+    int ss[4] = {d->w, d->w, 0, 0}, ds[4] = {tw * 4, 0, 0, 0};
+    uint8_t *dst[4] = {d->rgba, NULL, NULL, NULL};
+    if (!d->rgba || sws_scale(sws, src, ss, 0, d->h, dst, ds) <= 0) return 0;
+    nvn_gl_movie_picture(texture, d->rgba, &tw, &th);
+    return (size_t)tw * th * 4;
+}
+
 static void dec_GetOutputBuffer(Ctx *c) {             /* (int index, Buffer *out[, MediaData *format]) */
     Dec *d = dec_of(A0);
     int i = (int)A1;
@@ -1061,7 +1091,7 @@ static void dec_GetOutputBuffer(Ctx *c) {             /* (int index, Buffer *out
     if (s->state != OUT_CLIENT) r = ST_INVALID;       /* not acquired, or voided by Flush */
     else {
         uint64_t base = rd64(b + B_BASE), cap = rd64(b + B_CAP);
-        size_t n = base ? copy_sample(d, s, (unsigned char *)(uintptr_t)base, (size_t)cap) : 0;
+        size_t n = !base ? 0 : d->mode == 2 ? texture_sample(d, s, base) : copy_sample(d, s, (unsigned char *)(uintptr_t)base, (size_t)cap);
         wr32(b + B_OFFSET, 0);
         wr32(b + B_SIZE, (uint32_t)n);
         wr64(b + B_I64, (uint64_t)s->ts);
@@ -1174,7 +1204,7 @@ static void decoder_ctor(Ctx *c) {                    /* Decoder(DecoderType, De
     printf("movie: Decoder created (type %d = %s, output format %d, mode %d, %d)\n", d->type,
            d->type == 1 ? "H.264" : d->type == 2 ? "VP8" : d->type == 3 ? "VP9" : d->type == 4 ? "AAC" : d->type == 5 ? "Vorbis" : "?",
            d->fmt, d->mode, (int)A4);
-    if (d->is_video && d->fmt != 4) printf("movie: WARNING output format %d requested, only 4 (NV12) is produced\n", d->fmt);
+    if (d->is_video && d->fmt != 4 && d->mode != 2) printf("movie: WARNING output format %d requested, only 4 (NV12) is produced\n", d->fmt);
 }
 
 /* ---------------------------------------------------------------- free functions */
@@ -1192,6 +1222,15 @@ typedef struct { const uint8_t *p; size_t n; size_t bit; } BitReader;
 /* ---------------------------------------------------------------- registration */
 static const ImportDef movie_mf_imports[] = {
     {"_ZN5movie9ExtractorC1ENS_13ContainerTypeENS_9CacheSizeE", extractor_ctor},      /* [witchtime] SDK 13's form (x2 = cache size) */
+    /* nnSdk 7.3.2 (Luigi's Mansion 3): the game calls the Extractor's functions as imports, not through the vtable
+     * (same object and the same vtable order [subsdk1 _ZTVN5movie9ExtractorE]; the Decoder stays virtual) */
+    {"_ZN5movie9ExtractorC1ENS_13ContainerTypeE", extractor_ctor}, {"_ZN5movie9ExtractorD1Ev", ext_dtor},
+    {"_ZN5movie9Extractor13SetDataSourceEPKvi", ext_SetDataSource_mem}, {"_ZN5movie9Extractor13GetTrackCountEPi", ext_GetTrackCount},
+    {"_ZN5movie9Extractor21GetTrackConfigurationEiPNS_9MediaDataE", ext_GetTrackConfiguration},
+    {"_ZN5movie9Extractor11SelectTrackEi", ext_SelectTrack}, {"_ZN5movie9Extractor6SeekToEl", ext_SeekTo},
+    {"_ZN5movie9Extractor29GetTrackIndexForAvailableDataEPm", ext_GetTrackIndexForAvailableData},
+    {"_ZN5movie9Extractor4ReadEPNS_6BufferE", ext_Read}, {"_ZN5movie9Extractor7AdvanceEv", ext_Advance},
+    {"_ZN5movie9Extractor13GetSampleTimeEPl", ext_GetSampleTime},
     {"_ZN5movie7DecoderC1ENS_11DecoderTypeENS_19DecoderOutputFormatENS_11DecoderModeEi", decoder_ctor},
     {"_ZN5movie12SetAllocatorEPFPvmmS0_EPFvS0_S0_EPFS0_S0_mS0_ES0_", movie_SetAllocator},
     {"_ZN5movie11SetCoreMaskEm", movie_SetCoreMask},
