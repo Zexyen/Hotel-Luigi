@@ -109,6 +109,17 @@ static inline void fcmp##S(T *c, double a, double b) { \
 }
 DEF_FLAGS(Ctx, ) DEF_FLAGS(RcFlags, _f)
 
+/* mrs / msr FPCR: FZ (bit 24) is the host's flush-to-zero and denormals-are-zero, per thread as on the console. The
+ * rounding mode and the other bits are not kept (the game only ever sets FZ). The helpers that work on bit patterns
+ * (fpexact.h) do not look at it. */
+#define GUEST_FPCR_FZ 0x1000000u
+#if defined(__x86_64__)
+static inline uint64_t guest_fpcr(void) { unsigned m; __asm__ volatile("stmxcsr %0" : "=m"(m)); return (m & 0x8040u) == 0x8040u ? GUEST_FPCR_FZ : 0; }
+static inline void guest_set_fpcr(uint64_t v) { unsigned m; __asm__ volatile("stmxcsr %0" : "=m"(m)); m = (m & ~0x8040u) | (v & GUEST_FPCR_FZ ? 0x8040u : 0); __asm__ volatile("ldmxcsr %0" : : "m"(m)); }
+#else
+static inline uint64_t guest_fpcr(void) { return 0; }
+static inline void guest_set_fpcr(uint64_t v) { (void)v; }
+#endif
 static inline uint32_t ror32(uint32_t v, unsigned n) { n &= 31; return n ? (v >> n) | (v << (32 - n)) : v; }
 static inline uint64_t ror64(uint64_t v, unsigned n) { n &= 63; return n ? (v >> n) | (v << (64 - n)) : v; }
 static inline uint32_t bswap32(uint32_t v) { return __builtin_bswap32(v); }

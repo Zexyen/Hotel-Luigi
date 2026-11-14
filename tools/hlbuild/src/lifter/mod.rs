@@ -583,10 +583,18 @@ impl Fn {
         if m == 0xd53b00e0 {
             return Ok(set(bits(w, 4, 0), true, "0x10ULL"));
         }
-        if m == 0xd53b4400 || m == 0xd53b4420 {
+        // FPCR: only FZ (bit 24, flush to zero) is kept, on the host's MXCSR (runtime.h). Havok needs it: without it
+        // the length of a denormal vector comes out infinite (frsqrte, then the estimate squared overflows).
+        if m == 0xd53b4400 {
+            return Ok(set(bits(w, 4, 0), true, "guest_fpcr()"));
+        }
+        if m == 0xd53b4420 {
             return Ok(set(bits(w, 4, 0), true, "0ULL"));
         }
-        if m == 0xd51b4400 || m == 0xd51b4420 {
+        if m == 0xd51b4400 {
+            return Ok(format!("guest_set_fpcr({});", x(bits(w, 4, 0))));
+        }
+        if m == 0xd51b4420 {
             return Ok(";".into());
         }
         let m2 = w & 0xfffff0ff;
