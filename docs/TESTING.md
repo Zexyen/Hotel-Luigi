@@ -63,6 +63,29 @@ change that makes the cutscene finish sooner or later has changed the game's clo
 Measured on 2026-11-12 (RX 9070 XT, Linux), lobby, one run at a time: as made 33.40 ms flat; 60 and 60 + scale 2.0 +
 21:9 16.67 ms with a worst second of 16.67; 120: 8.33 ms, worst second 8.34 (120.0 fps, 1 % low 116.7).
 
+## 5. The debug menu (getting to a room, a fight or a spawn without playing there)
+
+`LM3_DEBUG=1` in the environment of the game (or of the launcher that starts it); `games/lm3/runtime/debug_menu.c` has
+the details and the addresses.
+
+- **The game's own level menu** comes up instead of the title: folders (`Case 01: Lobby` ... `Case 15: Seafood`, Boo
+  rooms, the unit-test levels) of the game's 272 levels, most of them story checkpoints (`Case_10.3: Caveman Fight`).
+  D-pad, A opens a folder or starts the level, B goes up. The retail game still draws the menu's boxes but not its
+  names: the runtime draws them in a panel at the top left.
+- **In a level, F2 or Minus + L + R** opens the runtime's own panel: back to the level menu, and the 16 spawners
+  nearest to Luigi that name what they spawn. A makes one spawn where it stands, as the room's script would. The game
+  has no names for what a spawner makes, only hashes; the row says `a ghost`, `a Boo`, `a nest` or `an object` once it
+  has spawned.
+- **Scripted**: `LM3_DEBUG_CMD=<file>` takes commands, one a line (`levels`, `level 36`, `states`,
+  `goto RestartIntoLevelMenuState`, `ents cogSpawner`, `spawn <object>`, `obj <object>`, `peek`, `call`); the answers
+  are the `lm3dbg:` lines of the log. `level <n>` from inside a level goes by way of the level menu: starting a level
+  from a running one is not something the game can do (it crashes).
+
+Checked 2026-11-14 (hidden runs, Vulkan): the menu and its names, `Case_01.01: Lobby` and `Case_02.2: Guest Rooms`
+started from it by pad and by command, back to the menu from a level, spawners spawning in the fifth floor's hall.
+Not there: particle or screen effects on demand (nothing for them was looked for yet), and spawning anything a room
+has no spawner for.
+
 ## Known gaps (2026-11-12)
 
 - **The save thumbnail is dark at 60 and above.** The picture in the file select is the lobby at about a fifth of its

@@ -16,7 +16,7 @@
  *     while it is closed.
  *   - WT_PCMENU_SHOT=<folder> (test aid): every panel change saves the next presented picture, panel included, as
  *     pcmenu_<n>.bmp (needs swapchain images with TRANSFER_SRC; the log says when they have none). */
-int pcmenu_is_open(void), pcmenu_visible(void), pcmenu_kind(void), pcmenu_settled(void);      /* kind: 1 the menu, 2 the hint, 3 the first-start screen */
+int pcmenu_is_open(void), pcmenu_visible(void), pcmenu_kind(void), pcmenu_settled(void);      /* kind: 1 the menu, 2 a debug list over the running game, 3 the first-start screen */
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen);      /* pcmenu.c: 0 = closed; r = x, y, w, h in the window's pixels */
 void pcmenu_panel_read(void *dst, int w, int h);
 int pcmenu_take_work(void);                                         /* 1 flush the samplers, 2 present mode again, 4 resolution scale */
@@ -290,6 +290,11 @@ static void pcm_upload(int wait) {
         memcpy(g_pcm.r, r, sizeof r); g_pcm.gen = gen; g_pcm.ready = 1; g_pcm.panel = pcmenu_kind();
         if (getenv("WT_PCMENU_SHOT")) g_pcm_shot.pending = -1;       /* the next present */
     }
+}
+/* [lm3] a debug list (pcmenu_kind 2) has no job of its own: it rides on the game's presents (vk_present2, before its commands) */
+static void pcm_debug_present(void) {
+    if (g_pcm_shot.pending == 1) { cmd_wait_all(); pcm_shot_write(); }
+    pcm_upload(1);
 }
 static void pcm_vk_draw(VkImage tgt) {
     if (!g_pcm.ready || g_pcm.panel != pcmenu_kind()) return;      /* (not another screen's pixels before the next job) */
