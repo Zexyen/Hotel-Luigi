@@ -2232,6 +2232,8 @@ static uint32_t stage_fnv(Stage *st) {
     return st->code_fnv;
 }
 static int g_filter_draw;
+static int g_hud_mid_draw;
+#define UI_VS_FNV 0x0cb739e1u      /* [lm3] the vertex stage of the game's UI and HUD quads */
 /* [witchtime] The game's dither (objects near the camera fade through a screen-door pattern): the fragment stage samples a
  * small tiled texture at gl_FragCoord / its size and discards against it. On a scaled image gl_FragCoord is given in the
  * game's pixels (mx_fcs), so at a ratio that is not a whole number (21:9: 1600 game pixels over 2100) neighbouring pixels
@@ -2332,6 +2334,7 @@ static void set_dynamic_state(void) {
     if (sw > R.pass_w - sx) sw = R.pass_w - sx; if (sh > R.pass_h - sy) sh = R.pass_h - sy;
     n.sc.offset.x = sx; n.sc.offset.y = sy; n.sc.extent.width = (uint32_t)(sw > 0 ? sw : 0); n.sc.extent.height = (uint32_t)(sh > 0 ? sh : 0);
     if (g_filter_draw) { float k = rs_xstretch(); n.vp.x -= n.vp.width * (k - 1.0f) * 0.5f; n.vp.width *= k; }      /* [witchtime] the screen filter (stage_fnv) */
+    if (g_hud_mid_draw) { float k = 1.0f / rs_xstretch(); n.vp.x -= n.vp.width * (k - 1.0f) * 0.5f; n.vp.width *= k; }      /* [lm3] the Virtual Boo's flat texts */
     if (g_movie_draw && R.pass_w > 0 && R.pass_h > 0) {      /* [witchtime] the movie in a centred 16:9 box (resolve_sampler) */
         int bw = R.pass_w, bh = R.pass_h;
         if ((double)R.pass_w * 9 > (double)R.pass_h * 16) bw = (int)((double)R.pass_h * 16 / 9 + 0.5); else bh = (int)((double)R.pass_w * 9 / 16 + 0.5);
@@ -3797,6 +3800,19 @@ static int draw_prepare(unsigned prim) {
         if (m != g_movie_draw) { g_movie_draw = m; R.dyn_dirty = 1; } }
     {   int m = rs_xstretch() != 1.0f && prim == 5 && R.prog[1] && R.have_viewport && R.viewport[3] <= 460.0f && (stage_fnv(&R.prog[0]->st[0]) == 0xad7d2a1fu || R.prog[0]->st[0].code_fnv == 0x044ea2e3u || (R.prog[0]->st[0].code_fnv == 0x9f4eba97u && cb3_flat()));      /* [witchtime] the screen filters (above): strips into the half-size targets (the game's size: R.pass_h grows with the scale) */
         if (m != g_filter_draw) { g_filter_draw = m; R.dyn_dirty = 1; } }
+    {   /* [lm3] aspect_ratio wider than 16:9: the Virtual Boo's menu is 3D and draws itself in the middle 16:9 (a 3D matrix
+         * of the UI's vertex stage, into its own RGBA16F image), but its red shadow texts are flat HUD draws, which fill the
+         * screen's width: they landed beside their buttons. In a frame with that 3D menu, the flat ones go to the middle too.
+         * shortcut: any 3D UI drawn into an RGBA16F image counts as the Virtual Boo; tell them apart if another screen moves. */
+        static long long vboo_frame = -1;
+        int m = 0;
+        if (rs_xstretch() != 1.0f && R.ncol > 0 && R.col[0].tex && R.ubo[0][0].addr && R.ubo[0][0].size >= 0x40 && stage_fnv(&R.prog[0]->st[0]) == UI_VS_FNV) {
+            const float *c = (const float *)P(R.ubo[0][0].addr);
+            int offscreen = R.col[0].tex->b.format == 0x3f;
+            if (c[11] == -1.0f) { if (offscreen) vboo_frame = nvn_front_frame_next(); }
+            else m = !offscreen && c[3] == 0.0f && c[15] == 1.0f && vboo_frame == nvn_front_frame_next();
+        }
+        if (m != g_hud_mid_draw) { g_hud_mid_draw = m; R.dyn_dirty = 1; } }
     watch_fs(fs);                                  /* [witchtime] TEST ONLY: HL_VK_WATCHFS */
     int stores = 0;                                /* [witchtime] storage images, after the samplers in g_dtex */
     for (int j = 0; j < nsv; j++) { int s = sx[j]; VStage *v = sv[j]; for (int k = 0; k < 8; k++) if (v->images >> k & 1) { if (!resolve_image(s, v, k)) return 0; stores = 1; } }
