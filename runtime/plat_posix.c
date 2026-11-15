@@ -36,7 +36,7 @@ struct pm_scan_arg { __u64 size, flags, start, end, walk_end, vec, vec_len, max_
 #define UFFD_FEATURE_WP_ASYNC (1 << 15)
 #endif
 
-/* [witchtime] the start of this module: the program, or libwitchtime.so when the launcher runs the game in its process */
+/* [witchtime] the start of this module: the program, or libhotelluigi.so when the launcher runs the game in its process */
 extern const char __ehdr_start __attribute__((visibility("hidden")));
 
 static int64_t mono_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec; }
@@ -496,7 +496,7 @@ void GetSystemInfo(SYSTEM_INFO *si) {
 /* ---------------------------------------------------------------- modules and process */
 HMODULE LoadLibraryA(LPCSTR name) {
     static const char *const map[][2] = {      /* the Windows DLLs the runtime opens by name, and their Linux libraries */
-        {"vulkan-1.dll", "libvulkan.so.1"}, {"wt_glslang.dll", "libwt_glslang.so"}, {"SDL3.dll", "libSDL3.so.0"}, {"libopus-0.dll", "libopus.so.0"},
+        {"vulkan-1.dll", "libvulkan.so.1"}, {"hl_glslang.dll", "libhl_glslang.so"}, {"SDL3.dll", "libSDL3.so.0"}, {"libopus-0.dll", "libopus.so.0"},
     };
     for (size_t i = 0; i < sizeof map / sizeof map[0]; i++)
         if (!strcasecmp(name, map[i][0])) {
@@ -522,7 +522,7 @@ DWORD GetModuleFileNameA(HMODULE m, LPSTR out, DWORD n) {
     out[len] = 0;
     return (DWORD)len;
 }
-/* [witchtime] ExitProcess (plat.h). A host that runs the game in its own process (launcher/, through libwitchtime.so) sets
+/* [witchtime] ExitProcess (plat.h). A host that runs the game in its own process (launcher/, through libhotelluigi.so) sets
  * the hook to see the exit first: it goes back to its own screens instead of ending with the game. */
 void (*plat_exit_hook)(int code);
 void plat_exit_process(int code) {

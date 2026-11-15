@@ -2,7 +2,7 @@
 # playtest.sh <name> <seconds> [key=value ...] [VAR=value ...]
 # One hidden, scripted run of the built game from the title into the lobby (docs/TESTING.md), with its own save folder
 # and its own graphics.ini. Lower-case key=value pairs are graphics.ini keys (frame_rate=120 aspect_ratio=21:9
-# resolution_scale=1.5); upper-case ones are environment variables of the run (WT_LPROF=240,15,lprof.txt).
+# resolution_scale=1.5); upper-case ones are environment variables of the run (HL_LPROF=240,15,lprof.txt).
 # Output in build/playtest/<name>/: run.log, shots/frame_<n>.bmp (one every 15 s of game frames, quarter size), sheet.png
 # when ImageMagick is installed. Prints the frame times of the whole run and of the lobby (from second 215).
 # The script reaches the lobby at about second 210 at 30, 60 and 120 fps; run 300 s to measure there.
@@ -37,9 +37,9 @@ if [ -n "$from" ]; then
 fi
 cd "$repo/build/run"
 # shellcheck disable=SC2086
-env WT_SCRIPT="$script" WT_SHOT_EVERY=$((rate * 15)) WT_SHOT_SCALE=4 $envs WT_GRAPHICS_CONFIG="$out/graphics.ini" WT_USERDATA="$out/user" \
-    WT_SHOW=0 WT_SHOT_DIR="$out/shots" WT_ROMFS="$repo/targets/romfs" \
-    timeout -s KILL $((secs + 40)) ../witch-time-game ../../targets/exefs/main.elf "$secs" > "$out/run.log" 2>&1 || true
+env HL_SCRIPT="$script" HL_SHOT_EVERY=$((rate * 15)) HL_SHOT_SCALE=4 $envs HL_GRAPHICS_CONFIG="$out/graphics.ini" HL_USERDATA="$out/user" \
+    HL_SHOW=0 HL_SHOT_DIR="$out/shots" HL_ROMFS="$repo/targets/romfs" \
+    timeout -s KILL $((secs + 40)) ../hotel-luigi-runtime ../../targets/exefs/main.elf "$secs" > "$out/run.log" 2>&1 || true
 stats() { sort -n | awk -v w="$1" '{a[NR]=$1} END{if (NR) printf "%s: median %.2f ms, p90 %.2f, worst %.2f (%d s)\n", w, a[int((NR+1)/2)], a[int(NR*9/10)+(NR<10)], a[NR], NR; else print w ": no frames"}'; }
 grep "frame-time:" "$out/run.log" | awk '{print $2}' | stats "$name whole run"
 grep "frame-time:" "$out/run.log" | awk -v l=$lobby 'NR>=l {print $2}' | stats "$name lobby    "

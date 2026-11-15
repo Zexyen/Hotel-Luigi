@@ -1,10 +1,10 @@
 /* [witchtime] Linux sampling profiler of every thread. TEST ONLY; nothing runs without the variable.
- *   WT_LPROF=<seconds from start>,<seconds sampled>[,<output file>]   (default output: lprof.txt in the working folder)
+ *   HL_LPROF=<seconds from start>,<seconds sampled>[,<output file>]   (default output: lprof.txt in the working folder)
  * A thread of its own sends a real-time signal to each thread of the process in turn (about 4,000 samples a second in all); the
  * handler stores the interrupted PC and a short host call chain (backtrace(); it ends where unwind tables end, e.g. in
  * lifted code). The file lists per sample: thread id, the thread's guest name or "-", the PCs innermost first; then the
  * presented frame ("@<frame>", last), and the mappings (/proc/self/maps), so `hlbuild lprof` (tools/hlbuild/src/lprof.rs) can turn addresses into function names (the symbol tables of
- * witch-time-game and game.so; lifted functions are f_<guest address>). Included by boot.c (Linux only), like prof15.c. */
+ * hotel-luigi-runtime and game.so; lifted functions are f_<guest address>). Included by boot.c (Linux only), like prof15.c. */
 #include <execinfo.h>
 #include <signal.h>
 #include <sys/syscall.h>
@@ -41,7 +41,7 @@ static DWORD WINAPI lp_thread(LPVOID arg) {
     const char *spec = (const char *)arg;
     double start = 0, secs = 0;
     char out[512] = "lprof.txt";
-    if (sscanf(spec, "%lf,%lf", &start, &secs) != 2 || secs <= 0) { printf("lprof: WT_LPROF=<start s>,<seconds>[,<file>]\n"); return 0; }
+    if (sscanf(spec, "%lf,%lf", &start, &secs) != 2 || secs <= 0) { printf("lprof: HL_LPROF=<start s>,<seconds>[,<file>]\n"); return 0; }
     const char *c2 = strchr(strchr(spec, ',') + 1, ',');
     if (c2) snprintf(out, sizeof out, "%s", c2 + 1);
     g_lp = calloc(LP_MAX, sizeof *g_lp);
@@ -98,6 +98,6 @@ static DWORD WINAPI lp_thread(LPVOID arg) {
     return 0;
 }
 void lprof_start(void) {
-    const char *spec = getenv("WT_LPROF");
+    const char *spec = getenv("HL_LPROF");
     if (spec && *spec) CloseHandle(CreateThread(NULL, 0, lp_thread, (LPVOID)spec, 0, NULL));
 }

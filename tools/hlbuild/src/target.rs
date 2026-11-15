@@ -53,8 +53,8 @@ impl Target {
     /// the program that runs the game
     pub fn game_exe(self) -> &'static str {
         match self {
-            Target::Linux => "witch-time-game",
-            Target::Windows => "witch-time-game.exe",
+            Target::Linux => "hotel-luigi-runtime",
+            Target::Windows => "hotel-luigi-runtime.exe",
         }
     }
 

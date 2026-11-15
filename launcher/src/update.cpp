@@ -124,7 +124,7 @@ void run_update(Paths paths, std::string tag, std::string url, std::string sha25
 	if (code)
 		return set(State::failed, "Download failed: " + (out.empty() ? "is curl installed?" : out));
 	set(State::working, "Checking " + tag + "...");
-	std::string got = run_capture({paths.build + "/hlbuild" WT_EXE, "sha256", archive}, paths.build, &code).substr(0, 64);
+	std::string got = run_capture({paths.build + "/hlbuild" HL_EXE, "sha256", archive}, paths.build, &code).substr(0, 64);
 	if (code || got != sha256)
 		return set(State::failed, "The download is damaged (checksum mismatch); try again");
 	set(State::working, "Unpacking " + tag + "...");
@@ -150,7 +150,7 @@ void check(const Paths& paths)
 {
 	std::error_code ec;
 	fs::remove_all(to_path(paths.build + "/update"), ec);    // what the last update replaced (fails harmlessly if busy)
-	const long long mine = version_number(WT_VERSION);
+	const long long mine = version_number(HL_VERSION);
 	if (mine < 0 || !UPDATE_REPO[0])           // a developer's build, or a project that names no repository to update from
 		return;
 	set(State::checking, "");

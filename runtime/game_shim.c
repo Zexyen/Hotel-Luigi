@@ -40,7 +40,7 @@ void sdk_dispatch(Ctx *c, uint64_t addr) { host.sdk_dispatch(c, addr); }
 void sdk_host_call(Ctx *c, int index) { host.sdk_host_call(c, index); }
 void sdk_trap_call(Ctx *c, const char *name) { host.sdk_trap_call(c, name); }
 #endif
-#ifdef WT_GAME_NOSTDLIB
+#ifdef HL_GAME_NOSTDLIB
 /* [witchtime] game.dll as hlbuild links it on the player's PC: without the C runtime's start-up code (-nostdlib), so its
  * entry point is this; nothing in it needs initialising (no constructors, no thread-local data) */
 int __stdcall DllMainCRTStartup(void *module, unsigned long reason, void *reserved) {
@@ -53,11 +53,11 @@ int __stdcall DllMainCRTStartup(void *module, unsigned long reason, void *reserv
 #include "soft_fmaf.h"
 #include <stdlib.h>
 /* [witchtime] every fmaf call of the lifted code (soft_fmaf.h). Hidden: on ELF a call from inside game.so would otherwise go to the C
- * library's. WT_NO_FMA3=1 (test): the path of a CPU without FMA3 on one that has it. */
+ * library's. HL_NO_FMA3=1 (test): the path of a CPU without FMA3 on one that has it. */
 __attribute__((visibility("hidden"))) float fmaf(float x, float y, float z) {
     static int hw = -1;     /* whichever thread comes first sets it, each to the same value */
-    if (hw < 0) hw = wt_has_fma3() && !getenv("WT_NO_FMA3");
-    return hw ? wt_fmaf_hw(x, y, z) : wt_fmaf_soft(x, y, z);
+    if (hw < 0) hw = hl_has_fma3() && !getenv("HL_NO_FMA3");
+    return hw ? hl_fmaf_hw(x, y, z) : hl_fmaf_soft(x, y, z);
 }
 #endif
 

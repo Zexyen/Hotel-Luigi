@@ -87,7 +87,7 @@ bool file_exists(const std::string& path)
 
 std::vector<std::string> build_command(const std::string& repo, const std::string& command)
 {
-	for (const std::string& exe : {repo + "/build/hlbuild" WT_EXE, repo + "/tools/hlbuild/target/release/hlbuild" WT_EXE})
+	for (const std::string& exe : {repo + "/build/hlbuild" HL_EXE, repo + "/tools/hlbuild/target/release/hlbuild" HL_EXE})
 		if (is_program(exe))
 			return {exe, command, "--repo", repo};
 	return {};

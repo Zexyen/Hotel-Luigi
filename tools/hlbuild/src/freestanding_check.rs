@@ -6,7 +6,7 @@
 //!
 //! Without --gen the lifted code is made up: N random instruction words (FP / SIMD and load / store heavy), one function
 //! each, so no game files are needed. --gen compiles your build/gen_eh instead; --tables <runtime/gen> also compiles its
-//! sdkdata.c and sdklift_gen.c and runtime/wt_tables.c. A probe checks jmp_buf's size and alignment. --target windows
+//! sdkdata.c and sdklift_gen.c and runtime/hl_tables.c. A probe checks jmp_buf's size and alignment. --target windows
 //! compares against mingw-w64's headers (the UCRT ones the Windows runtime is built with) instead: --clang names a clang
 //! that has them, such as llvm-mingw's.
 

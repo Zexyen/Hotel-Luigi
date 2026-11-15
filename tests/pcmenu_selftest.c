@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
     mkdir(dir, 0755);
     /* a file of CRLF lines with comments, an unknown key, a key twice, no newline at the end */
     spit(ini, "; comment = not a key\r\nwindow = windowed\r\nvsync   =   auto   \r\nmystery = 7\r\naspect_ratio = 21:9\r\nhud_area = 16:9\r\n[section]\r\nvsync = clock\r\nresolution_scale = 1.0");
-    setenv("WT_GRAPHICS_CONFIG", ini, 1);
+    setenv("HL_GRAPHICS_CONFIG", ini, 1);
     /* a value not in a row's list (v0.5.2's 1.4, a hand-edited 16:10): the nearest one that way; none: left / right stay */
     int rs = row_of("resolution_scale"), ws = row_of("size");
     snprintf(g_raw[rs], sizeof g_raw[rs], "1.4");

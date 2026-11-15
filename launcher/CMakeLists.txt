@@ -1,5 +1,5 @@
 # The launcher. Builds the game from the player's dump (hlbuild setup) and plays it in the same window
-# (build/libwitchtime.so). SDL3 + RmlUi on SDL's GPU API; Linux and Windows (llvm-mingw).
+# (build/libhotelluigi.so). SDL3 + RmlUi on SDL's GPU API; Linux and Windows (llvm-mingw).
 #
 #     cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release
 #     cmake --build build/launcher                      -> build/hotel-luigi-game (Windows: build/hotel-luigi-game.exe, and
@@ -48,11 +48,11 @@ add_executable(hotel-luigi-game
 # src/shim: <SDL3_image/SDL_image.h> for RmlUi's SDL GPU renderer, without the SDL3_image library (ui_render.cpp
 # makes every picture the screens use; files are loaded as BMP)
 target_include_directories(hotel-luigi-game PRIVATE src src/shim "${RMLUI_BACKENDS}")
-set(WT_VERSION "dev build" CACHE STRING "The version shown in the launcher (release builds pass the tag, e.g. v0.1.0)")
-target_compile_definitions(hotel-luigi-game PRIVATE RMLUI_SDL_VERSION_MAJOR=3 WT_VERSION="${WT_VERSION}")
+set(HL_VERSION "dev build" CACHE STRING "The version shown in the launcher (release builds pass the tag, e.g. v0.1.0)")
+target_compile_definitions(hotel-luigi-game PRIVATE RMLUI_SDL_VERSION_MAJOR=3 HL_VERSION="${HL_VERSION}")
 target_link_libraries(hotel-luigi-game PRIVATE RmlUi::Core SDL3::SDL3 ${CMAKE_DL_LIBS})
-# beside witch-time-game, game.so and libwitchtime.so: the launcher finds the repository from its own place (build/..)
-# $ORIGIN: a release ships libSDL3.so.0 beside it, which libwitchtime.so (also $ORIGIN) then shares
+# beside hotel-luigi-runtime, game.so and libhotelluigi.so: the launcher finds the repository from its own place (build/..)
+# $ORIGIN: a release ships libSDL3.so.0 beside it, which libhotelluigi.so (also $ORIGIN) then shares
 set_target_properties(hotel-luigi-game PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../build"
 	BUILD_RPATH "$ORIGIN")
 if(WIN32)

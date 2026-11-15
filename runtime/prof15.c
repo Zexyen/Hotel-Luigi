@@ -1,5 +1,5 @@
 /* Track P round "four players" (2026-10-13): a sampling profiler of EVERY busy thread of the process. TEST ONLY.
- *   WT_PROF15=[w]<seconds from process start>,<seconds sampled>[,<output file>]
+ *   HL_PROF15=[w]<seconds from process start>,<seconds sampled>[,<output file>]
  * Nothing runs without the variable. (Upstream's fight-start trigger read Smash's FighterManager: removed.)
  * One second before the window the CPU time of every thread is read; the 14 busiest are sampled round robin (suspend,
  * context, unwind, resume). Per thread and per FUNCTION (key = the guest address for lifted code, else the start of the
@@ -206,6 +206,6 @@ static DWORD WINAPI p15_thread(LPVOID arg) {
     return 0;
 }
 void prof15_start(void) {
-    const char *spec = getenv("WT_PROF15");
+    const char *spec = getenv("HL_PROF15");
     if (spec && *spec) CloseHandle(CreateThread(NULL, 0, p15_thread, (LPVOID)spec, 0, NULL));
 }

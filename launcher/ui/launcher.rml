@@ -3,7 +3,7 @@
 	<title>Launcher</title>
 	<link type="text/rcss" href="launcher.rcss"/>
 </head>
-<body data-model="wt">
+<body data-model="hl">
 
 <!-- ======================================================================= title menu -->
 <div class="screen title" data-if="screen == 'title'" data-class-leaving="leaving">

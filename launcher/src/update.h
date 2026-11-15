@@ -11,7 +11,7 @@ namespace update {
 
 enum class State { none, checking, available, working, failed, done };   // checking: check() has not heard from GitHub yet
 
-// in the background (State::checking until GitHub answers, at most 20 s); only in a release build (WT_VERSION vX.Y.Z)
+// in the background (State::checking until GitHub answers, at most 20 s); only in a release build (HL_VERSION vX.Y.Z)
 void check(const Paths& paths);
 // downloads and installs the release check() found, in the background
 void start(const Paths& paths);

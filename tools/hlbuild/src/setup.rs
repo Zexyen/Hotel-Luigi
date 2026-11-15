@@ -10,7 +10,7 @@
 //!   lift     main.elf -> build/gen_eh (lifter/)
 //!   compile  build/gen_eh -> build/obj (compile.rs; the longest step)
 //!   link     build/game.so and the runtime (link.rs)
-//!   text     the PC settings rows' texts in the game's own glyphs, mods/witchtime-pc-settings/ (text.rs)
+//!   text     the PC settings rows' texts in the game's own glyphs, mods/hotelluigi-pc-settings/ (text.rs)
 //!   check    skipped: the lifter against Unicorn is a developer's tool (tools/lifter-check)
 
 use crate::compile::{self, which};
@@ -239,7 +239,7 @@ impl Ctx {
 pub fn child_env(c: &mut Command) {
     for (k, _) in std::env::vars_os() {
         let u = k.to_string_lossy().to_uppercase();
-        if u.starts_with("WT_") || u.starts_with("RECOMP_") || u.starts_with("RECOMPS_") {
+        if u.starts_with("HL_") || u.starts_with("RECOMP_") || u.starts_with("RECOMPS_") {
             c.env_remove(&k);
         }
     }
@@ -878,9 +878,9 @@ fn step_compile(cx: &mut Ctx) -> Result<(), Fail> {
 
 fn link_outputs(t: Target) -> &'static [&'static str] {
     if t.windows() {
-        &["game.dll", "witch-time-game.exe"]
+        &["game.dll", "hotel-luigi-runtime.exe"]
     } else {
-        &["game.so", "libwitchtime.so", "witch-time-game"]
+        &["game.so", "libhotelluigi.so", "hotel-luigi-runtime"]
     }
 }
 
@@ -915,7 +915,7 @@ fn step_check(_cx: &mut Ctx) -> Result<(), Fail> {
     Ok(())
 }
 
-/// A newer Witch Time unpacked over a finished build: the files the later steps read have changed, so tables, lift,
+/// A newer Hotel Luigi unpacked over a finished build: the files the later steps read have changed, so tables, lift,
 /// compile, link, text and check run again (compile then compiles only the C files that changed). This program itself
 /// stands for the lifter and the build scripts.
 const SOURCE_GLOBS: [(&str, &[&str]); 8] = [
@@ -1032,7 +1032,7 @@ pub fn main(args: &[String]) -> i32 {
             done.remove(*s);
         }
         say(format!(
-            "Witch Time itself changed since the last build (an update): {} run again; compile redoes only the files that changed",
+            "Hotel Luigi itself changed since the last build (an update): {} run again; compile redoes only the files that changed",
             redo.join(", ")
         ));
     }
@@ -1047,7 +1047,7 @@ pub fn main(args: &[String]) -> i32 {
     if cx.done().contains_key("convert") && convert_lost(&cx.targets) {
         cx.done().remove("convert");
     }
-    // a link marked done whose files are gone (deleted, or made by an older Witch Time under other names) links again
+    // a link marked done whose files are gone (deleted, or made by an older Hotel Luigi under other names) links again
     if cx.done().contains_key("link") && link_outputs(Target::host()).iter().any(|f| !cx.build.join(f).is_file()) {
         let i = STEPS.iter().position(|s| *s == "link").unwrap();
         let done = cx.done();

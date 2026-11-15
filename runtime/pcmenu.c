@@ -22,8 +22,8 @@
  * whole window: the launcher's look (launcher/ui/launcher.rcss). The same drawing makes the first-start screen
  * (draw_prep) for nvn_vk_draw.c.
  * Some rows are not graphics.ini's: button_prompts, swap_confirm and layout, of controllers.ini.
- * Test aids: WT_PCMENU_SHOT=<folder> (nvn_vk_pcmenu.c), WT_PCMENU_OPEN=<seconds> opens it that long after the first pad
- * read (for scripted runs without keys), WT_PCMENU_LOG=1 logs each input step. */
+ * Test aids: HL_PCMENU_SHOT=<folder> (nvn_vk_pcmenu.c), HL_PCMENU_OPEN=<seconds> opens it that long after the first pad
+ * read (for scripted runs without keys), HL_PCMENU_LOG=1 logs each input step. */
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -74,15 +74,15 @@ typedef struct {
 static const Row k_rows[] = {
     {"window", "Display mode", "Windowed: a window of the size below. Borderless and fullscreen cover the monitor the window is on.", NULL, "windowed", A_WINDOW, 0,
      {"windowed", "borderless", "fullscreen"}, {"Windowed", "Borderless", "Fullscreen"}},
-    {"size", "Window size", "The window's size in windowed mode. The game is drawn at the internal resolution and shown at this size.", "WT_WINDOW", NULL, A_SIZE, 0,
+    {"size", "Window size", "The window's size in windowed mode. The game is drawn at the internal resolution and shown at this size.", "HL_WINDOW", NULL, A_SIZE, 0,
      {"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"}, {"1280 \xC3\x97 720", "1600 \xC3\x97 900", "1920 \xC3\x97 1080", "2560 \xC3\x97 1440", "3840 \xC3\x97 2160"}},
-    {"vsync", "Vertical sync", "Auto: locked to a 60 / 120 / 240 Hz display, else the program's own 60 Hz clock. Off: no waiting, tearing allowed. On: the swapchain's FIFO.", "WT_VK_PRESENT", "auto", A_VSYNC, 0,
+    {"vsync", "Vertical sync", "Auto: locked to a 60 / 120 / 240 Hz display, else the program's own 60 Hz clock. Off: no waiting, tearing allowed. On: the swapchain's FIFO.", "HL_VK_PRESENT", "auto", A_VSYNC, 0,
      {"auto", "display", "clock", "off", "on", "mailbox"}, {"Auto", "Display", "Clock", "Off", "On", "Mailbox"}},
     {"frame_rate", "Frame rate", "30: the game as made. Above: a frame for every display refresh at that rate; the game's speed stays the same. Applies at the next start.", NULL, "30", A_RESTART, 0,
      {"30", "60", "90", "120"}, {"30 fps", "60 fps", "90 fps", "120 fps"}},
     {"frame_time_overlay", "Performance overlay", "The frame rate and the frame time of the last second, at the top right of the picture.", NULL, "off", A_LIVE, 0,
      {"off", "on"}, {"Off", "On"}},
-    {"resolution_scale", "Internal resolution", "The size the game renders at, times its own. Applies when this panel closes. The first time away from 1.0 the game may stop for a while as its shaders are prepared.", "WT_VK_SCALE", "1.0", A_SCALE, 0,
+    {"resolution_scale", "Internal resolution", "The size the game renders at, times its own. Applies when this panel closes. The first time away from 1.0 the game may stop for a while as its shaders are prepared.", "HL_VK_SCALE", "1.0", A_SCALE, 0,
      {"0.4", "0.5", "0.6", "0.75", "0.8", "1.0", "1.2", "1.6", "2.0", "2.4", "3.0"},
      {"0.4 \xC3\x97", "0.5 \xC3\x97", "0.6 \xC3\x97", "0.75 \xC3\x97", "0.8 \xC3\x97", "1.0 \xC3\x97", "1.2 \xC3\x97", "1.6 \xC3\x97", "2.0 \xC3\x97", "2.4 \xC3\x97", "3.0 \xC3\x97"}},
     {"hdr", "HDR", "Auto: HDR output while the desktop's HDR is on for this monitor. The scene's lights go above white, up to HDR peak; menus and the HUD stay at white.", NULL, "auto", A_LIVE, 0,
@@ -116,7 +116,7 @@ static unsigned g_ver;
 static int g_env_cut, g_env_set[NROW];
 static int g_swap;                                         /* swap_confirm as this opening of the panel began: a change must not turn the press that made it into "close" */
 static int g_fam, g_letter;                                /* the button names of the hints */
-/* the environment as the program started (gfx_options sets WT_CUTSCENE_FPS itself, later) */
+/* the environment as the program started (gfx_options sets HL_CUTSCENE_FPS itself, later) */
 __attribute__((constructor)) static void pcmenu_env(void) {
     for (int i = 0; i < NROW; i++) g_env_set[i] = k_rows[i].env && getenv(k_rows[i].env) != NULL;
 }
@@ -140,7 +140,7 @@ static void menu_init(void) {                              /* the first opening:
     for (int i = 0; i < NROW; i++) {
         const Row *r = &k_rows[i];
         int have = r->apply == A_SIZE || r->apply == A_PROMPTS || r->apply == A_MENU_SWAP || r->apply == A_LAYOUT || gfx_ini_get(r->key, v, sizeof v);
-        if (r->apply == A_SIZE) snprintf(v, sizeof v, "%dx%d", o->width, o->height);      /* WT_WINDOW included */
+        if (r->apply == A_SIZE) snprintf(v, sizeof v, "%dx%d", o->width, o->height);      /* HL_WINDOW included */
         else if (r->apply == A_PROMPTS) snprintf(v, sizeof v, "%s", nnpad_prompts_setting());
         else if (r->apply == A_MENU_SWAP) snprintf(v, sizeof v, "%s", nnpad_menu_swap_setting());
         else if (r->apply == A_LAYOUT) snprintf(v, sizeof v, "%s", nnpad_layout_setting());
@@ -575,7 +575,7 @@ void pcmenu_prep_hide(void) {
 /* render thread (nvn_vk_pcmenu.c): the panel (or the hint) for this window size, drawn again when something changed */
 int pcmenu_is_open(void) { return g_open != 0; }
 int pcmenu_kind(void) { return g_open ? 1 : g_prep.on ? 3 : g_dbg.on || perf_on() ? 2 : 0; }      /* what is shown: the menu, the first-start screen, a debug list or the performance overlay */
-int pcmenu_settled(void) { return pcmenu_kind() != 1 || (!g_close_at && GetTickCount64() - g_open_at >= 1000); }    /* the menu done opening (its slide, its rows): WT_PCMENU_SHOT waits for it */
+int pcmenu_settled(void) { return pcmenu_kind() != 1 || (!g_close_at && GetTickCount64() - g_open_at >= 1000); }    /* the menu done opening (its slide, its rows): HL_PCMENU_SHOT waits for it */
 int pcmenu_visible(void) { return pcmenu_kind() != 0; }
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen) {
     static int drawn_kind = -1;
@@ -790,7 +790,7 @@ static DWORD WINAPI menu_thread(LPVOID arg) {
 }
 static void menu_open(const char *why) {
     if (InterlockedExchange(&g_open, 1)) return;
-    if (g_log < 0) g_log = getenv("WT_PCMENU_LOG") && atoi(getenv("WT_PCMENU_LOG"));
+    if (g_log < 0) g_log = getenv("HL_PCMENU_LOG") && atoi(getenv("HL_PCMENU_LOG"));
     AcquireSRWLockExclusive(&g_lock);
     if (!g_f_ui.data && !fonts_init()) { ReleaseSRWLockExclusive(&g_lock); InterlockedExchange(&g_open, 0); printf("pcmenu: the font cannot be read\n"); return; }
     if (!g_inited) menu_init();
@@ -815,8 +815,8 @@ int pcmenu_gate(uint32_t id, uint64_t buttons) {
     if (g_open) return 1;
     if (id == 0) {
         int f1 = nnhid_menu_key(VK_F1), combo = (buttons & 0xc00) == 0xc00;      /* Start + Select (the game uses L3 and R3) */
-        if (test < 0) { const char *e = getenv("WT_PCMENU_OPEN"); test = e ? atoi(e) : 0; t0 = GetTickCount64(); }
-        if (test > 0 && GetTickCount64() - t0 >= (ULONGLONG)test * 1000) { test = 0; menu_open("WT_PCMENU_OPEN"); return 1; }
+        if (test < 0) { const char *e = getenv("HL_PCMENU_OPEN"); test = e ? atoi(e) : 0; t0 = GetTickCount64(); }
+        if (test > 0 && GetTickCount64() - t0 >= (ULONGLONG)test * 1000) { test = 0; menu_open("HL_PCMENU_OPEN"); return 1; }
         if ((f1 || combo) && !prev && !(g_release & 1)) { prev = 1; menu_open(f1 ? "F1" : "Start + Select"); return 1; }
         prev = f1 || combo;
         if (prev && (g_release & 1)) return 1;             /* the F1 that closed it is still down */

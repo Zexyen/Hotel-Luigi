@@ -1,10 +1,10 @@
 /* Track O (options), first set (track V session 4): config\graphics.ini.
  *
- * Path: WT_GRAPHICS_CONFIG=<file> when set; else graphics.ini beside the file WT_CONFIG names (WT_CONFIG is the
+ * Path: HL_GRAPHICS_CONFIG=<file> when set; else graphics.ini beside the file HL_CONFIG names (HL_CONFIG is the
  * path of controllers.ini, nnpad_sdl.c); else <exe folder>\..\config\graphics.ini. Written with the defaults and their
  * documentation when it does not exist, brought up to a new version's by gfx_ini_refresh when it does.
  * Read ONCE at start (the window, the device and the swapchain are made from it).
- * Environment switches of the test scripts (WT_RENDERER, WT_VK_DEVICE, WT_VK_PRESENT) win over the file.
+ * Environment switches of the test scripts (HL_RENDERER, HL_VK_DEVICE, HL_VK_PRESENT) win over the file.
  * The controllers.ini reader of nnpad_sdl.c is built around its device sections and is not reusable here: this file has
  * its own 30-line reader (key = value, ';' or '#' comments, section headers ignored). */
 #include <windows.h>
@@ -94,7 +94,7 @@ static const char *const k_default_ini =
 "; shader_prepare = first_run | background | off      (Vulkan)\r\n"
 ";   Every shader of the game (shader.dat and the effect shaders, about 8,000 stages) is compiled ahead into ..\\cache\\vk.\r\n"
 ";   first_run: the first start on a GPU / driver shows PREPARING SHADERS NN % until it is done (once; ~20 s on 16 threads);\r\n"
-";   background or off: no screen, prepared while the game runs at low priority (WT_VK_PREP=0 skips it).\r\n"
+";   background or off: no screen, prepared while the game runs at low priority (HL_VK_PREP=0 skips it).\r\n"
 "shader_prepare = first_run\r\n"
 "\r\n"
 "; profile = custom | low\r\n"
@@ -204,7 +204,7 @@ static void trim(char *s) {
     if (b != s) memmove(s, b, strlen(b) + 1);
 }
 static void opt_path(char *out) {
-    const char *e = getenv("WT_GRAPHICS_CONFIG"), *c = getenv("WT_CONFIG");
+    const char *e = getenv("HL_GRAPHICS_CONFIG"), *c = getenv("HL_CONFIG");
     char tmp[MAX_PATH], exe[MAX_PATH];
     if (e && e[0]) { snprintf(out, MAX_PATH, "%s", e); return; }
     if (c && c[0]) {
@@ -215,7 +215,7 @@ static void opt_path(char *out) {
         return;
     }
     GetModuleFileNameA(NULL, exe, MAX_PATH);
-    char *s = strrchr(exe, '\\'), *s2 = strrchr(exe, '/');      /* [witchtime] '/' on Linux: build/witch-time-game/../config was not a folder, the file was never read */
+    char *s = strrchr(exe, '\\'), *s2 = strrchr(exe, '/');      /* [witchtime] '/' on Linux: build/hotel-luigi-runtime/../config was not a folder, the file was never read */
     if (s2 > s) s = s2;
     if (s) *s = 0;
     snprintf(tmp, sizeof tmp, "%s\\..\\config\\graphics.ini", exe);
@@ -232,10 +232,10 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     int written = 0, unknown = 0;
     memset(o, 0, sizeof *o);
     o->bc7_textures = 1;                       /* #54: a graphics.ini from before the key */
-    o->aniso = 16; o->texture_lod_bias = -1.0f;      /* [witchtime] fixed at the sharpest since 2026-11-10: no keys, no menu rows (profile = low and WT_TEXTURE_LOD_BIAS still change them) */
+    o->aniso = 16; o->texture_lod_bias = -1.0f;      /* [witchtime] fixed at the sharpest since 2026-11-10: no keys, no menu rows (profile = low and HL_TEXTURE_LOD_BIAS still change them) */
     o->width = 1280; o->height = 720; o->scale = 1.0f; o->present = 5;      /* vsync = auto when the key is missing (track V session 14) */
     opt_path(o->path);
-    if (!arg && !getenv("WT_GRAPHICS_CONFIG") && !getenv("WT_CONFIG")) gfx_ini_refresh(o->path);      /* [witchtime] a test's file stays as it is */
+    if (!arg && !getenv("HL_GRAPHICS_CONFIG") && !getenv("HL_CONFIG")) gfx_ini_refresh(o->path);      /* [witchtime] a test's file stays as it is */
     FILE *f = fopen(o->path, "rb");
     if (!f) {
         char b[MAX_PATH];
@@ -283,25 +283,25 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     }
     if (f) fclose(f);
     if (!o->frame_rate) o->frame_rate = 30;
-    if (getenv("WT_UPSCALER")) o->upscaler = upscaler_of(getenv("WT_UPSCALER"));      /* [witchtime] issue 118 */
-    {   /* [witchtime] the mip bias: -1, or WT_TEXTURE_LOD_BIAS (-3 .. 3) */
-        const char *e = getenv("WT_TEXTURE_LOD_BIAS");
+    if (getenv("HL_UPSCALER")) o->upscaler = upscaler_of(getenv("HL_UPSCALER"));      /* [witchtime] issue 118 */
+    {   /* [witchtime] the mip bias: -1, or HL_TEXTURE_LOD_BIAS (-3 .. 3) */
+        const char *e = getenv("HL_TEXTURE_LOD_BIAS");
         if (e) o->texture_lod_bias = (float)atof(e);
         if (o->texture_lod_bias < -3.0f) o->texture_lod_bias = -3.0f;
         if (o->texture_lod_bias > 3.0f) o->texture_lod_bias = 3.0f;
-        if (o->texture_lod_bias != 0.0f) printf("graphics options: texture_lod_bias=%.2f (%s): added to the mip level of every texture sampler that uses mip maps\n", o->texture_lod_bias, e ? "WT_TEXTURE_LOD_BIAS" : "graphics.ini");
+        if (o->texture_lod_bias != 0.0f) printf("graphics options: texture_lod_bias=%.2f (%s): added to the mip level of every texture sampler that uses mip maps\n", o->texture_lod_bias, e ? "HL_TEXTURE_LOD_BIAS" : "graphics.ini");
     }
-    {   /* [witchtime] WT_WINDOW=<w>x<h> wins over width / height (window size in the desktop's units, as the keys) */
-        const char *e = getenv("WT_WINDOW"); int w, h;
+    {   /* [witchtime] HL_WINDOW=<w>x<h> wins over width / height (window size in the desktop's units, as the keys) */
+        const char *e = getenv("HL_WINDOW"); int w, h;
         if (e && sscanf(e, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 180 && w <= 16384 && h <= 16384) { o->width = w; o->height = h; }
     }
-    if (!getenv("WT_MODEL_LOD")) _putenv_s("WT_MODEL_LOD", o->model_lod_high ? "highest" : "game");      /* [witchtime] read by the game library */
-    else o->model_lod_high = !_stricmp(getenv("WT_MODEL_LOD"), "highest");
-    {   /* [witchtime] cutscene_fps: the game library (game_shim_eh.c) reads WT_CUTSCENE_FPS; a set variable (test runs) wins */
-        const char *e = getenv("WT_CUTSCENE_FPS");
+    if (!getenv("HL_MODEL_LOD")) _putenv_s("HL_MODEL_LOD", o->model_lod_high ? "highest" : "game");      /* [witchtime] read by the game library */
+    else o->model_lod_high = !_stricmp(getenv("HL_MODEL_LOD"), "highest");
+    {   /* [witchtime] cutscene_fps: the game library (game_shim_eh.c) reads HL_CUTSCENE_FPS; a set variable (test runs) wins */
+        const char *e = getenv("HL_CUTSCENE_FPS");
         if (e) o->cutscene_fps = atoi(e) == 60 ? 60 : 30;
-        else { if (!o->cutscene_fps) o->cutscene_fps = 30; _putenv_s("WT_CUTSCENE_FPS", o->cutscene_fps == 60 ? "60" : "30"); }
-        printf("graphics options: cutscene_fps=%d (%s)%s\n", o->cutscene_fps, e ? "WT_CUTSCENE_FPS" : "graphics.ini",
+        else { if (!o->cutscene_fps) o->cutscene_fps = 30; _putenv_s("HL_CUTSCENE_FPS", o->cutscene_fps == 60 ? "60" : "30"); }
+        printf("graphics options: cutscene_fps=%d (%s)%s\n", o->cutscene_fps, e ? "HL_CUTSCENE_FPS" : "graphics.ini",
                o->cutscene_fps == 60 ? ": the title, menus and cutscenes run at 60 (the game's 60 fps mode; movies keep their own rate)" : ": the title, menus and cutscenes at 30, as on the console");
     }
     /* [witchtime] aspect_ratio: the game library and the renderer read RECOMPS_ASPECT; a set variable (test runs) wins */
@@ -314,12 +314,12 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
      * The UCRT environment is one per process, so game.dll sees what is set here. Set variables (test runs) win. */
     if (o->frame_rate > 60 && !getenv("RECOMPS_UNCAP")) {
         char n[16]; snprintf(n, sizeof n, "%d", o->frame_rate);
-        const char *pe = getenv("WT_PACE_120");      /* [Recomps#1] long frames at 120: the runtime paces (gfx_pace_rate below), not the lifted limiter */
+        const char *pe = getenv("HL_PACE_120");      /* [Recomps#1] long frames at 120: the runtime paces (gfx_pace_rate below), not the lifted limiter */
         int paced = !(pe && !atoi(pe));
         _putenv_s("RECOMPS_UNCAP", "1");
         if (!getenv("RECOMPS_UNCAP_FPS")) _putenv_s("RECOMPS_UNCAP_FPS", paced ? "0" : n);
         printf("graphics options: frame_rate=%d: the game's clock measures real time, %s %d fps (experimental; Witch Time's docs/STATUS.md, \"Frame rates above 60\")\n", o->frame_rate,
-               paced ? "the game released and its pictures presented on a steady tick of" : "NOT capped (WT_PACE_120=0; B3 has no lifted limiter), not paced at", o->frame_rate);
+               paced ? "the game released and its pictures presented on a steady tick of" : "NOT capped (HL_PACE_120=0; B3 has no lifted limiter), not paced at", o->frame_rate);
     }
     if (o->profile == 1) {       /* the low-end profile wins over the three keys it sets, wherever they stand in the file (values: O1_options.md, session 9) */
         o->scale = GFX_LOW_SCALE; o->aniso = 0; o->texture_lod_bias = 0.0f; o->present = 0;
@@ -347,12 +347,12 @@ const GfxOptions *gfx_options(void) {
  * millisecond of jitter in the game's logic and our replay reached the screen (on a 238 Hz panel 10-20 % of the frames
  * were not shown for two refreshes, against 1 % at 60). Now display.c paces at frame_rate as it does at 60: the game is
  * released on a tick (the display's vblank when the refresh is k x frame_rate, else our own clock) and its picture is
- * held for the next tick. WT_PACE_120=0: the lifted limiter and pictures as soon as ready, as before. */
+ * held for the next tick. HL_PACE_120=0: the lifted limiter and pictures as soon as ready, as before. */
 int gfx_pace_rate(void) {
     static int r = -1;
     if (r < 0) {
         const GfxOptions *o = gfx_options();
-        const char *e = getenv("WT_PACE_120"), *u = getenv("RECOMPS_UNCAP_FPS");
+        const char *e = getenv("HL_PACE_120"), *u = getenv("RECOMPS_UNCAP_FPS");
         r = o->frame_rate > 60 && !(e && !atoi(e)) && u && !atoi(u) ? o->frame_rate : 60;      /* a test's own limiter rate (RECOMPS_UNCAP_FPS) keeps the old way */
     }
     return r;
@@ -502,8 +502,8 @@ int gfx_option_set(const char *key, const char *val) {
     if (!done) fprintf(f, "%s%s = %s%s", len && b[len - 1] != '\n' ? (crlf ? "\r\n" : "\n") : "", key, val, crlf ? "\r\n" : "\n");
     free(b);
     if (fclose(f) || !MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) { DeleteFileA(tmp); printf("graphics options: %s = %s NOT written to %s\n", key, val, path); return 0; }
-    if (!_stricmp(key, "model_lod")) _putenv_s("WT_MODEL_LOD", val);
-    if (!_stricmp(key, "cutscene_fps")) _putenv_s("WT_CUTSCENE_FPS", val);      /* the reader takes the variable it set itself at start */
+    if (!_stricmp(key, "model_lod")) _putenv_s("HL_MODEL_LOD", val);
+    if (!_stricmp(key, "cutscene_fps")) _putenv_s("HL_CUTSCENE_FPS", val);      /* the reader takes the variable it set itself at start */
     GfxOptions t;
     opt_load(NULL, &t, NULL);
     /* the keys that apply while the game runs (each is acted on by pcmenu.c); a key added later that applies live: one line here */

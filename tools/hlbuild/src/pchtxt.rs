@@ -888,7 +888,7 @@ mod tests {
         let keep = std::env::var_os("HLBUILD_CASES").map(|d| PathBuf::from(d).join("pchtxt"));
         let t = keep
             .clone()
-            .unwrap_or_else(|| std::env::temp_dir().join(format!("wt_pchtxt_{}", std::process::id())));
+            .unwrap_or_else(|| std::env::temp_dir().join(format!("hl_pchtxt_{}", std::process::id())));
         let _ = fs::remove_dir_all(&t);
         fs::create_dir_all(&t).unwrap();
         let mut r = Rng(1);
@@ -1000,7 +1000,7 @@ mod tests {
 
     #[test]
     fn settings_keys_and_build_ids() {
-        let ini = std::env::temp_dir().join(format!("wt_pchtxt_ini_{}", std::process::id()));
+        let ini = std::env::temp_dir().join(format!("hl_pchtxt_ini_{}", std::process::id()));
         let text = "\u{feff}[mods]\ncam = off ; why\nb = on;x\nc=off\t#x\nx = maybe\n; y = off\n[other]\nd = off\n[ Mods ]\n\
                     e/f.pchtxt  ::  #2 = Yes\ng = a = on\r\nh = 0\n";
         fs::write(&ini, text).unwrap();

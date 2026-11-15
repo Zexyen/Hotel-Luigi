@@ -17,14 +17,14 @@
  * A buffer is "released" when the device has finished playing its copy, in the order it was appended; the
  * guest's event is signalled then. Without an output device the buffers are released by the clock instead.
  *
- * Environment: WT_WAV=<file>          write the first 30 s of what is played to a WAV file
- *              WT_AUDIO_CHANNELS=6    grant 6 channels when the game asks for them (default: stereo, the game
+ * Environment: HL_WAV=<file>          write the first 30 s of what is played to a WAV file
+ *              HL_AUDIO_CHANNELS=6    grant 6 channels when the game asks for them (default: stereo, the game
  *                                       then does its own mix-down, as on a console set to stereo output)
- *              WT_AUDIO_LOG=1         print the statistics every second instead of every 10 s
- *              WT_AUDIO_MUTE=1        no host device (clock-driven)
- *              WT_AUDIO_LEAD=<n>      the most buffers the host lead may grow to (default 16, 0 = never; see g_lead)
- *              WT_AUDIO_TONE=1        add a quiet 440 Hz test tone to the first second (checks the host path)
- *              WT_OPUS_DLL=<file>     libopus DLL for the Opus decoder (default libopus-0.dll, then MSYS2's)
+ *              HL_AUDIO_LOG=1         print the statistics every second instead of every 10 s
+ *              HL_AUDIO_MUTE=1        no host device (clock-driven)
+ *              HL_AUDIO_LEAD=<n>      the most buffers the host lead may grow to (default 16, 0 = never; see g_lead)
+ *              HL_AUDIO_TONE=1        add a quiet 440 Hz test tone to the first second (checks the host path)
+ *              HL_OPUS_DLL=<file>     libopus DLL for the Opus decoder (default libopus-0.dll, then MSYS2's)
  *
  * HardwareOpusDecoder: the game only imports the constructor; everything else goes through the object's
  * virtual table: +0x00 destructor, +0x10 GetWorkBufferSize(sampleRate, channels),
@@ -163,7 +163,7 @@ static unsigned convert(Slot *s, const int16_t *in, size_t bytes, unsigned *peak
     return frames;
 }
 
-/* WT_AUDIO_TONE: a quiet 440 Hz tone over the first second, to check the host output path by ear. */
+/* HL_AUDIO_TONE: a quiet 440 Hz tone over the first second, to check the host output path by ear. */
 static unsigned add_tone(int16_t *pcm, unsigned frames, unsigned peak) {
     for (unsigned i = 0; i < frames; i++, g_tone_phase++) {
         int v = (int)(3000.0 * sin(6.283185307179586 * 440.0 * (double)g_tone_phase / g_rate));
@@ -215,7 +215,7 @@ static DWORD WINAPI audio_thread(LPVOID arg) {
     (void)arg;
     LONGLONG next_report = now_ticks() + g_freq.QuadPart;
     unsigned seconds = 0;
-    int every_second = getenv("WT_AUDIO_LOG") != NULL;
+    int every_second = getenv("HL_AUDIO_LOG") != NULL;
     unsigned acc_appended = 0, acc_released = 0, acc_peak = 0, acc_polls = 0, acc_empty = 0;
     for (;;) {
         WaitForSingleObject(g_wake, 2);
@@ -258,7 +258,7 @@ static void audio_OpenDefaultAudioOut(Ctx *c) {       /* (AudioOut *, nn::os::Sy
     g_audio_out = A0;
     g_event = A1;
     g_rate = want_rate ? (int)want_rate : 48000;
-    const char *env = getenv("WT_AUDIO_CHANNELS");
+    const char *env = getenv("HL_AUDIO_CHANNELS");
     g_channels = want_channels == 6 && env && atoi(env) == 6 ? 6 : 2;
     g_head = g_tail = g_rel_head = g_rel_tail = g_relc = g_out = 0;
     g_frames_submitted = 0;
@@ -266,7 +266,7 @@ static void audio_OpenDefaultAudioOut(Ctx *c) {       /* (AudioOut *, nn::os::Sy
     g_clock_due = 0;
     os_init_event(g_event, 1);
     g_wave = NULL;
-    if (!getenv("WT_AUDIO_MUTE")) {
+    if (!getenv("HL_AUDIO_MUTE")) {
         WAVEFORMATEX f;
         memset(&f, 0, sizeof f);
         f.wFormatTag = WAVE_FORMAT_PCM;
@@ -279,32 +279,32 @@ static void audio_OpenDefaultAudioOut(Ctx *c) {       /* (AudioOut *, nn::os::Sy
         if (r != MMSYSERR_NOERROR) { g_wave = NULL; printf("nn::audio: waveOutOpen failed (%u): no sound, buffers are released by the clock\n", (unsigned)r); }
         else {
             waveOutPause(g_wave);                     /* nothing plays before StartAudioOut */
-            /* Test copies are silent: only the copy a person plays (witch-time-game) is audible,
+            /* Test copies are silent: only the copy a person plays (hotel-luigi-runtime) is audible,
              * like the window rule in display.c. The device stays open, so timing is the same as with sound.
-             * WT_VOLUME=<0..100> overrides either way. */
+             * HL_VOLUME=<0..100> overrides either way. */
             char exe[MAX_PATH] = "";
             GetModuleFileNameA(NULL, exe, sizeof exe);
-            const char *base = strrchr(exe, '\\') ? strrchr(exe, '\\') + 1 : exe, *vol = getenv("WT_VOLUME");
+            const char *base = strrchr(exe, '\\') ? strrchr(exe, '\\') + 1 : exe, *vol = getenv("HL_VOLUME");
 #ifndef _WIN32
-            base = strrchr(exe, '/') ? strrchr(exe, '/') + 1 : exe;      /* Linux: witch-time-game, a / path */
-            int percent = vol ? atoi(vol) : !strcmp(base, "witch-time-game") ? 100 : 0;
+            base = strrchr(exe, '/') ? strrchr(exe, '/') + 1 : exe;      /* Linux: hotel-luigi-runtime, a / path */
+            int percent = vol ? atoi(vol) : !strcmp(base, "hotel-luigi-runtime") ? 100 : 0;
 #else
-            int percent = vol ? atoi(vol) : !_stricmp(base, "witch-time-game.exe") ? 100 : 0;   /* [Recomps#1] our exe is audible */
+            int percent = vol ? atoi(vol) : !_stricmp(base, "hotel-luigi-runtime.exe") ? 100 : 0;   /* [Recomps#1] our exe is audible */
 #endif
             if (percent < 0) percent = 0;
             if (percent > 100) percent = 100;
             DWORD level = (DWORD)(0xffff * percent / 100);
             waveOutSetVolume(g_wave, level | level << 16);
-            printf("nn::audio: host volume %d%%%s\n", percent, percent ? "" : " (test copy: silent; WT_VOLUME=<0..100> to change)");
+            printf("nn::audio: host volume %d%%%s\n", percent, percent ? "" : " (test copy: silent; HL_VOLUME=<0..100> to change)");
         }
     }
-    const char *wav = getenv("WT_WAV");
+    const char *wav = getenv("HL_WAV");
     if (wav && !g_wav) {
         g_wav = fopen(wav, "wb");
         g_wav_bytes = 0;
         if (g_wav) wav_header();
     }
-    g_tone_left = getenv("WT_AUDIO_TONE") ? g_rate / 512 : 0;
+    g_tone_left = getenv("HL_AUDIO_TONE") ? g_rate / 512 : 0;
     g_open = 1;
     LeaveCriticalSection(&g_lock);
     printf("nn::audio: OpenDefaultAudioOut: game asks %u Hz, %u channels -> %d Hz, %d channels, 16-bit, %s\n",
@@ -342,11 +342,11 @@ static void audio_AppendAudioOutBuffer(Ctx *c) {      /* (AudioOut *, AudioOutBu
         s->prepared = 0;
         if (g_tone_left > 0) { g_tone_left--; peak = add_tone(s->pcm, frames, peak); }
         if (peak && !g_heard) { g_heard = 1; printf("nn::audio: first buffer with sound (buffer %llu, peak %u)\n", g_total_appended, peak); }
-        {   /* TEST ONLY, WT_AUDIO_HASH=<file> (round "four players"): one line per buffer the game hands to the device:
+        {   /* TEST ONLY, HL_AUDIO_HASH=<file> (round "four players"): one line per buffer the game hands to the device:
              * index, frames, peak, FNV-1a 64 of the game's own samples (before our stereo copy). Compares the mixer's output
              * of two builds (tests\p15_pcm_compare.py). One getenv at the first buffer; nothing without the variable. */
             static FILE *hf; static int tried;
-            if (!tried) { const char *hp = getenv("WT_AUDIO_HASH"); tried = 1; if (hp && *hp) hf = fopen(hp, "w"); }
+            if (!tried) { const char *hp = getenv("HL_AUDIO_HASH"); tried = 1; if (hp && *hp) hf = fopen(hp, "w"); }
             if (hf) {
                 uint64_t h = 0xcbf29ce484222325ULL;
                 const uint8_t *pb = (const uint8_t *)(uintptr_t)data;
@@ -388,7 +388,7 @@ static void audio_AppendAudioOutBuffer(Ctx *c) {      /* (AudioOut *, AudioOutBu
             g_underrun_ticks += gap; if (gap > g_underrun_longest) g_underrun_longest = gap;
             g_empty_since = 0;
             static int lead_max = -1;
-            if (lead_max < 0) { const char *e = getenv("WT_AUDIO_LEAD"); lead_max = e ? atoi(e) : 16; }
+            if (lead_max < 0) { const char *e = getenv("HL_AUDIO_LEAD"); lead_max = e ? atoi(e) : 16; }
             if (g_wave && gap * 100 < (unsigned long long)g_freq.QuadPart && (int)g_lead < lead_max) {   /* answered within 10 ms: the game was on time */
                 g_lead = g_lead ? g_lead + 2 : 6;
                 printf("nn::audio: the device played everything it had while the game was on time (underrun %llu): host lead now %u buffers\n", g_underruns, g_lead);
@@ -583,7 +583,7 @@ static volatile LONG64 g_opus_packets, g_opus_errors, g_opus_frames;
 static void opus_load(void) {
     if (g_opus_tried) return;
     g_opus_tried = 1;
-    const char *env = getenv("WT_OPUS_DLL");
+    const char *env = getenv("HL_OPUS_DLL");
     const char *const tries[] = { env, "libopus-0.dll", "opus.dll", "C:\\msys64\\ucrt64\\bin\\libopus-0.dll", "C:\\msys64\\mingw64\\bin\\libopus-0.dll", "C:\\msys64\\clang64\\bin\\libopus-0.dll" };
     const char *used = NULL;
     for (unsigned i = 0; i < sizeof tries / sizeof tries[0] && !g_opus_dll; i++) {
@@ -597,7 +597,7 @@ static void opus_load(void) {
         p_opus_decode = (int (*)(void *, const unsigned char *, int, int16_t *, int, int))GetProcAddress(g_opus_dll, "opus_decode");
         if (!p_opus_decoder_get_size || !p_opus_decoder_init || !p_opus_decode) g_opus_dll = NULL;
     }
-    printf("nn::codec: libopus %s%s\n", g_opus_dll ? "loaded from " : "NOT FOUND: Opus streams will be silent (set WT_OPUS_DLL)", g_opus_dll ? used : "");
+    printf("nn::codec: libopus %s%s\n", g_opus_dll ? "loaded from " : "NOT FOUND: Opus streams will be silent (set HL_OPUS_DLL)", g_opus_dll ? used : "");
 }
 
 static uint32_t be32(uint64_t a) { uint32_t v = rd32(a); return (v >> 24) | ((v >> 8) & 0xff00) | ((v << 8) & 0xff0000) | (v << 24); }

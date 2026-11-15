@@ -1,5 +1,5 @@
 /* Self-test of the C / C++ runtime layer, included at the end of nncxxrt.c.
- *   WT_CXXRT_SELFTEST=1  tests that need no game state (the image is mapped and relocated, nothing has run)
+ *   HL_CXXRT_SELFTEST=1  tests that need no game state (the image is mapped and relocated, nothing has run)
  * Exit code = number of failed checks. */
 uint64_t cxxlib_test_object(int which);
 
@@ -249,7 +249,7 @@ static void st_dyncast(void) {
 
 
 /* cxxrt_readable's record of game-managed memory: which changes of guest memory it survives, and which not. */
-static void st_readable(void) {      // PR #2 (jfb112697): 11 checks of the ranged record (skipped under WT_NO_READABLE_CACHE / WT_READABLE_FORGET_ALL)
+static void st_readable(void) {      // PR #2 (jfb112697): 11 checks of the ranged record (skipped under HL_NO_READABLE_CACHE / HL_READABLE_FORGET_ALL)
     const uint64_t pg = 0x1000;
     uint8_t *mem = VirtualAlloc(NULL, 64 * pg, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE), *other = VirtualAlloc(NULL, 4 * pg, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     uint64_t m = P64(mem), p = m + 16 * pg + 0x80, q = m + 30 * pg + 0x10;
@@ -257,7 +257,7 @@ static void st_readable(void) {      // PR #2 (jfb112697): 11 checks of the rang
     cxxrt_guest_region(m, 64 * pg); cxxrt_guest_region(P64(other), 4 * pg);
     LONG64 asked = g_rd_asked, kept = g_rd_kept;
     CHECK(cxxrt_readable(p, 8) && g_rd_asked == asked + 1, "the first question about a run goes to the OS");
-    if (g_rd_nocache || g_rd_forget_all) { printf("  (WT_NO_READABLE_CACHE / WT_READABLE_FORGET_ALL is set: the record is not tested)\n"); return; }
+    if (g_rd_nocache || g_rd_forget_all) { printf("  (HL_NO_READABLE_CACHE / HL_READABLE_FORGET_ALL is set: the record is not tested)\n"); return; }
     CHECK(cxxrt_readable(p + 0x100, 8) && g_rd_asked == asked + 1, "the next one in the same run is answered from the record");
     cxxrt_mem_changed(P64(other), pg); VirtualFree(other, pg, MEM_DECOMMIT); cxxrt_mem_changed(P64(other), pg);
     CHECK(cxxrt_readable(p, 8) && g_rd_asked == asked + 1 && g_rd_kept == kept + 1, "pages freed in another region: the record stays");

@@ -108,13 +108,13 @@ int guest_thread_count(void);
 extern uint64_t g_main_stack_base, g_main_stack_size;
 
 void dump_guest_threads(FILE *out);      /* os_threads.c */
-void icall_dump(FILE *out, uint64_t main_ctx);   /* hostrt.c, WT_ICALLS */
+void icall_dump(FILE *out, uint64_t main_ctx);   /* hostrt.c, HL_ICALLS */
 uint64_t icall_first_x0(uint64_t target);
 static Ctx *g_main_ctx;
 
 static const char *g_elf;
 
-/* Debug aid: WT_PROF=<start s>,<duration s> samples the main guest thread's host stack every ~2 ms in that
+/* Debug aid: HL_PROF=<start s>,<duration s> samples the main guest thread's host stack every ~2 ms in that
  * window, unwinds it to guest functions and prints every (caller -> callee) pair seen with its sample count. */
 #define PROF_MAX 8192
 static struct { uint64_t callee, caller; unsigned n; } g_prof[PROF_MAX];
@@ -124,11 +124,11 @@ static DWORD WINAPI profiler(LPVOID arg) {
     int start = 0, dur = 0;
     (void)arg;
     char mode = 's';
-    if (sscanf(getenv("WT_PROF"), "%d,%d,%c", &start, &dur, &mode) < 2 || dur <= 0) return 0;
+    if (sscanf(getenv("HL_PROF"), "%d,%d,%c", &start, &dur, &mode) < 2 || dur <= 0) return 0;
     Sleep((DWORD)start * 1000);
     ULONGLONG end = GetTickCount64() + (ULONGLONG)dur * 1000;
     unsigned samples = 0;
-    if (mode == 'f') {        /* WT_PROF=<start>,<dur>,f : spin reading c->fn / x30: every function the main thread enters */
+    if (mode == 'f') {        /* HL_PROF=<start>,<dur>,f : spin reading c->fn / x30: every function the main thread enters */
         while (GetTickCount64() < end) {
             for (int r = 0; r < 4096; r++) {
                 uint64_t callee = g_main_ctx->fn, caller = g_main_ctx->x[30];
@@ -181,13 +181,13 @@ static DWORD WINAPI profiler(LPVOID arg) {
 }
 
 #ifndef _WIN32
-#include "lprof.c"        /* [witchtime] WT_LPROF: Linux sampling profiler of every thread (test only); included like prof15.c */
+#include "lprof.c"        /* [witchtime] HL_LPROF: Linux sampling profiler of every thread (test only); included like prof15.c */
 #endif
-#include "prof15.c"       /* WT_PROF15: sampling profiler of every busy thread (test only). Included here, like nvn_vk.c includes its parts, so that
+#include "prof15.c"       /* HL_PROF15: sampling profiler of every busy thread (test only). Included here, like nvn_vk.c includes its parts, so that
                            * every link that has boot.c has it (build.py's source list is not changed): do NOT name prof15.c as a source of its own. */
 
 static size_t main_stack_size_from_npdm(void) {
-    const char *ov = getenv("WT_MAIN_STACK");
+    const char *ov = getenv("HL_MAIN_STACK");
     if (ov && strtoull(ov, NULL, 0) >= 0x10000) return (size_t)(strtoull(ov, NULL, 0) + 0xfff) & ~(size_t)0xfff;
     char path[1024];
     snprintf(path, sizeof path, "%s", g_elf);
@@ -227,7 +227,7 @@ static DWORD WINAPI guest_main(LPVOID arg) {
      * 0x100000 for this game; read from the file next to the ELF), with no-access pages below and above it, so that an
      * overflow faults as it does on the console instead of running on. Guest frames are the original's (the lifted code
      * moves the guest SP exactly as the ARM code does); the host's own frames live on the host stack and are not
-     * guest-visible. WT_MAIN_STACK=<bytes> overrides (diagnosis only). */
+     * guest-visible. HL_MAIN_STACK=<bytes> overrides (diagnosis only). */
     size_t stack_size = main_stack_size_from_npdm();
     uint8_t *stack_res = plat_reserve(stack_size + 0x20000);
     uint8_t *stack = stack_res && plat_commit(stack_res + 0x10000, stack_size) ? stack_res + 0x10000 : NULL;
@@ -237,8 +237,8 @@ static DWORD WINAPI guest_main(LPVOID arg) {
     c.tpidr = (uint64_t)tls;
     { uint64_t os_main_thread_type(void); memcpy(tls + 0x1f8, &(uint64_t){os_main_thread_type()}, 8); }   /* [sdk 0x3349dc..e0] nn::os::detail::ThreadManager(): the main thread's ThreadType pointer */
     g_main_ctx = &c;
-    { void os_apply_main_sched(void); os_apply_main_sched(); }                  /* os_threads.c: WT_OS_CONSOLE_CORES=1 */
-    { void hitch_set_main(Ctx *c); hitch_set_main(&c); }      /* hitch.c: WT_HITCH */
+    { void os_apply_main_sched(void); os_apply_main_sched(); }                  /* os_threads.c: HL_OS_CONSOLE_CORES=1 */
+    { void hitch_set_main(Ctx *c); hitch_set_main(&c); }      /* hitch.c: HL_HITCH */
     g_main_stack_base = (uint64_t)stack;
     g_main_stack_size = stack_size;
 
@@ -273,34 +273,34 @@ static DWORD WINAPI guest_main(LPVOID arg) {
 static int b3_main(int argc, char **argv) {
     g_elf = argc > 1 ? argv[1] : "main.elf";        /* [Recomps#1] path of our main.elf; sdk.elf must sit beside it */
     setvbuf(stdout, NULL, _IONBF, 0);
-    {   /* [lm3] started by hand without WT_ROMFS and no ../romfs: the romfs folder beside main.elf's (targets/romfs), or a
+    {   /* [lm3] started by hand without HL_ROMFS and no ../romfs: the romfs folder beside main.elf's (targets/romfs), or a
          * message. The game stopped with a segmentation fault in nnMain without its files. */
-        const char *e = getenv("WT_ROMFS"), *sl = strrchr(g_elf, '/');
+        const char *e = getenv("HL_ROMFS"), *sl = strrchr(g_elf, '/');
         char rom[1024];
         snprintf(rom, sizeof rom, "%.*s../romfs", sl ? (int)(sl - g_elf + 1) : 0, g_elf);
         if (!(e && e[0]) && GetFileAttributesA("../romfs") == INVALID_FILE_ATTRIBUTES) {
-            if (GetFileAttributesA(rom) != INVALID_FILE_ATTRIBUTES) { _putenv_s("WT_ROMFS", rom); printf("romfs: %s (beside main.elf's folder; WT_ROMFS not set)\n", rom); }
-            else if (argc > 1) { fprintf(stderr, "witch-time-game: the game's files (romfs) were not found: no WT_ROMFS, no ../romfs, no %s\n", rom); return 1; }
+            if (GetFileAttributesA(rom) != INVALID_FILE_ATTRIBUTES) { _putenv_s("HL_ROMFS", rom); printf("romfs: %s (beside main.elf's folder; HL_ROMFS not set)\n", rom); }
+            else if (argc > 1) { fprintf(stderr, "hotel-luigi-runtime: the game's files (romfs) were not found: no HL_ROMFS, no ../romfs, no %s\n", rom); return 1; }
         }
     }
     if (argc <= 1) {    /* started by hand with no path (issues #17, #20): say how it is started instead of "cannot open main.elf" */
         FILE *f = fopen(g_elf, "rb");
         if (!f) {
-            fprintf(stderr, "witch-time-game: no main.elf given. Start the game with the launcher (hotel-luigi-game, its Play button): it passes\n"
+            fprintf(stderr, "hotel-luigi-runtime: no main.elf given. Start the game with the launcher (hotel-luigi-game, its Play button): it passes\n"
                             "the path of targets/exefs/main.elf and the game's folders and settings. By hand, as the launcher does, from build/run:\n"
-                            "  WT_ROMFS=<Witch Time folder>/targets/romfs ../witch-time-game ../../targets/exefs/main.elf\n");
+                            "  HL_ROMFS=<Hotel Luigi folder>/targets/romfs ../hotel-luigi-runtime ../../targets/exefs/main.elf\n");
             return 1;
         }
         fclose(f);
     }
 #ifdef __linux__
-    prctl(PR_SET_NAME, "Witch Time");          /* [witchtime] process name (B2recomp's is also game_native); threads made later inherit it */
+    prctl(PR_SET_NAME, "Hotel Luigi");          /* [witchtime] process name (B2recomp's is also game_native); threads made later inherit it */
 #endif
-    SDL_SetAppMetadata("Witch Time", NULL, "witchtime");   /* [witchtime] window / audio stream / taskbar name; app id witchtime */
+    SDL_SetAppMetadata("Hotel Luigi", NULL, "hotelluigi");   /* [witchtime] window / audio stream / taskbar name; app id hotelluigi */
     {   /* pad tools and their self-test (nnpad_sdl.c): no game is started */
         int nnhid_pad_selftest(void), nnpad_tool(int, char **);
         int tool;
-        if (getenv("WT_PAD_SELFTEST")) return nnhid_pad_selftest() != 0;
+        if (getenv("HL_PAD_SELFTEST")) return nnhid_pad_selftest() != 0;
         if ((tool = nnpad_tool(argc, argv)) >= 0) return tool;
     }
     /* track V: `--prepare-shaders [folder]` translates every stage of the shader containers in the folder (default
@@ -314,7 +314,7 @@ static int b3_main(int argc, char **argv) {
         import_set_address(sdk_data[i].name, copy);
     }
     cxxrt_install_data();
-    runtime_init(g_elf, getenv("WT_TRACE") ? getenv("WT_TRACE") : "boot_trace.txt");
+    runtime_init(g_elf, getenv("HL_TRACE") ? getenv("HL_TRACE") : "boot_trace.txt");
     register_imports(base_imports, (int)(sizeof base_imports / sizeof base_imports[0]));
     register_sdk_imports();
     register_cxx_imports();
@@ -330,7 +330,7 @@ static int b3_main(int argc, char **argv) {
     register_movie_imports();
     register_misc_imports();                 /* only fills names nobody else implements */
     register_audio_imports();
-    register_movie_mf_imports();             /* replaces nnmovie.c's failing placeholder unless WT_MOVIE=0 */
+    register_movie_mf_imports();             /* replaces nnmovie.c's failing placeholder unless HL_MOVIE=0 */
     register_iostream_imports();             /* libc++ stream base classes */
     register_cxxrt_imports();                /* C / C++ runtime: everything still without a handler (keep last) */
     register_unwind_imports();               /* installs the unwinder the C++ runtime calls on a throw */
@@ -339,17 +339,17 @@ static int b3_main(int argc, char **argv) {
     { void register_lm3_imports(void); register_lm3_imports(); }   /* Luigi's Mansion 3's SDK 7.3.2 imports (games/lm3/runtime/lm3_imports.c) */
     { void program_switch_take(void); program_switch_take(); }   /* [witchtime] a launch parameter left by the other program (issue 115) */
     register_sdk2_imports();                 /* SDK families (lifted sdk.elf code + offline service answers): fills only; after the C runtime because its self-test needs every handler */
-    { void audit_startup(void); audit_startup(); }   /* hostrt.c: fake audit / WT_STRICT (plan\FAKE_AUDIT.md) */
+    { void audit_startup(void); audit_startup(); }   /* hostrt.c: fake audit / HL_STRICT (plan\FAKE_AUDIT.md) */
     display_init();
     { void lm3_image_options(void); lm3_image_options(); }      /* [lm3] frame_rate / aspect_ratio constants of main (games/lm3/runtime/lm3_imports.c); after the window: aspect_ratio = auto */
     int seconds = argc > 2 ? atoi(argv[2]) : 0;      /* no number = no time limit (a player's launch); tests pass theirs */
     /* the lifted code uses the host stack for every guest call: give it plenty */
     HANDLE t = CreateThread(NULL, (SIZE_T)1 << 30, guest_main, NULL, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
-    if (getenv("WT_PROF")) { g_prof_target = t; CloseHandle(CreateThread(NULL, 0, profiler, NULL, 0, NULL)); }
+    if (getenv("HL_PROF")) { g_prof_target = t; CloseHandle(CreateThread(NULL, 0, profiler, NULL, 0, NULL)); }
     { void prof15_start(void); prof15_start(); }
 #ifndef _WIN32
     lprof_start();
-#endif         /* prof15.c: WT_PROF15, every busy thread (test only; nothing without the variable) */
+#endif         /* prof15.c: HL_PROF15, every busy thread (test only; nothing without the variable) */
     DWORD wr = WaitForSingleObject(t, seconds > 0 ? (DWORD)seconds * 1000 : INFINITE);
     {   unsigned nvn_gl_held_ms(void);                   /* nvn_gl.c: time the presents were held for shader preparation is not run time */
         for (unsigned done = 0, h; wr == WAIT_TIMEOUT && (h = nvn_gl_held_ms()) > done + 50; done = h) wr = WaitForSingleObject(t, h - done);
@@ -398,11 +398,11 @@ static int b3_main(int argc, char **argv) {
         }
         dump_guest_threads(stdout);
         icall_dump(stdout, (uint64_t)(uintptr_t)g_main_ctx);
-        if (getenv("WT_CHAIN")) {
-            /* WT_CHAIN=<fn>:<off>,<off>,...[;<fn>:...] (hex): start from x0 of the first recorded indirect call to fn
-             * (needs WT_ICALLS), follow pointers at the given offsets, print 0x40 bytes at every step */
+        if (getenv("HL_CHAIN")) {
+            /* HL_CHAIN=<fn>:<off>,<off>,...[;<fn>:...] (hex): start from x0 of the first recorded indirect call to fn
+             * (needs HL_ICALLS), follow pointers at the given offsets, print 0x40 bytes at every step */
             char buf[1024];
-            snprintf(buf, sizeof buf, "%s", getenv("WT_CHAIN"));
+            snprintf(buf, sizeof buf, "%s", getenv("HL_CHAIN"));
             for (char *spec = strtok(buf, ";"); spec; spec = strtok(NULL, ";")) {
                 char *colon = strchr(spec, ':');
                 uint64_t p = icall_first_x0(strtoull(spec, NULL, 16));
@@ -428,9 +428,9 @@ static int b3_main(int argc, char **argv) {
 
 int main(int argc, char **argv) { return b3_main(argc, argv); }
 
-/* [witchtime] the same entry in libwitchtime.so (tools/hlbuild/src/link.rs, Linux): the Witch Time launcher (launcher/) loads it
+/* [witchtime] the same entry in libhotelluigi.so (tools/hlbuild/src/link.rs, Linux): the Hotel Luigi launcher (launcher/) loads it
  * and calls this to run the game in its own process and window (display.c takes the launcher's window) */
-int wt_host_main(int argc, char **argv) {
+int hl_host_main(int argc, char **argv) {
     __argc = argc; __argv = argv;     /* the process's own are the launcher's: sdk.elf is found next to main.elf (sdklift_rt.c, nvn_vk_store.c) */
     return b3_main(argc, argv);
 }

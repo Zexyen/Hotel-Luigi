@@ -58,7 +58,7 @@ private:
 	void prompts_use(SDL_Gamepad* pad);
 	std::vector<std::vector<Rml::byte>> font_data;
 
-	// what the screens show (the data model "wt")
+	// what the screens show (the data model "hl")
 	Rml::String screen = "title";
 	bool built = false, status_bad = false;
 	Rml::String status_title, status_line, footer_info, version;
