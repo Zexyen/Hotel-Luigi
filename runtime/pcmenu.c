@@ -499,6 +499,41 @@ static void draw_prep(int W, int H) {
     rect(bx, by, bw * (g_prep.pct < 0 ? 0 : g_prep.pct > 100 ? 100 : g_prep.pct) / 100, bh, C_ON0, 1);
     frame(bx, by, bw, bh, bt, C_EDGE_ON);
 }
+/* [lm3] A list shown over the running game (kind 2), for a game's debug menu (games/lm3/runtime/debug_menu.c): a title, the
+ * rows around the chosen one, a hint line. Opaque, at the top left; the game is not held and takes its own input.
+ * n < 0 hides it. Drawn again only when what it shows changed. */
+#define DBG_ROWS 18
+static struct { int on, n, sel; char title[64], foot[128], row[DBG_ROWS][72]; } g_dbg;
+void pcmenu_debug_list(const char *title, const char *const *rows, int n, int sel, const char *foot) {
+    static typeof(g_dbg) d;                                /* static (under the lock): every byte compared */
+    AcquireSRWLockExclusive(&g_lock);
+    memset(&d, 0, sizeof d);
+    if (n >= 0) {
+        int first = sel - DBG_ROWS / 2 < 0 || n <= DBG_ROWS ? 0 : sel - DBG_ROWS / 2 > n - DBG_ROWS ? n - DBG_ROWS : sel - DBG_ROWS / 2;
+        d.on = 1; d.n = n < DBG_ROWS ? n : DBG_ROWS; d.sel = sel - first;
+        snprintf(d.title, sizeof d.title, "%s", title); snprintf(d.foot, sizeof d.foot, "%s", foot ? foot : "");
+        for (int i = 0; i < d.n; i++) snprintf(d.row[i], sizeof d.row[i], "%s", rows[first + i]);
+    }
+    if (d.on && !g_f_ui.data && !fonts_init()) d.on = 0;
+    if (memcmp(&d, &g_dbg, sizeof d)) { g_dbg = d; g_ver++; }
+    ReleaseSRWLockExclusive(&g_lock);
+}
+static void draw_debug(int W, int H) {
+    float s = scale_of(W, H), px = 17 * s;
+    int rh = (int)(26 * s), pad = (int)(12 * s), w = (int)(470 * s), h = rh * (g_dbg.n + 2) + 2 * pad, bt = border_of(s);
+    if (h > H - 2 * pad) h = H - 2 * pad;
+    alloc_panel(w, h);
+    if (!g_px) return;
+    g_rect[0] = pad; g_rect[1] = pad; g_rect[2] = w; g_rect[3] = h;
+    rect(0, 0, w, h, C_DARK, 1); frame(0, 0, w, h, bt, C_EDGE_ON);
+    text(&g_f_head, (float)pad, pad + (int)(rh * 0.72f), g_dbg.title, px, C_YELLOW, 0);
+    for (int i = 0; i < g_dbg.n; i++) {
+        int y = pad + rh * (i + 1);
+        if (i == g_dbg.sel) rect(bt, y, w - 2 * bt, rh, C_ROW, 1);
+        text(&g_f_ui, (float)pad, y + (int)(rh * 0.72f), g_dbg.row[i], px, C_WHITE, 0);
+    }
+    text(&g_f_ui, (float)pad, pad + rh * (g_dbg.n + 1) + (int)(rh * 0.72f), g_dbg.foot, 14 * s, C_PALE, 0);
+}
 /* the render thread (nvn_vk_draw.c): the first-start screen's numbers; reading: the game data is still being read */
 void pcmenu_prep_show(int pct, long long done, long long total, int eta, int reading, const char *info) {
     AcquireSRWLockExclusive(&g_lock);
@@ -517,7 +552,7 @@ void pcmenu_prep_hide(void) {
 
 /* render thread (nvn_vk_pcmenu.c): the panel (or the hint) for this window size, drawn again when something changed */
 int pcmenu_is_open(void) { return g_open != 0; }
-int pcmenu_kind(void) { return g_open ? 1 : g_prep.on ? 3 : 0; }      /* what is shown: the menu, the first-start screen */
+int pcmenu_kind(void) { return g_open ? 1 : g_prep.on ? 3 : g_dbg.on ? 2 : 0; }      /* what is shown: the menu, the first-start screen, a debug list */
 int pcmenu_settled(void) { return pcmenu_kind() != 1 || (!g_close_at && GetTickCount64() - g_open_at >= 1000); }    /* the menu done opening (its slide, its rows): WT_PCMENU_SHOT waits for it */
 int pcmenu_visible(void) { return pcmenu_kind() != 0; }
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen) {
@@ -526,7 +561,7 @@ int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen) {
     if (!kind) return 0;
     AcquireSRWLockExclusive(&g_lock);
     if (g_drawn_ver != g_ver || g_for_w != W || g_for_h != H || drawn_kind != kind) {
-        if (kind == 1) draw_panel(W, H); else draw_prep(W, H);
+        if (kind == 1) draw_panel(W, H); else if (kind == 2) draw_debug(W, H); else draw_prep(W, H);
         g_drawn_ver = g_ver; g_for_w = W; g_for_h = H; drawn_kind = kind; g_gen++;
     }
     memcpy(r, g_rect, sizeof g_rect); *gen = g_gen;

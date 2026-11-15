@@ -5503,6 +5503,7 @@ static void vk_present2(void *arg, int progress);
 static PresentJob g_pcm_last; static void pcm_vk_draw(VkImage tgt); static void pcm_vk_free(void); static void pcm_upload(int wait);      /* [witchtime] the PC menu (nvn_vk_pcmenu.c) */
 void pcmenu_prep_show(int pct, long long done, long long total, int eta, int reading, const char *info);      /* pcmenu.c: the first-start screen */
 void pcmenu_prep_hide(void);
+int pcmenu_kind(void); static void pcm_debug_present(void);
 /* Session 14: THE KEPT PRESENT. vk_present2 has blitted and submitted the frame; when display.c says the frame is to be shown
  * at the next tick, vkQueuePresentKHR is not called there: what it needs is kept here and the vsync thread posts
  * nvn_vk_present_flush_job at the tick (render thread, between two other jobs). An out-of-date swapchain found here is
@@ -5610,6 +5611,7 @@ static void vk_present2(void *arg, int progress) {
     g_wd_where = 1;
     m4_barrier(frame, R.frame_draws);
     prep_first_hold(frame);                        /* session 14: the first-run preparation screen (returns at once on every later present) */
+    if (pcmenu_kind() == 2) pcm_debug_present();   /* [lm3] a debug list (pcmenu.c pcmenu_debug_list): its pixels when they changed */
     g_wd_where = 0;
     g_ovl.bar_arg = NULL;
     tp[0] = tk();

@@ -48,6 +48,16 @@ static void hid_EnqueueVibrationValue(Ctx *c) {
     RET(0);                                                     /* Result: success (the SDK aborts on anything else) */
 }
 
+/* nn::hid::GetNpadState(NpadFullKeyState *, id): the runtime's own, then the debug menu's turn (debug_menu.c) at player 1's */
+int lm3_debug_tick(Ctx *c, uint64_t pad); void lm3_debug_boot(void); int lm3_debug_on(void);
+static ImportFn g_pad_state;
+static void hid_GetNpadState_debug(Ctx *c) {
+    uint64_t out = A0;
+    uint32_t id = *(uint32_t *)(uintptr_t)A1;
+    g_pad_state(c);
+    if (!id && lm3_debug_tick(c, *(uint64_t *)(uintptr_t)(out + 8))) memset((void *)(uintptr_t)(out + 8), 0, 0x18);      /* buttons and sticks, as nnhid.c pad_gate */
+}
+
 static const ImportDef lm3_imports[] = {
     {"_ZN2nn3hid6detail21EnqueueVibrationValueERKNS0_21VibrationDeviceHandleERKNS0_14VibrationValueE", hid_EnqueueVibrationValue},
     {"_ZN2nn3hid6detail28FlushEnqueuedVibrationValuesEv", ret0},      /* Result: success */
@@ -111,6 +121,11 @@ void lm3_image_options(void) {
     if (ft || gfx_options()->frame_rate >= 60) set_const(0x13c94dc, 100.0f / 3.0f, ft ? (float)atof(ft) : 1000.0f / (float)gfx_options()->frame_rate, "frame_rate, the frame time in ms");
     if (gfx_options()->frame_rate >= 60 && !getenv("LM3_KEEP_LIMITER")) set_const(0x13c8e64, 350.0f, 0.0f, "frame_rate, the longest wait of the game's own limiter in ms");
     if (a > 0.0f) set_const(0x13c96fc, 16.0f / 9.0f, a, "aspect_ratio, the screen's width / height");
+    lm3_debug_boot();
 }
 
-void register_lm3_imports(void) { register_imports(lm3_imports, (int)(sizeof lm3_imports / sizeof lm3_imports[0])); }
+void register_lm3_imports(void) {
+    register_imports(lm3_imports, (int)(sizeof lm3_imports / sizeof lm3_imports[0]));
+    static const ImportDef pad = {"_ZN2nn3hid12GetNpadStateEPNS0_16NpadFullKeyStateERKj", hid_GetNpadState_debug};
+    if (lm3_debug_on() && (g_pad_state = import_lookup(pad.name))) register_imports(&pad, 1);
+}
