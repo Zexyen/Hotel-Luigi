@@ -11,7 +11,7 @@ typedef struct {
     float scale;             /* internal resolution scale asked for (Vulkan: nvn_vk_draw.c rs_scale, 0.25 .. 2.0 since PR #8 (stephenjayakar); env WT_VK_SCALE wins) */
     int handheld;            /* 1: the game is told it runs handheld = it makes its own 1280x720 render targets instead of 1920x1080 */
     int aniso;               /* 0 = the game's own value; 2, 4, 8, 16 = at least that on samplers that filter between mip levels */
-    int overlay;             /* 1: frame time in the title bar and a "frame-time:" log line every second */
+    int overlay;             /* 1: frame rate and frame time on the picture (pcmenu.c pcmenu_perf), in the title bar and a "frame-time:" log line every second */
     int shader_skip;         /* shader_wait: 0 hold (a draw waits for its shader or pipeline: the frame is late), 1 skip (near a fight the draw is left out until they are ready; nvn_vk_m4.c skip_on; env WT_VK_NOHOLD wins) */
     int bc7_textures;       /* #54: 1 (default) = textures from `hlbuild textures`' pack where it has them (nvn_gl.c pack_on); env WT_BC7_TEXTURES wins */
     int profile;            /* 0 custom (the keys as written), 1 low: scale, aniso and present are set by the profile (gfx_options.c) */

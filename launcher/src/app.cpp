@@ -76,6 +76,7 @@ const std::vector<SettingDef>& setting_defs()
 			{{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}, {"on", "On"}, {"mailbox", "Mailbox"}}, 0},
 		{"frame_rate", "Frame rate", "30 is the game as made; its speed stays the same",
 			{{"30", "30 fps"}, {"60", "60 fps"}, {"90", "90 fps"}, {"120", "120 fps"}}, 0},
+		{"frame_time_overlay", "Performance overlay", "Frame rate and frame time at the top right of the picture", {{"off", "Off"}, {"on", "On"}}, 0},
 		// the launcher's own (config/launcher.ini; the game never reads it): App::sound
 		{"sounds", "Launcher sounds", "Soft ticks as you move through these screens", {{"on", "On"}, {"off", "Off"}}, 0, nullptr, "/launcher.ini"},
 		{"resolution_scale", "Internal resolution", "What the game renders at, times its own size",

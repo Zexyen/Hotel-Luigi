@@ -151,6 +151,20 @@ int main(int argc, char **argv) {
     { char *d = strstr(s, "\nvsync = auto\n") + 1; memmove(d, d + 13, strlen(d + 13) + 1); }      /* a key gone: LF stays */
     spit(old, s);
     assert(gfx_ini_refresh(old) == 1 && !strstr(slurp(old), "\r\n") && strstr(slurp(old), "\nvsync = auto\n"));
+    {   /* the performance overlay: shown while frame_time_overlay is on and the menu is closed, at the top right, its words in the font's subset */
+        int r[4], W = 1280, H = 720, ov = row_of("frame_time_overlay");
+        unsigned gen;
+        assert(ov >= 0 && !g_open && !pcmenu_kind());
+        pcmenu_perf(60, 16.67);
+        assert(!pcmenu_kind());                            /* off: nothing */
+        assert(gfx_option_set("frame_time_overlay", "on") && gfx_options()->overlay && pcmenu_kind() == 2);
+        assert(pcmenu_panel_size(W, H, r, &gen) && r[0] > W / 2 && r[0] + r[2] <= W && r[1] >= 0 && r[3] < 60);
+        for (const char *c = g_perf; *c; c++) assert(*c == ' ' || stbtt_FindGlyphIndex(&g_f_head, *c));
+        int lit = 0;
+        for (int i = 0; i < g_pw * g_ph; i++) lit += g_px[i * 4 + 2] > 200;      /* yellow letters on the dark box */
+        assert(lit > 50 && !strcmp(g_perf, "60 fps  16.7 ms"));
+        assert(gfx_option_set("frame_time_overlay", "off") && !pcmenu_kind());
+    }
     printf("pcmenu self-test: all checks passed\n");
     return 0;
 }
