@@ -18,7 +18,8 @@
  * buttons each, a dark letter on a shaded cap (ICONS: their hashes and where the letter is). The cap stays; the letter is
  * painted over with the cap's shade and the family's symbol or name is drawn there, every level, as luminance + alpha
  * ASTC blocks (astc_la), or RGBA ones where the cap is coloured (astc_rgba). The level archives bring their own copies
- * (the prompts over what Luigi can use), in ICONS too. Not replaced: SL / SR, sticks, HOME, the four-dot pictures. */
+ * (the prompts over what Luigi can use), in ICONS too. The round button floating in a room is a model: its texture has
+ * 8x5 blocks and is painted the same way. Not replaced: SL / SR, sticks, HOME, the four-dot pictures. */
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -239,6 +240,7 @@ static void paint(int family, int by_letter, int ab) {
 
 /* ---------------------------------------------------------------- the buttons that are pictures */
 #define FMT_ASTC4 0x87
+#define FMT_ASTC85 0x8c                               /* 8x5 texels a block: what the button models wear */
 typedef struct { uint64_t hash; uint8_t g; uint16_t x, y, w, h; uint8_t cut; } Icon;      /* the letter's box; cut: the symbol is a hole in a white disc */
 static const Icon ICONS[] = {                               /* the entries of one picture follow each other */
     {0x06ffb48253c64b6eull, G_Y, 21, 19, 20, 28, 0},
@@ -289,6 +291,7 @@ static const Icon ICONS[] = {                               /* the entries of on
     {0x8c2b150b9859cab6ull, G_ZL, 19, 26, 32, 18, 0},
     {0xb9c258a73d15e624ull, G_X, 19, 19, 27, 28, 0},
     {0xd4d32f36697b95ebull, G_A, 19, 12, 25, 27, 0},
+    {0xf4e2f4a62bfac064ull, G_A, 173, 154, 171, 183, 0},      /* the round button model over what Luigi can use, and while he pulls (8x5 blocks) */
     {0xf54b1bbe63dcdf85ull, G_A, 38, 34, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 166, 34, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 294, 34, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 422, 34, 50, 54, 0},      /* 512 x 512, coloured: A filling up with green while it is held, 16 steps */
     {0xf54b1bbe63dcdf85ull, G_A, 38, 162, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 166, 162, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 294, 162, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 422, 162, 50, 54, 0},
     {0xf54b1bbe63dcdf85ull, G_A, 38, 290, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 166, 290, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 294, 290, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 422, 290, 50, 54, 0},
@@ -411,8 +414,9 @@ static void stamp(uint8_t *rgba, const uint8_t *was, int w, int h, const Icon *i
             for (int j = j0; j < j1; j++) for (int i = i0; i < i1; i++) n += i >= 0 && i < S && j >= 0 && j < S && !s[j * S + i];
             int c = n * 255 / ((i1 - i0) * (j1 - j0));
             uint8_t *px = rgba + ((size_t)y * w + x) * 4;
+            const uint8_t *o = was + ((size_t)y * w + x) * 4, *bp = abs(LUM(o) - face) * 20 < face ? o : fp;      /* a texel nearly of that shade stays: the face may be shaded */
             if (ic->cut) { px[0] = px[1] = px[2] = 255; px[3] = (uint8_t)(255 - c); }
-            else for (int ch = 0; ch < 3; ch++) px[ch] = (uint8_t)(fp[ch] + ((face ? inkv * fp[ch] / face : inkv) - fp[ch]) * c / 255);
+            else for (int ch = 0; ch < 3; ch++) px[ch] = (uint8_t)(bp[ch] + ((face ? inkv * fp[ch] / face : inkv) - bp[ch]) * c / 255);
         }
     }
     #undef LUM
@@ -430,11 +434,11 @@ static void paint_icons(int family, int by_letter, int ab) {
         if (rgba) {
             uint8_t *was = rgba + n, *lin = was + n;
             tex_deswizzle_level(L, 0, l->orig, lin);
-            tex_decode_rgba8(FMT_ASTC4, lin, w, h, was);
+            tex_decode_rgba8(L->format, lin, w, h, was);
             memcpy(rgba, was, n);
             for (const Icon *ic = l->first; ic < ICONS + ICON_N && ic->hash == l->first->hash; ic++) if (symbol(s, ic->g, family, by_letter, ab))
                 stamp(rgba, was, w, h, ic, s, box);
-            int x0 = box[0], y0 = box[1], x1 = box[2], y1 = box[3];
+            int x0 = box[0], y0 = box[1], x1 = box[2], y1 = box[3], bw = tex_format(L->format)->bw, bh = tex_format(L->format)->bh;
             for (int lv = 0; x1 > x0 && lv < L->levels; lv++) {      /* the blocks under the letters, at every level; rgba halves in place */
                 int lw = L->lvl_w[lv], lh = L->lvl_h[lv], wb = L->lvl_wb[lv], hb = L->lvl_hb[lv];
                 if (lv) for (int y = 0; y < lh; y++) for (int x = 0; x < lw; x++) for (int c = 0; c < 4; c++) {
@@ -442,11 +446,14 @@ static void paint_icons(int family, int by_letter, int ab) {
                     rgba[((size_t)y * lw + x) * 4 + c] = (uint8_t)((rgba[((size_t)ya * pw + xa) * 4 + c] + rgba[((size_t)ya * pw + xb) * 4 + c] + rgba[((size_t)yb * pw + xa) * 4 + c] + rgba[((size_t)yb * pw + xb) * 4 + c] + 2) / 4);
                 }
                 tex_deswizzle_level(L, lv, l->orig + L->lvl_offset[lv], lin);
-                int bx0 = x0 >> lv >> 2, by0 = y0 >> lv >> 2, bx1 = ((x1 - 1) >> lv >> 2) + 1, by1 = ((y1 - 1) >> lv >> 2) + 1;
+                int bx0 = (x0 >> lv) / bw, by0 = (y0 >> lv) / bh, bx1 = ((x1 - 1) >> lv) / bw + 1, by1 = ((y1 - 1) >> lv) / bh + 1;
                 for (int by = by0; by < by1 && by < hb; by++) for (int bx = bx0; bx < bx1 && bx < wb; bx++) {
                     uint8_t px[64];
+                    /* shortcut: a 4x4 grid of weights whatever the block, so an 8x5 block keeps half its detail across; a 6x5 grid when a letter looks soft */
                     for (int y = 0; y < 4; y++) for (int x = 0; x < 4; x++) {
-                        int tx = bx * 4 + x < lw ? bx * 4 + x : lw - 1, ty = by * 4 + y < lh ? by * 4 + y : lh - 1;
+                        int tx = bx * bw + (x * (bw - 1) + 1) / 3, ty = by * bh + (y * (bh - 1) + 1) / 3;
+                        if (tx >= lw) tx = lw - 1;
+                        if (ty >= lh) ty = lh - 1;
                         memcpy(px + (y * 4 + x) * 4, rgba + ((size_t)ty * lw + tx) * 4, 4);
                     }
                     int grey = 1;
@@ -511,7 +518,7 @@ static void icon_texture(uint8_t *mem, const uint8_t *limit, const TexLayout *L)
 /* nvn_gl.c tex_initialize: is this a font page with prompts, or a picture of a button? */
 void prompts_texture(uint8_t *mem, const uint8_t *limit, const TexLayout *L) {
     int format = L->format, width = L->width, height = L->height;
-    if (format == FMT_ASTC4 && mem) { icon_texture(mem, limit, L); return; }
+    if ((format == FMT_ASTC4 || format == FMT_ASTC85) && mem) { icon_texture(mem, limit, L); return; }
     if (format != FMT_BC3 || width != height || (width != 512 && width != 1024) || !mem) return;
     size_t n = (size_t)width * width;
     if (limit && mem + n > limit) return;
