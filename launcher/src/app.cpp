@@ -92,7 +92,7 @@ const std::vector<SettingDef>& setting_defs()
 		{"aspect", "Picture fit", "Keep the picture's shape, or fill the window", {{"keep", "Keep shape"}, {"stretch", "Stretch"}}, 1},
 		{"button_prompts", "Button prompts", "Auto follows what you use",
 			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, 2, nullptr, "/controllers.ini", "general"},
-		{"swap_confirm", "Swap Confirm", "Menus only: B confirms, A goes back", {{"off", "Off"}, {"on", "On"}}, 2, nullptr, "/controllers.ini", "general"},
+		{"swap_confirm", "Swap Confirm", "The bottom button confirms, the right one goes back", {{"off", "Off"}, {"on", "On"}}, 2, nullptr, "/controllers.ini", "general"},
 	};
 	return d;
 }

@@ -559,6 +559,8 @@ static void fight_shot_poll(int ticks) {
  * proportional to the mouse's speed: full deflection at 1200 counts per second x mouse_sensitivity (controllers.ini
  * [keyboard]). Polls closer together than 4 ms (the game reads the pads more than once a frame) get the same value. */
 int nnpad_mouse_cfg(float *sens, int *invert);          /* nnpad_sdl.c */
+const char *nnpad_menu_swap_setting(void);
+#define AB_SWAPPED(b) (((b) & ~3ull) | ((b) & 1) << 1 | ((b) >> 1 & 1))      /* swap_confirm: the pad's A and B change places, for the game and for the panel */
 void display_mouse_want(int on); void display_mouse_take(int *dx, int *dy);      /* display.c */
 static int mouse_stick(int *ox, int *oy) {
     static LARGE_INTEGER fq, last;
@@ -624,7 +626,7 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
             wired = ps.wired;
             if (devices_live()) {
                 if (ps.buttons || abs(ps.lx) > STICK_MAX / 2 || abs(ps.ly) > STICK_MAX / 2 || abs(ps.rx) > STICK_MAX / 2 || abs(ps.ry) > STICK_MAX / 2) prompts_used = 0;   /* a drifting stick is not use */
-                buttons |= ps.buttons;
+                buttons |= !strcmp(nnpad_menu_swap_setting(), "on") ? AB_SWAPPED(ps.buttons) : ps.buttons;      /* the setting itself, not nnpad_menu_swapped: that one follows the device last used, a poll late */
                 if (ps.lx || ps.ly) { lx = ps.lx; ly = ps.ly; }
                 if (ps.rx || ps.ry || (!rx && !ry)) { rx = ps.rx; ry = ps.ry; }      /* [witchtime] was !rx: a vertical-only mouse move was lost */
             }
@@ -714,7 +716,7 @@ void nnhid_menu_read(uint64_t *buttons, int *lx, int *ly, int swap_ab) {      /*
     int x = (key_for(0, VK_RIGHT, 18) - key_for(0, VK_LEFT, 16)) * STICK_MAX, y = (key_for(0, VK_UP, 17) - key_for(0, VK_DOWN, 19)) * STICK_MAX;
     NnPadState ps;
     for (size_t i = 0; i < sizeof map / sizeof map[0]; i++) if (key_for(0, map[i].vk, map[i].bit)) b |= 1ull << map[i].bit;
-    if (sdl_on() && devices_live() && nnpad_get(0, &ps)) { b |= swap_ab ? (ps.buttons & ~3ull) | (ps.buttons & 1) << 1 | (ps.buttons >> 1 & 1) : ps.buttons; if (ps.lx || ps.ly) { x = ps.lx; y = ps.ly; } }
+    if (sdl_on() && devices_live() && nnpad_get(0, &ps)) { b |= swap_ab ? AB_SWAPPED(ps.buttons) : ps.buttons; if (ps.lx || ps.ly) { x = ps.lx; y = ps.ly; } }
     *buttons = b; *lx = x; *ly = y;
 }
 int nnhid_menu_key(int vk) { return key(vk); }

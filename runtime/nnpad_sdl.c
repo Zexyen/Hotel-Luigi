@@ -164,8 +164,9 @@ static const char *const g_default_ini =
 ";   other pads -> switch, keyboard or mouse -> keyboard, and no pad -> keyboard), switch, playstation, xbox, keyboard (the keys\r\n"
 ";   bound in [keyboard] below). All built in, no mod needed.\r\n"
 "button_prompts = auto\r\n"
-"; Menus confirm with B and go back with A, and their button prompts show it: on / off. Gameplay keeps its buttons, and the\r\n"
-";   keyboard its keys. Which button is B depends on layout above: with positional, the bottom one (A on an Xbox pad).\r\n"
+"; The pad's A and B change places, so the bottom button confirms and the right one goes back: on / off. In play as well\r\n"
+";   as in menus, and the button prompts show it; the keyboard keeps its keys. (Bottom and right with layout = positional\r\n"
+";   above; with labels A is already the bottom button of an Xbox or PlayStation pad, and on moves it to the right.)\r\n"
 "swap_confirm = off\r\n"
 "; Which input the game takes: both (pads and the keyboard + mouse, merged), keyboard (pads are ignored), controller (the\r\n"
 ";   keyboard and mouse are ignored). The keyboard part takes effect when the game starts, the pads part at once.\r\n"
@@ -823,7 +824,7 @@ int nnpad_layout_set(const char *val) {
 }
 static volatile int g_prompts_kb;                    /* the last device player 1 used was the keyboard */
 void nnpad_prompts_used(int keyboard) { g_prompts_kb = keyboard; }
-/* swap_confirm in force: only for a pad, or Enter would go back and the keyboard's prompts (its keys, on the A and B pictures) would lie */
+/* swap_confirm as the prompts and the panel take it: off while the keyboard is in use (its keys stay, and so do their pictures) */
 int nnpad_menu_swapped(void) {
     lock(); if (!g_cfg.path[0]) cfg_load(1); int on = g_cfg.menu_swap; unlock();
     return on && nnpad_button_prompts() != 4;
@@ -1299,6 +1300,10 @@ int nnpad_selftest(const NnHidHooks *h) {
         write_text(path, text);
         Sleep(1100); nnpad_poll(1);
         h->state(0, &btn, st, &attr);
+        int ok = btn == 1ull << 1 && !strcmp(nnpad_menu_swap_setting(), "on") && nnpad_menu_swap_set("off") && !strcmp(nnpad_menu_swap_setting(), "off");
+        { size_t n = 0; char *t = read_file(g_cfg.path, &n); ok = ok && t && strstr(t, "swap_confirm = off\r\n[keyboard]") && strstr(t, "deadzone = 0.10\r\n"); free(t); }
+        check(ok, "swap_confirm read from the ini: the game gets B for the pad's A; set keeps the file's other lines");
+        h->state(0, &btn, st, &attr);
         check(before && btn == 1ull << 0, "ini edited while running: reloaded within ~1 s; layout=labels turns south (printed A on this pad) into Pro A");
         vj_clear(js[0], SDL_GAMEPAD_BUTTON_COUNT, 6);
         SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_NORTH, true); settle(); h->state(0, &btn, st, &attr);
@@ -1312,9 +1317,6 @@ int nnpad_selftest(const NnHidHooks *h) {
         SDL_SetJoystickVirtualAxis(js[0], SDL_GAMEPAD_AXIS_LEFTX, 0);
         SDL_SetJoystickVirtualAxis(js[0], SDL_GAMEPAD_AXIS_LEFTY, -32768); settle(); h->state(0, &btn, st, &attr);
         check(st[1] == -32767, "remap: invert.LY = on flips the up/down axis");
-        int ok = !strcmp(nnpad_menu_swap_setting(), "on") && nnpad_menu_swap_set("off") && !strcmp(nnpad_menu_swap_setting(), "off");
-        { size_t n = 0; char *t = read_file(g_cfg.path, &n); ok = ok && t && strstr(t, "swap_confirm = off\r\n[keyboard]") && strstr(t, "deadzone = 0.10\r\n"); free(t); }
-        check(ok, "swap_confirm read from the ini; set keeps the file's other lines");
         SDL_SetJoystickVirtualAxis(js[0], SDL_GAMEPAD_AXIS_LEFTY, 0);
         h->vibrate(0, 1.0f, 1.0f);
         check(g_vj[0].lo == 0 && g_vj[0].hi == 0, "rumble = off for this device: nothing reaches the pad");
