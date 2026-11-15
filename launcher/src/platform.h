@@ -15,13 +15,13 @@
 #define LAUNCHER_NAME "hotel-luigi-game"
 
 #ifdef _WIN32
-#define WT_EXE ".exe"
+#define HL_EXE ".exe"
 #else
-#define WT_EXE ""
+#define HL_EXE ""
 #endif
 // the files the build makes in build/ (tools/hlbuild/src/target.rs)
 #define BUILT_VERSION "built_version"    // in build/: the launcher release that last finished a build
-inline const char* const GAME_EXE = "witch-time-game" WT_EXE;
+inline const char* const GAME_EXE = "hotel-luigi-runtime" HL_EXE;
 #ifdef _WIN32
 inline const char* const GAME_LIB = "game.dll";
 #else

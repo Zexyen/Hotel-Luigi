@@ -26,7 +26,7 @@ ecomp_nro.py) gives
  *     function that called back into the guest): no handler before that point = terminate.
  *   - Frames of the main executable are walked like any other but cannot be resumed: main is lifted without resume
  *     entries. A clean-up pad there is skipped with a warning; a handler there stops with a report.
- * Environment: WT_UNWIND_LOG=1 prints every frame of every throw (the first 3 throws are always summarised). */
+ * Environment: HL_UNWIND_LOG=1 prints every frame of every throw (the first 3 throws are always summarised). */
 #include <windows.h>
 #include <setjmp.h>
 #include <stdio.h>
@@ -316,6 +316,6 @@ void unwind_report(FILE *out) {
 }
 
 void register_unwind_imports(void) {
-    g_log = getenv("WT_UNWIND_LOG") != NULL;
+    g_log = getenv("HL_UNWIND_LOG") != NULL;
     eh_set_unwinder(eh_raise);
 }

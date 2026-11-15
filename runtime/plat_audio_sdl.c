@@ -13,13 +13,13 @@ typedef struct {
     DWORD offset;                      /* bytes of queue[head] already pulled */
     uint64_t frames;                   /* pulled since open / the last reset */
     unsigned block;                    /* bytes per frame */
-    unsigned told;                     /* WT_AUDIO_STEP_MS: headers before this one have been reported done */
+    unsigned told;                     /* HL_AUDIO_STEP_MS: headers before this one have been reported done */
     Uint64 next_step;
 } WaveOut;
 
-/* TEST ONLY, WT_AUDIO_STEP_MS=<n> (issue 157): a device that plays at once but reports its finished headers only every
+/* TEST ONLY, HL_AUDIO_STEP_MS=<n> (issue 157): a device that plays at once but reports its finished headers only every
  * n ms, all together. 60 gives that report's figures: 667 buffers in 10 s instead of 937, an underrun every 4 buffers. */
-static int step_ms(void) { static int v = -1; if (v < 0) { const char *e = getenv("WT_AUDIO_STEP_MS"); v = e ? atoi(e) : 0; } return v; }
+static int step_ms(void) { static int v = -1; if (v < 0) { const char *e = getenv("HL_AUDIO_STEP_MS"); v = e ? atoi(e) : 0; } return v; }
 
 static void SDLCALL pull(void *user, SDL_AudioStream *stream, int need, int total) {
     (void)total;

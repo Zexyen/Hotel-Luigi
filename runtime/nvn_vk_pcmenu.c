@@ -6,7 +6,7 @@
  *     a textured quad from pcmenu_gpu_scene, and the canvas is copied over the picture. While the panel opens or
  *     closes, the canvas starts instead from the game's picture under it (when it can be read: the swapchain images with
  *     TRANSFER_SRC, or the HDR picture) and the ground is a sprite too, so the monitor can slide in and the rows step in.
- *     WT_PCMENU_CPU=1 keeps the CPU path (the fallback when the pipeline cannot be made; it has no opening or closing
+ *     HL_PCMENU_CPU=1 keeps the CPU path (the fallback when the pipeline cannot be made; it has no opening or closing
  *     motion).
  *   - nvn_vk_pcmenu_job: a job of the render thread that pcmenu.c posts about 60 times a second while the menu holds the game:
  *     the work the menu asks for (a sampler flush for anisotropic filtering / texture detail, the present mode for vsync, the images and stages of a new resolution scale), the panel's pixels
@@ -14,7 +14,7 @@
  *     extra present, as the held loading screens do).
  *   - pcm_vk_draw: in every present while the menu is open (also the game's own presents before it is held); one flag read
  *     while it is closed.
- *   - WT_PCMENU_SHOT=<folder> (test aid): every panel change saves the next presented picture, panel included, as
+ *   - HL_PCMENU_SHOT=<folder> (test aid): every panel change saves the next presented picture, panel included, as
  *     pcmenu_<n>.bmp (needs swapchain images with TRANSFER_SRC; the log says when they have none). */
 int pcmenu_is_open(void), pcmenu_visible(void), pcmenu_kind(void), pcmenu_settled(void);      /* kind: 1 the menu, 2 a debug list over the running game, 3 the first-start screen */
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen);      /* pcmenu.c: 0 = closed; r = x, y, w, h in the window's pixels */
@@ -237,7 +237,7 @@ static void pcm_shot_write(void) {                 /* the picture copied by the 
     if (g_pcm_shot.pending != 1) return;           /* (-1: a picture asked for, not yet copied by a present) */
     g_pcm_shot.pending = 0;
     char path[300];
-    snprintf(path, sizeof path, "%s/pcmenu_%03d.bmp", getenv("WT_PCMENU_SHOT"), g_pcm_shot.n++);
+    snprintf(path, sizeof path, "%s/pcmenu_%03d.bmp", getenv("HL_PCMENU_SHOT"), g_pcm_shot.n++);
     BmpJob *j = malloc(sizeof *j);
     uint8_t *px = malloc((size_t)g_pcm_shot.w * g_pcm_shot.h * 4);
     if (!j || !px) { free(j); free(px); return; }
@@ -270,7 +270,7 @@ static void pcm_upload(int wait) {
     unsigned gen;
     if (!g_gpu.tried) {                            /* the GPU path, unless it cannot be made */
         g_gpu.tried = 1;
-        const char *e = getenv("WT_PCMENU_CPU");
+        const char *e = getenv("HL_PCMENU_CPU");
         g_gpu.on = !(e && atoi(e)) && pcm_gpu_pipeline() != NULL;
         pcmenu_gpu(g_gpu.on);
         printf("pcmenu: the panel is composed on the %s\n", g_gpu.on ? "GPU" : "CPU"); fflush(stdout);
@@ -288,7 +288,7 @@ static void pcm_upload(int wait) {
             pcm_gpu_canvas(r[2], r[3]);
         }
         memcpy(g_pcm.r, r, sizeof r); g_pcm.gen = gen; g_pcm.ready = 1; g_pcm.panel = pcmenu_kind();
-        if (getenv("WT_PCMENU_SHOT")) g_pcm_shot.pending = -1;       /* the next present */
+        if (getenv("HL_PCMENU_SHOT")) g_pcm_shot.pending = -1;       /* the next present */
     }
 }
 /* [lm3] a debug list (pcmenu_kind 2) has no job of its own: it rides on the game's presents (vk_present2, before its commands) */
@@ -311,7 +311,7 @@ static void pcm_vk_draw(VkImage tgt) {
     }
     if (g_pcm_shot.pending == -1 && pcmenu_settled()) {      /* (the menu: once it has opened, not its slide's first frame) */
         g_pcm_shot.pending = 0;
-        if (V.hdr || !g_sc_src) { if (!g_pcm_shot.said++) printf("pcmenu: WT_PCMENU_SHOT: the swapchain images cannot be read (no TRANSFER_SRC, or HDR): no picture\n"); return; }
+        if (V.hdr || !g_sc_src) { if (!g_pcm_shot.said++) printf("pcmenu: HL_PCMENU_SHOT: the swapchain images cannot be read (no TRANSFER_SRC, or HDR): no picture\n"); return; }
         uint64_t need = (uint64_t)W * H * 4;
         if (need > g_pcm_shot.size) {
             if (g_pcm_shot.buf) { vkDestroyBuffer(V.device, g_pcm_shot.buf, NULL); vmem_free(g_pcm_shot.mem); }

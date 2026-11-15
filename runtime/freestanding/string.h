@@ -1,6 +1,6 @@
 /* Freestanding string.h for the code compiled on the player's PC (README.md): glibc's declarations. */
-#ifndef WT_FREESTANDING_STRING_H
-#define WT_FREESTANDING_STRING_H
+#ifndef HL_FREESTANDING_STRING_H
+#define HL_FREESTANDING_STRING_H
 #include <stddef.h>
 extern void *memcpy (void *__restrict __dest, const void *__restrict __src, size_t __n) __attribute__ ((__nothrow__ )) __attribute__ ((__nonnull__ (1, 2)));
 extern void *memmove (void *__dest, const void *__src, size_t __n) __attribute__ ((__nothrow__ )) __attribute__ ((__nonnull__ (1, 2)));

@@ -2,7 +2,7 @@
 //! form in the machine code. A site is a load of a field, an add or subtract on the loaded value (an immediate, a
 //! register, a float register) and a store of the result to the same field ([Xn + off]), in straight-line code (a
 //! conditional branch between them is allowed) with Xn unchanged. The census (HLBUILD_FPS_CENSUS=1 at lift time, then a
-//! run with WT_FPS_CENSUS=<file>, at 60 and at above 60) records what each visit adds: a site that adds as much per
+//! run with HL_FPS_CENSUS=<file>, at 60 and at above 60) records what each visit adds: a site that adds as much per
 //! visit at 120 as at 60 is frame-locked; one that adds half as much takes the frame's time already. Many sites are
 //! not timers (loop counters in memory, reference counts): the frame-locked ones are read one by one.
 

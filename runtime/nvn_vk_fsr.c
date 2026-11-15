@@ -399,7 +399,7 @@ static void fsr_dispatch(int p, uint32_t gx, uint32_t gy) {
     }
     vkCmdBindPipeline(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, F.pipe[p]);
     vkCmdPushDescriptorSetKHR(R.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, F.pl[p], 0, (uint32_t)n, w);
-    ckpt(3, NULL, NULL, NULL);                     /* WT_VK_CHECKPOINTS: the dump names FSR's pass (hb[0]) */
+    ckpt(3, NULL, NULL, NULL);                     /* HL_VK_CHECKPOINTS: the dump names FSR's pass (hb[0]) */
     if (g_ck_on && g_ckn) g_ck[(g_ckn - 1) % CK_N].hb[0] = (uint64_t)p;
     vkCmdDispatch(R.cmd, gx ? gx : 1, gy ? gy : 1, 1);
     ckpt(2, NULL, NULL, NULL);
@@ -438,7 +438,7 @@ static void fsr_run(Tex *col, Tex *depth, int fx) {
     if (F.ok == 0 && !fsr_setup()) { if (rs_render_scale() != rs_scale()) rs_apply(); return; }      /* a quality mode without FSR: the scene back at the picture's scale (fsr_ratio is 1 now) */
     pass_end();
     cmd_begin();
-    pt_mark(w, h, 0, 0x118, 0, 0, 1);              /* WT_VK_PASSTIME: FSR (and its copy) as a kind of its own, "format 0x118" */
+    pt_mark(w, h, 0, 0x118, 0, 0, 1);              /* HL_VK_PASSTIME: FSR (and its copy) as a kind of its own, "format 0x118" */
     fsr_barrier(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);      /* FI_OUT: an earlier tonemap's read, fsr_up_view's blit */
     if (w != F.w || h != F.h || uw != F.uw || uh != F.uh || !F.img[FI_OUT].vt || (!F.blit && F.img[FI_OUT].vt->fmt != vc->fmt)) fsr_resize(w, h, uw, uh, vc->fmt);
     F.col = col;
@@ -594,9 +594,9 @@ static VkImageView fsr_dither_view(int s, unsigned u, Tex *t, VTex *vt, const Vi
         g_fd[i].t = t;
         printf("nvn_vk_fsr: dither pattern %d: a 64 x 64 texture (format 0x%x) read at unit 14 by the depth pre-pass\n", i + 1, t->b.format);
     }
-    {   /* TEST ONLY: WT_FSR_DITHER=0 keeps the game's fixed pattern; =alt: fixed in every other 30 frames (an A/B in one run) */
+    {   /* TEST ONLY: HL_FSR_DITHER=0 keeps the game's fixed pattern; =alt: fixed in every other 30 frames (an A/B in one run) */
         static int mode = -1;
-        if (mode < 0) { const char *e = getenv("WT_FSR_DITHER"); mode = !e ? 1 : !strcmp(e, "alt") ? 2 : atoi(e) != 0; }
+        if (mode < 0) { const char *e = getenv("HL_FSR_DITHER"); mode = !e ? 1 : !strcmp(e, "alt") ? 2 : atoi(e) != 0; }
         if (game_fsr_w <= 0 || !fsr_want() || !mode || (mode == 2 && (F.frame / 30) % 2)) return NULL;
     }
     EView e;

@@ -23,12 +23,12 @@ static void ret0(Ctx *c) { RET(0); }                    /* nn::Result success, f
 
 /* ---- nn::os: time. The Switch system tick runs at 19.2 MHz. */
 #define TICK_HZ 19200000ULL
-/* Test aid WT_TICK_CALLERS=1 (track V session 4, looking for what seeds the game's random numbers): every distinct
+/* Test aid HL_TICK_CALLERS=1 (track V session 4, looking for what seeds the game's random numbers): every distinct
  * return address of a caller of the clock functions is printed once. */
 void host_clock_caller(const char *what, uint64_t lr) {
     static int on = -1, n;
     static uint64_t seen[512];
-    if (on < 0) on = getenv("WT_TICK_CALLERS") != NULL;
+    if (on < 0) on = getenv("HL_TICK_CALLERS") != NULL;
     if (!on) return;
     for (int i = 0; i < n && i < 512; i++) if (seen[i] == lr) return;
     if (n < 512) { seen[n++] = lr; printf("clock caller: %s from %llx\n", what, (unsigned long long)lr); }

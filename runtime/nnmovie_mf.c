@@ -62,8 +62,8 @@
  * sample to the output queue, GetOutputBuffer copies the decoded NV12 / PCM data into the game's buffer and
  * ReleaseOutputBufferIndex frees the slot.
  *
- * Environment: WT_MOVIE=0 keeps the failing placeholder (nnmovie.c); WT_MOVIE_SAVE=<file> saves what the game's
- * reader returned; WT_MOVIE_LOG=1 logs every decoder call. */
+ * Environment: HL_MOVIE=0 keeps the failing placeholder (nnmovie.c); HL_MOVIE_SAVE=<file> saves what the game's
+ * reader returned; HL_MOVIE_LOG=1 logs every decoder call. */
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -111,7 +111,7 @@ void os_signal_event(uint64_t key);                   /* os_threads.c */
 #define TOKEN_MAGIC 0x4d4f564945544f4bULL             /* "MOVIETOK" */
 
 /* ---------------------------------------------------------------- small helpers */
-static int g_log;                                     /* WT_MOVIE_LOG */
+static int g_log;                                     /* HL_MOVIE_LOG */
 static uint64_t g_alloc_fn, g_free_fn, g_alloc_user;  /* movie::SetAllocator */
 
 /* Call a guest function with up to five arguments; the caller's registers are preserved. */
@@ -501,12 +501,12 @@ static void src_close(Ext *e) {
  * Returns 0 with a pending sample, or ST_END. Caller holds the lock. */
 static int ext_fill(Ext *e) {
     if (e->have_pending) return ST_OK;
-    {   /* TEST ONLY, WT_SKIP_MOVIES=1 (tests\DEBUG_MODE.md): every movie ends at once, as a stream with no samples left */
+    {   /* TEST ONLY, HL_SKIP_MOVIES=1 (tests\DEBUG_MODE.md): every movie ends at once, as a stream with no samples left */
         static int skip = -1;
-        if (skip < 0) { const char *v = getenv("WT_SKIP_MOVIES"); skip = v && atoi(v) != 0; }
-        static unsigned long long keep = 0;                /* WT_SKIP_MOVIES=<n>: n > 1 lets the first n samples through (default 1 = 12) */
-        if (skip > 0 && !keep) { const char *v = getenv("WT_SKIP_MOVIES"); keep = atoi(v) > 1 ? (unsigned long long)atoi(v) : 12; }
-        if (skip && e->samples_read >= keep) { if (!e->eos) printf("movie: WT_SKIP_MOVIES: end of stream after %llu samples%c", e->samples_read, 10); e->eos = 1; return ST_END; }
+        if (skip < 0) { const char *v = getenv("HL_SKIP_MOVIES"); skip = v && atoi(v) != 0; }
+        static unsigned long long keep = 0;                /* HL_SKIP_MOVIES=<n>: n > 1 lets the first n samples through (default 1 = 12) */
+        if (skip > 0 && !keep) { const char *v = getenv("HL_SKIP_MOVIES"); keep = atoi(v) > 1 ? (unsigned long long)atoi(v) : 12; }
+        if (skip && e->samples_read >= keep) { if (!e->eos) printf("movie: HL_SKIP_MOVIES: end of stream after %llu samples%c", e->samples_read, 10); e->eos = 1; return ST_END; }
     }
     if (e->eos || !e->rd) return ST_END;
     int best = -1;
@@ -516,9 +516,9 @@ static int ext_fill(Ext *e) {
         for (int guard = 0; !e->ahead[i].have && !tr->eos && guard < 256; guard++) {
             Sample *s = NULL; int64_t us = 0;
             int r = src_read(e, i, &s, &us);              /* [witchtime] FFmpeg (above) */
-            {   /* test: WT_MOVIE_FAIL_AT=<n> makes the read after n samples fail */
+            {   /* test: HL_MOVIE_FAIL_AT=<n> makes the read after n samples fail */
                 static int fail_at = -1;
-                if (fail_at < 0) { const char *v = getenv("WT_MOVIE_FAIL_AT"); fail_at = v ? atoi(v) : 0; }
+                if (fail_at < 0) { const char *v = getenv("HL_MOVIE_FAIL_AT"); fail_at = v ? atoi(v) : 0; }
                 if (fail_at > 0 && e->samples_read >= (unsigned long long)fail_at) { if (s) { hs_free(s); s = NULL; } r = -1; }
             }
             if (r < 0) {
@@ -559,7 +559,7 @@ static void ext_dtor(Ctx *c) { ext_dtor_common(c, 0); }
 static void ext_deleting_dtor(Ctx *c) { ext_dtor_common(c, 1); }
 
 static int ext_set_source_bytes(Ext *e, unsigned char *data, size_t size) {
-    const char *save = getenv("WT_MOVIE_SAVE");
+    const char *save = getenv("HL_MOVIE_SAVE");
     if (save) { FILE *f = fopen(save, "wb"); if (f) { fwrite(data, 1, size, f); fclose(f); printf("movie: saved %zu bytes to %s\n", size, save); } }
     int ok = ext_open_bytes(e, data, size);
     return ok ? ST_OK : ST_FAILED;
@@ -741,7 +741,7 @@ static void ext_GetBufferedRange(Ctx *c) {            /* (int64 *startUs, int64 
 static void dec_lock(Dec *d) { EnterCriticalSection(&d->cs); }
 static void dec_unlock(Dec *d) { LeaveCriticalSection(&d->cs); }
 
-static void dlog(Dec *d, const char *fmt, ...) {      /* WT_MOVIE_LOG: one line per call, with thread and time */
+static void dlog(Dec *d, const char *fmt, ...) {      /* HL_MOVIE_LOG: one line per call, with thread and time */
     if (!g_log) return;
     char line[256];
     va_list ap;
@@ -870,10 +870,10 @@ static void dec_GetOutputBufferFormat(Ctx *c) { Dec *d = dec_of(A0); MD *m = md_
  * decoder it created has arrived (cases 3 and 7 of its switch: flags + 0x4c1 and + 0x4c0), and the playback thread
  * waits for it for 5 s while holding the player's mutex: with the event sent by the video decoder only,
  * every movie start waited the full 5 s and the main thread stood at that mutex. So the real audio
- * decoder sends it as well. WT_MOVIE_NO_AUDIO_FORMAT_EVENT=1: video only, as before. */
+ * decoder sends it as well. HL_MOVIE_NO_AUDIO_FORMAT_EVENT=1: video only, as before. */
 static int fmt_event_wanted(const Dec *d) {
     static int video_only = -1;
-    if (video_only < 0) video_only = getenv("WT_MOVIE_NO_AUDIO_FORMAT_EVENT") != NULL;
+    if (video_only < 0) video_only = getenv("HL_MOVIE_NO_AUDIO_FORMAT_EVENT") != NULL;
     return (d->is_video || !video_only) && !d->fmt_signalled;
 }
 static void dec_Start(Ctx *c) {
@@ -1252,9 +1252,9 @@ static const ImportDef movie_mf_imports[] = {
 };
 
 void register_movie_mf_imports(void) {
-    const char *env = getenv("WT_MOVIE");
-    if (env && atoi(env) == 0) { printf("movie: WT_MOVIE=0, keeping the failing placeholder\n"); return; }
-    g_log = getenv("WT_MOVIE_LOG") != NULL;
+    const char *env = getenv("HL_MOVIE");
+    if (env && atoi(env) == 0) { printf("movie: HL_MOVIE=0, keeping the failing placeholder\n"); return; }
+    g_log = getenv("HL_MOVIE_LOG") != NULL;
     InitializeCriticalSection(&g_init_lock);
     register_imports(movie_mf_imports, (int)(sizeof movie_mf_imports / sizeof movie_mf_imports[0]));
 }

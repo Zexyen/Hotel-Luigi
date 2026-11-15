@@ -44,7 +44,7 @@ change that makes the cutscene finish sooner or later has changed the game's clo
 ## 3. Performance (when a change is meant to make it faster, or might make it slower)
 
 1. Baseline first: run the configuration before the change, note the lobby line.
-2. `scripts/playtest.sh prof 300 frame_rate=120 WT_LPROF=240,15,$PWD/build/playtest/lprof.txt`, then
+2. `scripts/playtest.sh prof 300 frame_rate=120 HL_LPROF=240,15,$PWD/build/playtest/lprof.txt`, then
    `tools/hlbuild/target/release/hlbuild lprof build/playtest/lprof.txt`: per thread, where the time goes. The first
    thread listed with `render_thread` in its `incl:` list is the renderer; `f_71...` entries are the game's own code.
 3. In `run.log`, the last `nvn_vk_perf:` line splits the renderer's frame (batch replay, draw preparation, wait for the
@@ -53,7 +53,7 @@ change that makes the cutscene finish sooner or later has changed the game's clo
 
 ## 4. By hand (before a release; what a script cannot judge)
 
-- A real window: `build/witch-time-game targets/exefs/main.elf` from `build/run` with `WT_ROMFS=$PWD/../../targets/romfs`.
+- A real window: `build/hotel-luigi-runtime targets/exefs/main.elf` from `build/run` with `HL_ROMFS=$PWD/../../targets/romfs`.
 - Controller: move, Poltergust, the menu; rumble.
 - Sound in the cutscene and the lobby; no crackle at 60 and 120.
 - `window = borderless` on an ultrawide monitor with `aspect_ratio = auto`: the picture fills the screen, the HUD is

@@ -9,7 +9,7 @@
 static const char *const g_language_codes[] = {"ja", "en-US", "fr", "de", "it", "es", "zh-CN", "ko", "nl", "pt", "ru",
                                                "zh-TW", "en-GB", "fr-CA", "es-419", "zh-Hans", "zh-Hant", "pt-BR"};
 
-/* name = a Windows display language ("en-GB", "de-DE") or WT_LANGUAGE; pick = one of the codes this game takes, else en-US.
+/* name = a Windows display language ("en-GB", "de-DE") or HL_LANGUAGE; pick = one of the codes this game takes, else en-US.
  * `supported` is the game's own list (its control data, or what its language tables accept): the stand-in takes these. */
 static void language_pick(const char *name, char pick[16]) {
     static const char *const supported[] = {"ja", "en-US", "fr", "de", "it", "es", "zh-Hans", "zh-Hant", "ko", "ru"};

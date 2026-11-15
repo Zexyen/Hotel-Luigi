@@ -1,13 +1,13 @@
 //! The `li        .map(|n| (n.strip_prefix("gen/").map_or_else(|| rt.join(n), |g| crate::layout::gen(repo).join(g)), objt.joink` step: build/game.so (Windows: game.dll) from the lifted objects and the player's own tables, beside the
-//! runtime (libwitchtime.so, witch-time-game, libwt_glslang.so; Windows: witch-time-game.exe, wt_glslang.dll).
+//! runtime (libhotelluigi.so, hotel-luigi-runtime, libhl_glslang.so; Windows: hotel-luigi-runtime.exe, hl_glslang.dll).
 //!
 //! The runtime holds nothing from the dump: the few values it needs from it (runtime/split) are data in game.so
-//! (runtime/wt_tables.c, with gen/sdkdata.c and gen/sdklift_gen.c). So a release ships the runtime prebuilt (prebuilt/,
+//! (runtime/hl_tables.c, with gen/sdkdata.c and gen/sdklift_gen.c). So a release ships the runtime prebuilt (prebuilt/,
 //! made by `hlbuild runtime` in CI) and the player's PC only compiles the tables and links game.so, with no system
 //! headers or libraries (runtime/freestanding). A checkout without prebuilt/, or whose runtime sources changed since,
 //! builds the runtime here, against the system's SDL3, FFmpeg, glslang and GL.
 //!
-//! Windows: the runtime is one program, witch-time-game.exe, importing game.dll's
+//! Windows: the runtime is one program, hotel-luigi-runtime.exe, importing game.dll's
 //! tables (GAME_EXPORTS) through an import library made from game.def. game.dll imports nothing from it: the calls back
 //! into the runtime go through the pointers game_bind hands over (game_shim.c). It is linked without the C runtime's
 //! start-up code and imports the few C functions it calls from the UCRT, which every Windows 10 and 11 has, through
@@ -73,7 +73,7 @@ const HOST_SOURCES: &[&str] = &[
 const POSIX_SOURCES: &[&str] = &["plat_posix.c", "plat_audio_sdl.c"];
 /// the player's tables, compiled on their PC into game.so: the dump's sdk data, the lifted sdk code, and the values
 /// the runtime reads (runtime/split)
-pub const TABLE_SOURCES: &[&str] = &["gen/sdkdata.c", "gen/sdklift_gen.c", "wt_tables.c"];
+pub const TABLE_SOURCES: &[&str] = &["gen/sdkdata.c", "gen/sdklift_gen.c", "hl_tables.c"];
 /// SDL3, OpenGL and FFmpeg (movies): the system's, or in CI the ones a release ships beside the runtime
 const LIBS: &[&str] = &[
     "-lSDL3",
@@ -111,7 +111,7 @@ const WIN_LIBS: &[&str] = &[
 ];
 /// the shader compiler shim's glslang: the system's shared libraries; HLBUILD_GLSLANG_LIBS replaces it (CI: a static glslang)
 const GLSLANG_LIBS: &str = "-lglslang -lglslang-default-resource-limits";
-/// what game.dll exports to witch-time-game.exe (runtime/split, gen/sdkdata.c, gen/sdklift_gen.c, game_shim_eh.c): the
+/// what game.dll exports to hotel-luigi-runtime.exe (runtime/split, gen/sdkdata.c, gen/sdklift_gen.c, game_shim_eh.c): the
 /// functions, then the data. A name the runtime uses and this list lacks fails the runtime's link (CI), not the player's.
 const GAME_EXPORTS: (&[&str], &[&str]) = (
     &["game_bind", "game_eh_bind"],
@@ -122,41 +122,41 @@ const GAME_EXPORTS: (&[&str], &[&str]) = (
         "sdk_fn_count",
         "sdk_host_names",
         "sdk_host_name_count",
-        "wt_layout_FILE_IMAGE",
-        "wt_layout_IMAGE_SIZE",
-        "wt_layout_GUEST_RO_END",
-        "wt_layout_RELA",
-        "wt_layout_RELASZ",
-        "wt_layout_JMPREL",
-        "wt_layout_PLTRELSZ",
-        "wt_layout_MAIN_SYMTAB",
-        "wt_layout_MAIN_STRTAB",
-        "wt_layout_INIT_ARRAY_OFF",
-        "wt_layout_INIT_ARRAY_SIZE",
-        "wt_layout_DT_INIT_OFF",
-        "wt_layout_SDK_IMAGE_SPAN",
-        "wt_layout_NNINIT_STARTUP_OFF",
-        "wt_layout_NN_MAIN_OFF",
-        "wt_layout_GAME_ALIGNED_ALLOC_OFF",
-        "wt_layout_GAME_FREE_OFF",
-        "wt_layout_GAME_OPDELETE_OFF",
-        "wt_sdka_chip_descriptor",
-        "wt_sdka_format_count",
-        "wt_sdka_format_table",
-        "wt_sdka_nvnTextureBuilderGetRawStorageClass",
-        "wt_sdka_nvnTextureBuilderGetSparseTileLayout",
-        "wt_sdka_nvnTextureBuilderGetStorageAlignment",
-        "wt_sdka_nvnTextureBuilderGetStorageClass",
-        "wt_sdka_nvnTextureBuilderGetStorageSize",
-        "wt_sdka_nvnTextureGetRawStorageClass",
-        "wt_sdka_nvnTextureGetSparseTileLayout",
-        "wt_sdka_nvnTextureGetStorageClass",
-        "wt_sdka_nvnTextureGetStorageSize",
-        "wt_sdka_texture_layout",
-        "wt_sdka_vt_hal_gm200",
-        "wt_sdka_vt_nvgpu_device",
-        "wt_nvn_devinfo_count",
-        "wt_nvn_devinfo_sdk",
+        "hl_layout_FILE_IMAGE",
+        "hl_layout_IMAGE_SIZE",
+        "hl_layout_GUEST_RO_END",
+        "hl_layout_RELA",
+        "hl_layout_RELASZ",
+        "hl_layout_JMPREL",
+        "hl_layout_PLTRELSZ",
+        "hl_layout_MAIN_SYMTAB",
+        "hl_layout_MAIN_STRTAB",
+        "hl_layout_INIT_ARRAY_OFF",
+        "hl_layout_INIT_ARRAY_SIZE",
+        "hl_layout_DT_INIT_OFF",
+        "hl_layout_SDK_IMAGE_SPAN",
+        "hl_layout_NNINIT_STARTUP_OFF",
+        "hl_layout_NN_MAIN_OFF",
+        "hl_layout_GAME_ALIGNED_ALLOC_OFF",
+        "hl_layout_GAME_FREE_OFF",
+        "hl_layout_GAME_OPDELETE_OFF",
+        "hl_sdka_chip_descriptor",
+        "hl_sdka_format_count",
+        "hl_sdka_format_table",
+        "hl_sdka_nvnTextureBuilderGetRawStorageClass",
+        "hl_sdka_nvnTextureBuilderGetSparseTileLayout",
+        "hl_sdka_nvnTextureBuilderGetStorageAlignment",
+        "hl_sdka_nvnTextureBuilderGetStorageClass",
+        "hl_sdka_nvnTextureBuilderGetStorageSize",
+        "hl_sdka_nvnTextureGetRawStorageClass",
+        "hl_sdka_nvnTextureGetSparseTileLayout",
+        "hl_sdka_nvnTextureGetStorageClass",
+        "hl_sdka_nvnTextureGetStorageSize",
+        "hl_sdka_texture_layout",
+        "hl_sdka_vt_hal_gm200",
+        "hl_sdka_vt_nvgpu_device",
+        "hl_nvn_devinfo_count",
+        "hl_nvn_devinfo_sdk",
     ],
 );
 /// the UCRT's import library (mingw-w64's), which game.dll links against on the player's PC
@@ -165,8 +165,8 @@ const UCRT_IMPLIB: &str = "libucrtbase.a";
 /// files are inputs of the player's link, not copied into build/
 fn runtime_files(t: Target) -> &'static [&'static str] {
     match t {
-        Target::Linux => &["libwitchtime.so", "witch-time-game", "libwt_glslang.so", "game_shim_eh.o"],
-        Target::Windows => &["witch-time-game.exe", "wt_glslang.dll", "game_shim_eh.o", UCRT_IMPLIB],
+        Target::Linux => &["libhotelluigi.so", "hotel-luigi-runtime", "libhl_glslang.so", "game_shim_eh.o"],
+        Target::Windows => &["hotel-luigi-runtime.exe", "hl_glslang.dll", "game_shim_eh.o", UCRT_IMPLIB],
     }
 }
 pub const PREBUILT: &str = "prebuilt";
@@ -287,9 +287,9 @@ impl Clang<'_> {
     }
 }
 
-/// Builds the runtime into `out` (objects in `objdir`): libwitchtime.so (the whole host runtime, needing game.so),
-/// witch-time-game (a program that runs it), libwt_glslang.so and game_shim_eh.o (linked into game.so later).
-/// Windows: witch-time-game.exe (the whole host runtime, importing game.dll's tables), wt_glslang.dll, game_shim_eh.o
+/// Builds the runtime into `out` (objects in `objdir`): libhotelluigi.so (the whole host runtime, needing game.so),
+/// hotel-luigi-runtime (a program that runs it), libhl_glslang.so and game_shim_eh.o (linked into game.so later).
+/// Windows: hotel-luigi-runtime.exe (the whole host runtime, importing game.dll's tables), hl_glslang.dll, game_shim_eh.o
 /// and the UCRT import library game.dll links against. `install_inc` holds sdklift_install.h.
 pub fn build_runtime(
     repo: &Path,
@@ -363,7 +363,7 @@ pub fn build_runtime(
     // game functions (on Windows also game.dll's entry point: it is linked without the C runtime)
     let mut a = strs(&["-c", "-O1", "-w", "-mcx16"]);
     a.extend(if t.windows() {
-        strs(&["-DWT_GAME_NOSTDLIB"])
+        strs(&["-DHL_GAME_NOSTDLIB"])
     } else {
         strs(&["-fPIC", "-D__declspec(x)="])
     });
@@ -378,7 +378,7 @@ pub fn build_runtime(
         return build_runtime_windows(repo, &cl, &jobs, out, objdir, log);
     }
 
-    // 3. libwitchtime.so, needing game.so (beside it, rpath $ORIGIN), linked against an empty one of that name: the
+    // 3. libhotelluigi.so, needing game.so (beside it, rpath $ORIGIN), linked against an empty one of that name: the
     // values from the dump are only looked up when the game starts
     let (code, o, _) = cl.run(&[
         "-shared".into(),
@@ -396,46 +396,46 @@ pub fn build_runtime(
         log(tail(&o, 3000).to_string());
         return Err("the stand-in game.so did not link".into());
     }
-    let host = out.join("libwitchtime.so");
+    let host = out.join("libhotelluigi.so");
     let mut a = strs(&["-shared", "-fuse-ld=lld", "-g", "-Xlinker", "--no-dependent-libraries"]);
     a.extend(jobs.iter().map(|j| s(&j.1)));
     a.extend(["-Xlinker".into(), "--no-as-needed".into(), s(&stub.join("game.so"))]);
-    a.extend(strs(&["-Xlinker", "-rpath=$ORIGIN", "-Xlinker", "-soname=libwitchtime.so"]));
+    a.extend(strs(&["-Xlinker", "-rpath=$ORIGIN", "-Xlinker", "-soname=libhotelluigi.so"]));
     a.extend(strs(LIBS));
     a.extend(["-o".into(), s(&host)]);
     let (code, o, _) = cl.run(&a);
-    log(format!("libwitchtime.so: link exit {}", code.unwrap_or(-1)));
+    log(format!("libhotelluigi.so: link exit {}", code.unwrap_or(-1)));
     if code != Some(0) {
         log(tail(&o, 6000).to_string());
-        return Err("libwitchtime.so did not link".into());
+        return Err("libhotelluigi.so did not link".into());
     }
 
-    // 4. witch-time-game: the same runtime as a program of its own (the launcher starts it when it cannot load the
-    // library); what libwitchtime.so needs from game.so is resolved when it runs
-    let exe = out.join("witch-time-game");
+    // 4. hotel-luigi-runtime: the same runtime as a program of its own (the launcher starts it when it cannot load the
+    // library); what libhotelluigi.so needs from game.so is resolved when it runs
+    let exe = out.join("hotel-luigi-runtime");
     let mut a = strs(&["-fuse-ld=lld", "-g"]);
-    a.extend([s(&rt.join("wt_main.c")), s(&host)]);
+    a.extend([s(&rt.join("hl_main.c")), s(&host)]);
     a.extend(strs(&["-Xlinker", "-rpath=$ORIGIN", "-Xlinker", "--allow-shlib-undefined", "-o"]));
     a.push(s(&exe));
     let (code, o, _) = cl.run(&a);
-    log(format!("witch-time-game: link exit {}", code.unwrap_or(-1)));
+    log(format!("hotel-luigi-runtime: link exit {}", code.unwrap_or(-1)));
     if code != Some(0) {
         log(tail(&o, 3000).to_string());
-        return Err("witch-time-game did not link".into());
+        return Err("hotel-luigi-runtime did not link".into());
     }
 
-    // 5. the shader compiler shim; LoadLibraryA("wt_glslang.dll") opens it beside the program
-    let so = out.join("libwt_glslang.so");
+    // 5. the shader compiler shim; LoadLibraryA("hl_glslang.dll") opens it beside the program
+    let so = out.join("libhl_glslang.so");
     let glslang = std::env::var("HLBUILD_GLSLANG_LIBS").unwrap_or_else(|_| GLSLANG_LIBS.into());
     let mut a = strs(&["-shared", "-fPIC", "-O2", "-w", "-D_GNU_SOURCE", "-D__declspec(x)=", "-I"]);
     a.extend([s(&rt.join("posix")), "-I".into(), s(&rt), s(&rt.join("vk_glslang_shim.c"))]);
     a.extend(glslang.split_whitespace().map(String::from));
     a.extend(["-o".into(), s(&so)]);
     let (code, o, _) = cl.run(&a);
-    log(format!("libwt_glslang.so: exit {}", code.unwrap_or(-1)));
+    log(format!("libhl_glslang.so: exit {}", code.unwrap_or(-1)));
     if code != Some(0) {
         log(tail(&o, 3000).to_string());
-        return Err("libwt_glslang.so did not build".into());
+        return Err("libhl_glslang.so did not build".into());
     }
     Ok(())
 }
@@ -468,19 +468,19 @@ fn build_runtime_windows(repo: &Path, cl: &Clang, jobs: &[(PathBuf, PathBuf)], o
         return Err(format!("{} could not make game.dll's import library", dlltool.display()));
     }
 
-    // 4. witch-time-game.exe: the whole runtime, with its debug information in a PDB and a fixed base (crash addresses
+    // 4. hotel-luigi-runtime.exe: the whole runtime, with its debug information in a PDB and a fixed base (crash addresses
     // as the logs print them), and its manifest (runtime/win32: UTF-8 as
     // its code page, for paths with any letters in them)
-    let res = objdir.join("witch-time-game.res");
+    let res = objdir.join("hotel-luigi-runtime.res");
     let rc = Path::new(cl.path).with_file_name(crate::target::exe("llvm-rc"));
     let mut c = Command::new(&rc);
-    c.arg("-FO").arg(&res).arg(rt.join("win32").join("witch-time-game.rc"));
+    c.arg("-FO").arg(&res).arg(rt.join("win32").join("hotel-luigi-runtime.rc"));
     let (code, o, _) = run(&mut c, None);
     if code != Some(0) {
         log(tail(&o, 3000).to_string());
         return Err(format!("{} could not compile the program's resources", rc.display()));
     }
-    let exe = out.join("witch-time-game.exe");
+    let exe = out.join("hotel-luigi-runtime.exe");
     make_way(&exe).map_err(|e| format!("{}: {}", s(&exe), e))?; // lld cannot replace a running one
     let mut a = strs(&["-fuse-ld=lld", "-g"]);
     a.extend(jobs.iter().map(|j| s(&j.1)));
@@ -491,14 +491,14 @@ fn build_runtime_windows(repo: &Path, cl: &Clang, jobs: &[(PathBuf, PathBuf)], o
     a.extend(strs(&["-Wl,--disable-dynamicbase", "-o"]));
     a.push(s(&exe));
     let (code, o, _) = cl.run(&a);
-    log(format!("witch-time-game.exe: link exit {}", code.unwrap_or(-1)));
+    log(format!("hotel-luigi-runtime.exe: link exit {}", code.unwrap_or(-1)));
     if code != Some(0) {
         log(tail(&o, 6000).to_string());
-        return Err("witch-time-game.exe did not link".into());
+        return Err("hotel-luigi-runtime.exe did not link".into());
     }
 
     // 5. the shader compiler shim, which the program loads beside it; HLBUILD_GLSLANG_LIBS: a static glslang (CI)
-    let dll = out.join("wt_glslang.dll");
+    let dll = out.join("hl_glslang.dll");
     make_way(&dll).map_err(|e| format!("{}: {}", s(&dll), e))?;
     let glslang = std::env::var("HLBUILD_GLSLANG_LIBS").unwrap_or_else(|_| GLSLANG_LIBS.into());
     let mut a = strs(&["-shared", "-O2", "-w", "-I"]);
@@ -506,10 +506,10 @@ fn build_runtime_windows(repo: &Path, cl: &Clang, jobs: &[(PathBuf, PathBuf)], o
     a.extend(glslang.split_whitespace().map(String::from));
     a.extend(["-o".into(), s(&dll)]);
     let (code, o, _) = cl.run(&a);
-    log(format!("wt_glslang.dll: exit {}", code.unwrap_or(-1)));
+    log(format!("hl_glslang.dll: exit {}", code.unwrap_or(-1)));
     if code != Some(0) {
         log(tail(&o, 3000).to_string());
-        return Err("wt_glslang.dll did not build".into());
+        return Err("hl_glslang.dll did not build".into());
     }
 
     // 6. the UCRT's import library, as this compiler's mingw-w64 has it, for game.dll
@@ -581,7 +581,7 @@ fn link_game(
     let dll = build.join(name);
     // lld cannot replace a game.dll a running game has loaded either (#127)
     if t.windows() && make_way(&dll).map_err(|e| format!("{}: {}", name, e))? {
-        log(format!("{}: the old one is in use (a witch-time-game.exe still running?), moved to old/", name));
+        log(format!("{}: the old one is in use (a hotel-luigi-runtime.exe still running?), moved to old/", name));
     }
     let t0 = Instant::now();
     let mut a = strs(&["-shared", "-nostdlib", "-fuse-ld=lld"]);
@@ -715,7 +715,7 @@ pub fn run_step(repo: &Path, clang: &str, t: Target, env: &(dyn Fn(&mut Command)
         Some((dir, files)) => {
             for f in files.iter().filter(|f| !link_input(f)) {
                 if install(&dir.join(f), &build.join(f)).map_err(|e| format!("{}: {}", f, e))? {
-                    log(format!("{}: the old one is in use (a witch-time-game.exe still running?), moved to old/", f));
+                    log(format!("{}: the old one is in use (a hotel-luigi-runtime.exe still running?), moved to old/", f));
                 }
             }
             log(format!("runtime: prebuilt, {} files from {}/", files.len(), PREBUILT));
@@ -729,7 +729,7 @@ pub fn run_step(repo: &Path, clang: &str, t: Target, env: &(dyn Fn(&mut Command)
     };
     link_game(repo, clang, t, env, &shim, &implibs, log)?;
     let mb = |f: &str| fs::metadata(build.join(f)).map(|m| m.len()).unwrap_or(0) as f64 / (1 << 20) as f64;
-    let host = if t.windows() { "witch-time-game.exe" } else { "libwitchtime.so" };
+    let host = if t.windows() { "hotel-luigi-runtime.exe" } else { "libhotelluigi.so" };
     log(format!(
         "{}: {:.1} MB, {} {:.0} MB (TOOLCHAIN={})",
         s(&build.join(host)),
@@ -747,11 +747,11 @@ pub fn has_prebuilt(repo: &Path) -> bool {
 }
 
 /// libraries the prebuilt runtime needs that this system does not have (game.so is made later). Linux: the sonames ldd
-/// does not find. Windows: the DLLs witch-time-game.exe imports that are neither beside it (build/, prebuilt/) nor in
+/// does not find. Windows: the DLLs hotel-luigi-runtime.exe imports that are neither beside it (build/, prebuilt/) nor in
 /// System32 (the Media Foundation DLLs are missing from Windows N editions without the Media Feature Pack).
 pub fn prebuilt_missing(repo: &Path) -> Vec<String> {
     if cfg!(windows) {
-        let exe = repo.join(PREBUILT).join("witch-time-game.exe");
+        let exe = repo.join(PREBUILT).join("hotel-luigi-runtime.exe");
         let sys = PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into())).join("System32");
         return pe_imports(&fs::read(exe).unwrap_or_default())
             .into_iter()
@@ -763,7 +763,7 @@ pub fn prebuilt_missing(repo: &Path) -> Vec<String> {
             .collect();
     }
     let mut c = Command::new("ldd");
-    c.arg(repo.join(PREBUILT).join("libwitchtime.so")).env("LD_LIBRARY_PATH", repo.join("build"));
+    c.arg(repo.join(PREBUILT).join("libhotelluigi.so")).env("LD_LIBRARY_PATH", repo.join("build"));
     let Ok(o) = c.output() else { return vec![] };
     String::from_utf8_lossy(&o.stdout)
         .lines()
@@ -816,7 +816,7 @@ mod tests {
 
     #[test]
     fn listed_sources_ignore_leftovers() {
-        let d = std::env::temp_dir().join(format!("wt_srchash_{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("hl_srchash_{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(d.join("runtime/gen")).unwrap();
         fs::write(d.join("runtime/a.c"), "a").unwrap();
@@ -838,7 +838,7 @@ mod tests {
         if !cfg!(windows) {
             return; // Linux renames over it, the running process keeping its file
         }
-        let d = std::env::temp_dir().join(format!("wt_install_{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("hl_install_{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         let held = d.join("held.exe");

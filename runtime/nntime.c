@@ -20,7 +20,7 @@
 static int64_t now_posix(void) { return (int64_t)_time64(NULL); }
 
 
-void host_clock_caller(const char *what, uint64_t lr);       /* nnsdk.c: WT_TICK_CALLERS */
+void host_clock_caller(const char *what, uint64_t lr);       /* nnsdk.c: HL_TICK_CALLERS */
 static void time_GetCurrentTime(Ctx *c) { host_clock_caller("GetCurrentTime", c->x[30]); wr64(A0, (uint64_t)now_posix()); RET(0); }
 /* ------------------------------------------------------------------------------------------------------------------
  * Time zone rule (close4, 2026-10-09).
@@ -33,7 +33,7 @@ static void time_GetCurrentTime(Ctx *c) { host_clock_caller("GetCurrentTime", c-
  * format, from what Windows knows about the zone: registry "Time Zones\<key>" TZI + "Dynamic DST" year entries (the data
  * behind GetDynamicTimeZoneInformation), one transition list for 1970..2037 as a compiled zone file has. Windows has no
  * abbreviations and only a short history (measured, tz_vs_tzdb.py: W. Europe equals the tz database from 1996 on, not
- * before), so when the zone's file of the public tz database is found (%WT_TZDIR%, ..\sysdata\zoneinfo,
+ * before), so when the zone's file of the public tz database is found (%HL_TZDIR%, ..\sysdata\zoneinfo,
  * C:\msys64\usr\share\zoneinfo) its own transitions, types and names are the rule's past (what the console's archive is
  * compiled from) and Windows' transitions continue it after the file's last explicit one; the names of Windows' types
  * come from the file (same offset) or its footer, e.g. "CET-1CEST,M3.5.0,M10.5.0/3". Without the file: Windows' data
@@ -181,7 +181,7 @@ static void tzrule_at(TzRule *r, int64_t at, int type, int *cur) {
  * and offset. Returns 0 when the file was found and read. */
 static uint32_t be32(const uint8_t *p) { return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3]; }
 static int tzdb_load(const char *iana, TzRule *r, char *std_name, int32_t *std_off, char *dst_name, int32_t *dst_off) {
-    const char *dirs[3] = {getenv("WT_TZDIR"), "..\\sysdata\\zoneinfo", "C:\\msys64\\usr\\share\\zoneinfo"};
+    const char *dirs[3] = {getenv("HL_TZDIR"), "..\\sysdata\\zoneinfo", "C:\\msys64\\usr\\share\\zoneinfo"};
     std_name[0] = dst_name[0] = 0;
     if (!iana || !iana[0] || strstr(iana, "..") || strchr(iana, ':') || iana[0] == '/' || iana[0] == '\\') return -1;
     for (int k = 0; k < 3; k++) {
@@ -455,7 +455,7 @@ void register_time_imports(void) {
     register_imports(time_imports, (int)(sizeof time_imports / sizeof time_imports[0]));
 }
 
-/* Self-test (WT_SDK_SELFTEST): the rule built from the registry against Windows' own conversion
+/* Self-test (HL_SDK_SELFTEST): the rule built from the registry against Windows' own conversion
  * (SystemTimeToTzSpecificLocalTimeEx with the zone's dynamic information) for EVERY Windows time zone: every half hour of
  * the current year, every 2 h 59 min of 1990..2037; then the handlers on the PC's own zone. */
 #define GP(p) ((uint64_t)(uintptr_t)(p))
@@ -516,8 +516,8 @@ int nntime_selftest(Ctx *c) {
     const TzRule *mine = my_rule();
     long long own = 0, own_bad = 0, two = 0, none = 0;
     location_name(loc);
-    if (getenv("WT_TZ_DUMP")) {                                   /* for tools_audit/patches/close4/tz_rule_check.py */
-        FILE *f = fopen(getenv("WT_TZ_DUMP"), "w");
+    if (getenv("HL_TZ_DUMP")) {                                   /* for tools_audit/patches/close4/tz_rule_check.py */
+        FILE *f = fopen(getenv("HL_TZ_DUMP"), "w");
         if (f) {
             fprintf(f, "%s default %d %d %s\n", loc, mine->ttis[mine->defaulttype].utoff, mine->ttis[mine->defaulttype].isdst, mine->chars + mine->ttis[mine->defaulttype].desigidx);
             for (int k = 0; k < mine->timecnt; k++) fprintf(f, "%lld %d %d %s\n", (long long)mine->ats[k], mine->ttis[mine->types[k]].utoff, mine->ttis[mine->types[k]].isdst, mine->chars + mine->ttis[mine->types[k]].desigidx);

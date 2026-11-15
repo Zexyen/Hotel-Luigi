@@ -304,7 +304,7 @@ bool App::create_ui()
 void App::bind_model()
 {
 	prompts_read();
-	Rml::DataModelConstructor c = ctx->CreateDataModel("wt");
+	Rml::DataModelConstructor c = ctx->CreateDataModel("hl");
 	if (auto h = c.RegisterStruct<CheckRow>())
 	{
 		h.RegisterMember("text", &CheckRow::text);
@@ -430,7 +430,7 @@ void App::bind_model()
 	c.BindEventCallback("remove_textures", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { remove_textures(); });
 	c.BindEventCallback("create_shortcut", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
 		// the release's own launcher at the top, which an update keeps in place; a checkout without one: this program
-		std::string top = paths.repo + "/" LAUNCHER_NAME WT_EXE, said;
+		std::string top = paths.repo + "/" LAUNCHER_NAME HL_EXE, said;
 		const char* desktop = SDL_GetUserFolder(SDL_FOLDER_DESKTOP);
 		create_shortcut(desktop ? desktop : "", is_program(top) ? top : paths.self, paths.ui + "/img/icon.png", &said);
 		shortcut_note = said;
@@ -807,7 +807,7 @@ void App::refresh_title()
 	std::string built_version;
 	std::getline(std::ifstream(paths.build + "/" BUILT_VERSION), built_version);
 	// the game is built on the player's PC, so new launcher files (auto-update or unpacked by hand) leave an old game in build/ [issue 22]
-	stale = built && WT_VERSION[0] == 'v' && built_version != WT_VERSION;
+	stale = built && HL_VERSION[0] == 'v' && built_version != HL_VERSION;
 	status_bad = false;
 	std::string tag, message;
 	const update::State us = update::state(tag, message);
@@ -842,7 +842,7 @@ void App::refresh_title()
 	else if (stale)
 	{
 		status_title = "UPDATED";
-		status_line = "Now " WT_VERSION ". Rebuild before you play.";
+		status_line = "Now " HL_VERSION ". Rebuild before you play.";
 	}
 	else if (returned_code > 0)
 	{
@@ -871,7 +871,7 @@ void App::refresh_title()
 	std::string mods_err;
 	for (const ModEntry& m : list_mods(paths, st.mods_dir.empty() ? paths.mods : st.mods_dir, mods_err))
 		mods_on += m.on;
-	footer_info = std::string(WT_VERSION " · ") + (driver && !std::strcmp(driver, "vulkan") ? "Vulkan" : driver ? driver : "") +
+	footer_info = std::string(HL_VERSION " · ") + (driver && !std::strcmp(driver, "vulkan") ? "Vulkan" : driver ? driver : "") +
 		(pads.empty() ? " · Keyboard and mouse" : " · Controller connected");
 	if (built)
 	{
@@ -881,7 +881,7 @@ void App::refresh_title()
 	}
 	if (!update_tag.empty() && us == update::State::available)
 		footer_info += " · Update " + update_tag + " available";
-	version = WT_VERSION;
+	version = HL_VERSION;
 	// the staircase of bars
 	menu.clear();
 	if (built)
@@ -1342,7 +1342,7 @@ void App::tick()
 					: runner.failed.empty() ? "The build was stopped." : "The " + runner.failed + " step failed; see build/logs.";
 		}
 		else if (built_game)
-			std::ofstream(paths.build + "/" BUILT_VERSION, std::ios::binary) << WT_VERSION;
+			std::ofstream(paths.build + "/" BUILT_VERSION, std::ios::binary) << HL_VERSION;
 		else                                         // #158: made, but without the files that do not decode: hlbuild's warning
 			for (const std::string& l : runner.lines)
 				if (const size_t at = l.find("warning: "); at != std::string::npos)

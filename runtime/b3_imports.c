@@ -146,20 +146,20 @@ static void oe_GetPerformanceConfiguration(Ctx *c) { RET(0x00020003u); }
 /* [witchtime] the program switch (issue 115): the picture book on Bayonetta 3's shelf runs program 1 of the application
  * (the Bayonetta Origins prologue), which runs program 0 again at its end. nn::oe::ExecuteProgram(index, param, size)
  * ends this program on the console and starts the other one, which gets param from TryPopLaunchParameter. Here it
- * writes the switch file (<userdata>/program_switch.bin, or WT_PROGRAM_SWITCH) and ends the process with exit code
- * PROGRAM_SWITCH_EXIT; the launcher then starts program <index> (launcher/src/game_host.cpp). The file: "WTPS", the
+ * writes the switch file (<userdata>/program_switch.bin, or HL_PROGRAM_SWITCH) and ends the process with exit code
+ * PROGRAM_SWITCH_EXIT; the launcher then starts program <index> (launcher/src/game_host.cpp). The file: "HLPS", the
  * program index (u32), the size (u32), the parameter. The program started reads it once and deletes it. */
 #define PROGRAM_SWITCH_EXIT 86
 #define PROGRAM_SWITCH_MAX 0x10000
 static void switch_path(char *p, size_t n) {
-    const char *e = getenv("WT_PROGRAM_SWITCH"), *u = getenv("WT_USERDATA");
+    const char *e = getenv("HL_PROGRAM_SWITCH"), *u = getenv("HL_USERDATA");
     if (e && e[0]) snprintf(p, n, "%s", e);
     else snprintf(p, n, "%s/program_switch.bin", u && u[0] ? u : "../userdata");
 }
 static uint8_t g_launch[PROGRAM_SWITCH_MAX];
 static int g_launch_size = -1;                           /* -1: this start did not come from a program switch */
 static volatile LONG g_launch_read;
-/* boot.c, before the game runs: the parameter a program switch left for this program (WT_PROGRAM = its index, 0 if
+/* boot.c, before the game runs: the parameter a program switch left for this program (HL_PROGRAM = its index, 0 if
  * unset), taken out of the file so a later plain start does not see it */
 void program_switch_take(void) {
     char p[1024];
@@ -167,9 +167,9 @@ void program_switch_take(void) {
     FILE *f = fopen(p, "rb");
     if (!f) return;
     uint8_t h[12];
-    const char *pe = getenv("WT_PROGRAM");
+    const char *pe = getenv("HL_PROGRAM");
     uint32_t want = pe ? (uint32_t)atoi(pe) : 0, index, size;
-    if (fread(h, 1, 12, f) == 12 && !memcmp(h, "WTPS", 4) && (memcpy(&index, h + 4, 4), memcpy(&size, h + 8, 4), index == want)
+    if (fread(h, 1, 12, f) == 12 && !memcmp(h, "HLPS", 4) && (memcpy(&index, h + 4, 4), memcpy(&size, h + 8, 4), index == want)
         && size <= PROGRAM_SWITCH_MAX && fread(g_launch, 1, size, f) == size) {
         g_launch_size = (int)size;
         printf("program switch: started as program %u with a %u-byte launch parameter\n", index, size);
@@ -191,7 +191,7 @@ static void oe_ExecuteProgram(Ctx *c) {
     uint32_t index = (uint32_t)A0, size = (uint32_t)(A2 < PROGRAM_SWITCH_MAX ? A2 : PROGRAM_SWITCH_MAX);
     switch_path(p, sizeof p);
     FILE *f = fopen(p, "wb");
-    int ok = f && fwrite("WTPS", 1, 4, f) == 4 && fwrite(&index, 4, 1, f) == 1 && fwrite(&size, 4, 1, f) == 1
+    int ok = f && fwrite("HLPS", 1, 4, f) == 4 && fwrite(&index, 4, 1, f) == 1 && fwrite(&size, 4, 1, f) == 1
              && fwrite((const void *)(uintptr_t)A1, 1, size, f) == size;
     if (f && fclose(f)) ok = 0;
     printf("\nprogram switch: ExecuteProgram(%u, %u bytes) %s %s\n", index, size, ok ? "written to" : "COULD NOT BE WRITTEN to", p);

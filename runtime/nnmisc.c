@@ -179,7 +179,7 @@ static LARGE_INTEGER g_start;
  * another window had the focus). (2) A window
  * that has never been in the foreground (the automated tests keep theirs off screen) is treated as in focus.
  * (3) Closing the window is the exit request: see oe_exit_request below.
- * WT_FOCUS_NOTIFY=0 turns the focus tracking off. */
+ * HL_FOCUS_NOTIFY=0 turns the focus tracking off. */
 #define OE_MSG_FOCUS_STATE_CHANGED 15u
 static uint8_t g_oe_event[0x40];
 static uint32_t g_oe_queue[16];
@@ -201,7 +201,7 @@ static void oe_track_focus(void) {
     static int enabled = -1;
     static ULONGLONG last;
     ULONGLONG now = GetTickCount64();
-    if (enabled < 0) { const char *e = getenv("WT_FOCUS_NOTIFY"); enabled = !(e && e[0] == '0'); }
+    if (enabled < 0) { const char *e = getenv("HL_FOCUS_NOTIFY"); enabled = !(e && e[0] == '0'); }
     if (!enabled || (now - last < 30 && !g_oe_focus_recheck)) return;
     last = now;
     g_oe_focus_recheck = 0;
@@ -290,12 +290,12 @@ static void settings_CodeEqualsLanguage(Ctx *c) {         /* operator==(const La
 }
 /* nn::oe::GetDesiredLanguage: the language the application should use = the system language when the application
  * supports it, otherwise the system's choice among the supported ones (language_pick.h). The system language here is
- * the Windows display language of the user. WT_LANGUAGE=<code> overrides (for example WT_LANGUAGE=en-US). */
+ * the Windows display language of the user. HL_LANGUAGE=<code> overrides (for example HL_LANGUAGE=en-US). */
 static uint64_t desired_language(void) {
     static uint64_t cached;
     if (cached) return cached;
     char name[LOCALE_NAME_MAX_LENGTH * 3] = "", pick[16];
-    const char *env = getenv("WT_LANGUAGE");
+    const char *env = getenv("HL_LANGUAGE");
     wchar_t wname[LOCALE_NAME_MAX_LENGTH] = L"";
     ULONG count = 0, size = 0;
     if (env && env[0]) snprintf(name, sizeof name, "%s", env);
@@ -319,11 +319,11 @@ static void oe_GetDesiredLanguage(Ctx *c) { RET(desired_language()); }   /* Lang
 /* ---------------------------------------------------------------- nn::err */
 /* The console's error viewer shows "Error Code: 2MMM-DDDD" (2000 + module, description) in a dialog and returns when
  * the user closes it. Here it is a Windows message box on the calling thread, which blocks the same way. Scripted
- * runs (WT_SEQ / WT_PLAY / WT_PRESS / WT_SCRIPT) and WT_ERROR_DIALOG=0 only log, so tests never hang. */
+ * runs (HL_SEQ / HL_PLAY / HL_PRESS / HL_SCRIPT) and HL_ERROR_DIALOG=0 only log, so tests never hang. */
 static void err_dialog(unsigned category, unsigned number) {
-    const char *off = getenv("WT_ERROR_DIALOG");
+    const char *off = getenv("HL_ERROR_DIALOG");
     char text[160];
-    if ((off && off[0] == '0') || getenv("WT_SEQ") || getenv("WT_PLAY") || getenv("WT_PRESS") || getenv("WT_SCRIPT")) return;
+    if ((off && off[0] == '0') || getenv("HL_SEQ") || getenv("HL_PLAY") || getenv("HL_PRESS") || getenv("HL_SCRIPT")) return;
     snprintf(text, sizeof text, "Error Code: %04u-%04u\n\nAn error has occurred.", category, number);
     MessageBoxA(NULL, text, "Error", MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TASKMODAL);
 }
@@ -349,7 +349,7 @@ static HCRYPTPROV crypt_provider(void) {
     InterlockedExchange(&lock, 0);
     return prov;
 }
-int host_fixed_random(void *buffer, uint64_t size, const char *who, uint64_t lr);      /* os_threads.c: WT_FIXED_SEED */
+int host_fixed_random(void *buffer, uint64_t size, const char *who, uint64_t lr);      /* os_threads.c: HL_FIXED_SEED */
 static void random_bytes(void *p, size_t n) {
     if (host_fixed_random(p, n, "nn::crypto / uuid random bytes", 0)) return;
     HCRYPTPROV prov = crypt_provider();
@@ -434,9 +434,9 @@ static const ImportDef fill_imports[] = {
     /* nn::ec, nn::album, nn::ngc */
 };
 
-/* WT_DUMP_UNREG=<file>: write the names of all imports that still have no handler. */
+/* HL_DUMP_UNREG=<file>: write the names of all imports that still have no handler. */
 static void dump_unregistered(void) {
-    const char *path = getenv("WT_DUMP_UNREG");
+    const char *path = getenv("HL_DUMP_UNREG");
     if (!path || !path[0]) return;
     FILE *f = fopen(path, "w");
     if (!f) return;
@@ -449,7 +449,7 @@ static void dump_unregistered(void) {
 int close5_lead_selftest(Ctx *c) {
     int bad = 0, n = 0;
     (void)c;
-    if (!getenv("WT_NO_PROTECT")) {
+    if (!getenv("HL_NO_PROTECT")) {
         n += 3;
         if (!IsBadWritePtr((void *)(uintptr_t)0x7100000000ull, 1)) { bad++; printf("  close5 lead: the first text page is writable\n"); }
         if (!IsBadWritePtr((void *)(uintptr_t)(GUEST_BASE + GUEST_RO_END - 1), 1)) { bad++; printf("  close5 lead: the last read-only data byte is writable\n"); }

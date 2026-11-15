@@ -108,10 +108,10 @@ static const ImportDef lm3_imports[] = {
 static void set_const(uint64_t off, float was, float now, const char *what) {
     float *p = (float *)(uintptr_t)(GUEST_BASE + off);
     if (*p != was) { printf("lm3: %s: main+0x%llx is %g, not %g: left alone\n", what, (unsigned long long)off, *p, was); return; }
-    void *page = (void *)((uintptr_t)p & ~(uintptr_t)0xfff);      /* read-only by now (hostrt.c), unless WT_NO_PROTECT */
+    void *page = (void *)((uintptr_t)p & ~(uintptr_t)0xfff);      /* read-only by now (hostrt.c), unless HL_NO_PROTECT */
     plat_protect(page, 0x1000, PLAT_RW);
     *p = now;
-    if (!getenv("WT_NO_PROTECT")) plat_protect(page, 0x1000, PLAT_RO);
+    if (!getenv("HL_NO_PROTECT")) plat_protect(page, 0x1000, PLAT_RO);
     printf("lm3: %s: main+0x%llx %g -> %g\n", what, (unsigned long long)off, was, now);
 }
 void lm3_image_options(void) {

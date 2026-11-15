@@ -1,7 +1,7 @@
 /* Freestanding setjmp.h for the code compiled on the player's PC (README.md): glibc's x86-64 jmp_buf (200 bytes; the
  * prebuilt sdklift_rt.c sees the same SdkJmpRec through glibc's own header) and setjmp; on Windows mingw-w64's (256 bytes). */
-#ifndef WT_FREESTANDING_SETJMP_H
-#define WT_FREESTANDING_SETJMP_H
+#ifndef HL_FREESTANDING_SETJMP_H
+#define HL_FREESTANDING_SETJMP_H
 #ifdef _WIN32
 /* Windows: mingw-w64's x86-64 jmp_buf (256 bytes) and its setjmp, the UCRT's _setjmp with the frame to unwind to, as the
  * prebuilt sdklift_rt.c sees them through mingw-w64's own header */

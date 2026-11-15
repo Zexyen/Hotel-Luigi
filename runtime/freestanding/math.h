@@ -1,6 +1,6 @@
 /* Freestanding math.h for the code compiled on the player's PC (README.md): glibc's declarations and macros. */
-#ifndef WT_FREESTANDING_MATH_H
-#define WT_FREESTANDING_MATH_H
+#ifndef HL_FREESTANDING_MATH_H
+#define HL_FREESTANDING_MATH_H
 extern double sqrt (double __x) __attribute__ ((__nothrow__ ));
 extern double nearbyint (double __x) __attribute__ ((__nothrow__ ));
 extern double rint (double __x) __attribute__ ((__nothrow__ ));

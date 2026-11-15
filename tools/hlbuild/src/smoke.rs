@@ -6,10 +6,10 @@
 //! --prebuilt: the runtime made by `hlbuild runtime` (as a release ships it), so only game.so is built here; without it
 //! the link step builds the runtime too, against the system's libraries. --lib: a library a release keeps in build/
 //! (libSDL3.so.0, SDL3.dll). Checks that every symbol resolves (`ldd -r`; only the game functions the runtime replaces,
-//! which the stand-in does not have, may stay undefined) and that witch-time-game maps the image with the values game.so
+//! which the stand-in does not have, may stay undefined) and that hotel-luigi-runtime maps the image with the values game.so
 //! holds.
 //!
-//! Windows (on Windows, or --target windows elsewhere): game.dll and witch-time-game.exe. A DLL cannot leave a symbol
+//! Windows (on Windows, or --target windows elsewhere): game.dll and hotel-luigi-runtime.exe. A DLL cannot leave a symbol
 //! undefined, so the game functions the runtime replaces are stand-ins too, and the program starting at all is the check
 //! that every import resolves. With --target windows elsewhere the program runs under Wine (--wine <program>, default wine).
 
@@ -212,11 +212,11 @@ fn run(root: &Path, tmp: &Path, t: Target, prebuilt: Option<&Path>, libs: &[Path
         }
         None => Command::new(&game),
     };
-    // not setup::child_env: it would remove WT_ROMFS
+    // not setup::child_env: it would remove HL_ROMFS
     cmd.arg(&main_elf).current_dir(&run_dir);
     cmd.env("SDL_VIDEO_DRIVER", "offscreen")
         .env("SDL_AUDIO_DRIVER", "dummy")
-        .env("WT_ROMFS", tmp.join("romfs"));
+        .env("HL_ROMFS", tmp.join("romfs"));
     let (_, text, _) = compile::run(&mut cmd, Some(60));
     let mapped: Vec<&str> = text
         .lines()

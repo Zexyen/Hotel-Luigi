@@ -10,7 +10,7 @@
 #include <windows.h>
 #include "runtime.h"
 #include "hostrt.h"
-/* L1 round 3, TEST ONLY: guest sync calls during the WT_L1_TRACE window (display.c) */
+/* L1 round 3, TEST ONLY: guest sync calls during the HL_L1_TRACE window (display.c) */
 int display_l1_trace(void); double display_l1_ms(void); const char *guest_thread_name_of(DWORD tid);
 #define L1O(what, key) do { if (display_l1_trace()) { const char *n_ = guest_thread_name_of(GetCurrentThreadId()); printf("l1-trace: %+8.2f %-26s lr %09llx %s %llx%c", display_l1_ms(), n_ ? n_ : "?", (unsigned long long)c->x[30], what, (unsigned long long)(key), 10); } } while (0)
 
@@ -50,12 +50,12 @@ static SRWLOCK g_table_lock = SRWLOCK_INIT;
 /* Round 17 (P3 section 16): every lock / unlock / event call of every guest thread came through this look-up, which
  * took ONE process-wide lock exclusively. Records are never removed and a record's key and next pointer never change
  * once it is in the table, so a look-up can walk the bucket without the lock; only a miss takes the lock (and looks
- * again under it). WT_OBJ_LOCKFREE=0: the lock at every look-up, as before. */
+ * again under it). HL_OBJ_LOCKFREE=0: the lock at every look-up, as before. */
 #define OBJ_LOCKFREE_DEFAULT 0
 static int g_obj_lf = -1;
 static Obj *obj(uint64_t key) {
     unsigned h = (unsigned)((key >> 3) * 2654435761u) & (BUCKETS - 1);
-    if (g_obj_lf < 0) { const char *e = getenv("WT_OBJ_LOCKFREE"); g_obj_lf = e && e[0] ? atoi(e) != 0 : OBJ_LOCKFREE_DEFAULT; }
+    if (g_obj_lf < 0) { const char *e = getenv("HL_OBJ_LOCKFREE"); g_obj_lf = e && e[0] ? atoi(e) != 0 : OBJ_LOCKFREE_DEFAULT; }
     if (g_obj_lf) {
         Obj *f = *(Obj *volatile *)&g_table[h];
         while (f && f->key != key) f = f->next;
@@ -98,10 +98,10 @@ static void sleep_ns(int64_t ns) {
     /* [Recomps#1] a short sleep yields until its deadline instead of arming the timer: a waitable timer, even a
      * high-resolution one, does not wake before ~0.5 ms, and Bayonetta 2's job system joins its workers with
      * `while (pending > 0) nn::os::SleepThread(1 ns)` [0x7100ead0fc]: on the console a reschedule of a few us, here
-     * 0.5 ms or more per check of the counter (finding 78). WT_SHORT_SLEEP_US=0 restores the timer for every sleep. */
+     * 0.5 ms or more per check of the counter (finding 78). HL_SHORT_SLEEP_US=0 restores the timer for every sleep. */
     {
         static int short_us = -1;
-        if (short_us < 0) { const char *e = getenv("WT_SHORT_SLEEP_US"); short_us = e ? atoi(e) : 200; }
+        if (short_us < 0) { const char *e = getenv("HL_SHORT_SLEEP_US"); short_us = e ? atoi(e) : 200; }
         if (ns <= (int64_t)short_us * 1000) {
             static LARGE_INTEGER qf;
             LARGE_INTEGER s0, now;
@@ -117,9 +117,9 @@ static void sleep_ns(int64_t ns) {
         if (!timer) no_timer = 1;
     }
     due.QuadPart = -((ns + 99) / 100);
-    /* Session 8 (track V), WT_SLEEP_LOG=1: a line for every sleep that lasted 2 ms longer than asked (first 200). */
+    /* Session 8 (track V), HL_SLEEP_LOG=1: a line for every sleep that lasted 2 ms longer than asked (first 200). */
     static int lg = -1; static LONG nl;
-    if (lg < 0) lg = getenv("WT_SLEEP_LOG") && atoi(getenv("WT_SLEEP_LOG"));
+    if (lg < 0) lg = getenv("HL_SLEEP_LOG") && atoi(getenv("HL_SLEEP_LOG"));
     LARGE_INTEGER q0, q1, fq;
     if (lg) QueryPerformanceCounter(&q0);
     if (!timer || !SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE)) Sleep(ns_to_ms(ns));
@@ -146,7 +146,7 @@ static void sleep_ns(int64_t ns) {
  * the order is kept, the spacing is not. */
 #define OS_DEFAULT_PRIORITY 16
 #define OS_DEFAULT_CORE 0                    /* main.npdm: default core id 0 */
-/* Console scheduling model, OPT-IN: WT_OS_CONSOLE_CORES=1 (bounded round 2026-10-09). What the game asks of nn::os in a
+/* Console scheduling model, OPT-IN: HL_OS_CONSOLE_CORES=1 (bounded round 2026-10-09). What the game asks of nn::os in a
  * match (os_thread_report, the list at the end of every run): every thread is created on ONE core of the console's
  * three (mask 1, 2 or 4) except four with mask 7, at the priorities 1, 8, 9, 15, 16, 23 and 31, and the console runs on
  * each core only the highest-priority ready thread of that core. With the switch on:
@@ -164,13 +164,13 @@ static DWORD_PTR g_cc_core[3];
 static int console_cores(void) {
     if (g_cc < 0) {
         int n = 0, on = 0;
-        if (getenv("WT_OS_CONSOLE_CORES")) {
+        if (getenv("HL_OS_CONSOLE_CORES")) {
             DWORD_PTR proc = 0, sys = 0;
             GetProcessAffinityMask(GetCurrentProcess(), &proc, &sys);
             for (int b = (int)(sizeof(DWORD_PTR) * 8) - 1; b >= 0 && n < 3; b--)      /* from the top, every second processor: not two hardware threads of one core */
                 if (proc >> b & 1) { g_cc_core[n++] = (DWORD_PTR)1 << b; b--; }
             on = n == 3;
-            printf("nn::os: console core model %s (WT_OS_CONSOLE_CORES): host processor masks %llx %llx %llx for cores 0 1 2\n", on ? "ON" : "NOT possible (fewer than 3 usable processors)",
+            printf("nn::os: console core model %s (HL_OS_CONSOLE_CORES): host processor masks %llx %llx %llx for cores 0 1 2\n", on ? "ON" : "NOT possible (fewer than 3 usable processors)",
                    (unsigned long long)g_cc_core[0], (unsigned long long)g_cc_core[1], (unsigned long long)g_cc_core[2]);
         }
         g_cc = on;
@@ -233,7 +233,7 @@ void dump_guest_threads(FILE *out) {
     }
 }
 
-/* hitch.c (WT_HITCH): guest thread i -> context, name, host handle; 0 past the end. */
+/* hitch.c (HL_HITCH): guest thread i -> context, name, host handle; 0 past the end. */
 int guest_thread_info(int i, Ctx **c, const char **name, HANDLE *h) {
     if (i < 0 || i >= g_threads_n || i >= 256 || !g_threads[i].o || !g_threads[i].c) return 0;
     *c = g_threads[i].c; *name = g_threads[i].o->name ? (const char *)(uintptr_t)g_threads[i].o->name : NULL; *h = g_threads[i].o->finished ? NULL : g_threads[i].o->thread;
@@ -252,7 +252,7 @@ const char *guest_thread_name_of(DWORD tid) {
 static DWORD WINAPI thread_main(LPVOID arg) {
     Obj *o = arg;
     t_thread = o->key;
-    { void display_perf_thread(void); display_perf_thread(); }      /* track V session 14: the game's threads on the performance cores of a hybrid CPU (display.c; WT_PCORES=0 off) */
+    { void display_perf_thread(void); display_perf_thread(); }      /* track V session 14: the game's threads on the performance cores of a hybrid CPU (display.c; HL_PCORES=0 off) */
     Ctx *c = new_ctx(o->stack + o->stack_size);
     wr64(c->tpidr + 0x1f8, o->key);                   /* Horizon thread-local region: the ThreadType pointer lives at +0x1f8 */
     LONG slot = InterlockedIncrement(&g_threads_n) - 1;
@@ -397,7 +397,7 @@ static void os_SetTlsValue(Ctx *c) { t_tls[A0 & 63] = A1; }
 
 /* ---------------------------------------------------------------- mutexes */
 static void mtx_init(Ctx *c) { (void)obj(A0); }
-/* Round 17, MEASUREMENT (WT_MUTEXSTAT=1; nothing runs without it): calls of the libc++ / nn::os mutex lock import, the
+/* Round 17, MEASUREMENT (HL_MUTEXSTAT=1; nothing runs without it): calls of the libc++ / nn::os mutex lock import, the
  * time in the table look-up and in the lock itself, and how many calls found the mutex taken, for the thread that
  * queues the presents (the game's main thread) and for all other threads; a line every 200,000 calls of the main thread. */
 unsigned long nvn_front_present_tid(void);                 /* nvn_gl.c */
@@ -432,13 +432,13 @@ static void mtx_lock_stat(Ctx *c) {
     }
 }
 static void mtx_lock(Ctx *c) {
-    if (g_mstat < 0) g_mstat = getenv("WT_MUTEXSTAT") != NULL;
+    if (g_mstat < 0) g_mstat = getenv("HL_MUTEXSTAT") != NULL;
     if (g_mstat) { mtx_lock_stat(c); return; }
     EnterCriticalSection(&obj(A0)->cs);
 }
 static void mtx_unlock(Ctx *c) { LeaveCriticalSection(&obj(A0)->cs); }
 static void mtx_trylock(Ctx *c) { RET(TryEnterCriticalSection(&obj(A0)->cs) ? 1 : 0); }
-/* hitch.c (WT_HITCH): host thread id that owns the guest mutex `key` now, 0 = nobody. Diagnostics only. */
+/* hitch.c (HL_HITCH): host thread id that owns the guest mutex `key` now, 0 = nobody. Diagnostics only. */
 DWORD os_mutex_owner(uint64_t key) { return key ? (DWORD)(uintptr_t)obj(key)->cs.OwningThread : 0; }
 static void pmtx_lock(Ctx *c) { EnterCriticalSection(&obj(A0)->cs); RET(0); }
 static void pmtx_unlock(Ctx *c) { LeaveCriticalSection(&obj(A0)->cs); RET(0); }
@@ -588,13 +588,13 @@ static void os_ConvertToTimeSpan(Ctx *c) { RET((uint64_t)((double)(int64_t)A0 * 
 /* The console fills the buffer from a generator seeded with kernel entropy: unpredictable bytes. Same here, from the
  * system generator (RtlGenRandom). */
 BOOLEAN NTAPI SystemFunction036(PVOID buffer, ULONG length);
-/* Test switch WT_FIXED_SEED=<n> (track V, session 4): the bytes come from a splitmix64 stream seeded with n instead, so
+/* Test switch HL_FIXED_SEED=<n> (track V, session 4): the bytes come from a splitmix64 stream seeded with n instead, so
  * that a scripted match meets the same random stage / CPU fighter in every run. Each call is logged (first 16). */
 int host_fixed_random(void *buffer, uint64_t size, const char *who, uint64_t lr) {
     static int mode = -1;
     static volatile LONG lock, calls;
     static uint64_t state;
-    if (mode < 0) { const char *e = getenv("WT_FIXED_SEED"); if (e && *e) { state = strtoull(e, NULL, 0) * 0x9E3779B97F4A7C15ull + 1; mode = 1; } else mode = 0; }
+    if (mode < 0) { const char *e = getenv("HL_FIXED_SEED"); if (e && *e) { state = strtoull(e, NULL, 0) * 0x9E3779B97F4A7C15ull + 1; mode = 1; } else mode = 0; }
     if (!mode) return 0;
     while (InterlockedExchange(&lock, 1)) YieldProcessor();
     for (uint64_t i = 0; i < size; i += 8) {

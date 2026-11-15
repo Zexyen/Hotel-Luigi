@@ -24,10 +24,10 @@ std::string program_build(const Paths& paths, int program) { return paths.build 
 // the save folder, where the runtime leaves the switch file (runtime/b3_imports.c switch_path; ..\userdata from build/run)
 std::string switch_file(const Paths& paths)
 {
-	const char* e = std::getenv("WT_PROGRAM_SWITCH");
+	const char* e = std::getenv("HL_PROGRAM_SWITCH");
 	if (e && e[0])
 		return e;
-	const char* u = std::getenv("WT_USERDATA");
+	const char* u = std::getenv("HL_USERDATA");
 	return (u && u[0] ? std::string(u) : paths.build + "/userdata") + "/program_switch.bin";
 }
 
@@ -37,16 +37,16 @@ volatile int32_t* g_display_close = nullptr;  // runtime/display.c (a LONG): the
 bool g_relaunch = true;                       // the launcher starts again when the game ends (not with --play)
 int g_out = -1, g_err = -1;                   // the launcher's own stdout / stderr while the game writes to its log
 // The environment as it was before the game ran. The game hands its options on in variables of its own (RECOMPS_ASPECT,
-// RECOMPS_UNCAP, WT_CUTSCENE_FPS ...: runtime/gfx_options.c), where a set variable wins over graphics.ini: left in the
+// RECOMPS_UNCAP, HL_CUTSCENE_FPS ...: runtime/gfx_options.c), where a set variable wins over graphics.ini: left in the
 // launcher that starts again, the first run's picture shape and frame rate stayed whatever Settings said afterwards
 std::vector<std::string> g_env;
 std::vector<char*> g_envp;
 
-// The game's output goes to build/run/witch-time-game.log, as on Windows: a launcher started from a desktop entry has no
+// The game's output goes to build/run/hotel-luigi-runtime.log, as on Windows: a launcher started from a desktop entry has no
 // terminal, and the log is what a bug report needs
 void log_to_file(const Paths& paths)
 {
-	std::string log = paths.run + "/witch-time-game.log";
+	std::string log = paths.run + "/hotel-luigi-runtime.log";
 	std::fprintf(stderr, "launcher: the game's output goes to %s\n", log.c_str());
 	std::fflush(nullptr);
 	int fd = open(log.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
@@ -85,7 +85,7 @@ int program_switch_target(const Paths& paths)
 	FILE* f = std::fopen(switch_file(paths).c_str(), "rb");
 	if (!f)
 		return -1;
-	bool ok = std::fread(h, 1, sizeof h, f) == sizeof h && !std::memcmp(h, "WTPS", 4);
+	bool ok = std::fread(h, 1, sizeof h, f) == sizeof h && !std::memcmp(h, "HLPS", 4);
 	std::fclose(f);
 	uint32_t index = 0;
 	std::memcpy(&index, h + 4, 4);
@@ -109,27 +109,27 @@ GameStart prepare_game(const Paths& paths, int program, bool after_switch)
 	// as Witch Time's docs/STATUS.md runs it: the dump's data through targets/romfs, saves in build/userdata (..\userdata from build/run).
 	// After another program ran, by a switch or before it crashed, the variables it had are set again (Linux starts the
 	// launcher again in the same environment)
-	const char* last = std::getenv("WT_PROGRAM");
+	const char* last = std::getenv("HL_PROGRAM");
 	const bool other = after_switch || (last && std::strcmp(last, std::to_string(program).c_str()) != 0);
-	set_env("WT_ROMFS", paths.repo + "/targets" + program_dir(program) + "/romfs", other);
-	set_env("WT_PROGRAM", std::to_string(program), true);
+	set_env("HL_ROMFS", paths.repo + "/targets" + program_dir(program) + "/romfs", other);
+	set_env("HL_PROGRAM", std::to_string(program), true);
 	if (program || other)
 	{                                            // each program its own shaders: the container store is tied to its root_000.pkz
 		const std::string own = program ? "-program" + std::to_string(program) : "";
-		set_env("WT_VK_CACHE", paths.build + "/cache/vk" + own, true);
-		set_env("WT_VK_CONTAINERS", paths.build + "/cache/vk_containers2" + own, true);
+		set_env("HL_VK_CACHE", paths.build + "/cache/vk" + own, true);
+		set_env("HL_VK_CONTAINERS", paths.build + "/cache/vk_containers2" + own, true);
 	}
 	// program N's exe is in build/programN, where the runtime's <exe>/../config would be build/config
 	const std::string config = paths.config + "/controllers.ini";
-	const char* c = std::getenv("WT_CONFIG");
+	const char* c = std::getenv("HL_CONFIG");
 	if (program)
-		set_env("WT_CONFIG", config, false);
+		set_env("HL_CONFIG", config, false);
 	else if (c && config == c)
-		unset_env("WT_CONFIG");                  // ours, from program N: program 0 finds config/ itself, and refreshes graphics.ini
-	set_env("WT_TITLE", APP_NAME, false);
-	set_env("WT_VK_MISSING", "warn", false);
+		unset_env("HL_CONFIG");                  // ours, from program N: program 0 finds config/ itself, and refreshes graphics.ini
+	set_env("HL_TITLE", APP_NAME, false);
+	set_env("HL_VK_MISSING", "warn", false);
 	// Linux runs the game in this process, under the launcher's name, which nnaudio.c's test-copy rule would leave silent
-	set_env("WT_VOLUME", "100", false);
+	set_env("HL_VOLUME", "100", false);
 	if (!change_dir(paths.run))
 	{
 		g.error = "Cannot open " + paths.run + ".";
@@ -139,14 +139,14 @@ GameStart prepare_game(const Paths& paths, int program, bool after_switch)
 	// Windows: the runtime makes a window of its own (runtime/display.c), so the game always runs as a program of its own
 	return g;
 #else
-	const std::string lib = build + "/libwitchtime.so";
+	const std::string lib = build + "/libhotelluigi.so";
 	if (file_exists(lib))
 	{
 		g.host = dlopen(lib.c_str(), RTLD_NOW | RTLD_GLOBAL);
 		if (!g.host)
-			std::fprintf(stderr, "launcher: %s; starting witch-time-game instead\n", dlerror());
+			std::fprintf(stderr, "launcher: %s; starting hotel-luigi-runtime instead\n", dlerror());
 	}
-	g.in_process = g.host && dlsym(g.host, "wt_host_main") && dlsym(g.host, "plat_exit_hook");
+	g.in_process = g.host && dlsym(g.host, "hl_host_main") && dlsym(g.host, "plat_exit_hook");
 	return g;
 #endif
 }
@@ -157,10 +157,10 @@ void run_in_process(GameStart&, const Paths&, SDL_Window*, bool) { std::abort();
 int run_child(const Paths& paths, SDL_Window* window, int program)
 {
 	SDL_HideWindow(window);
-	// its output goes to build/run/witch-time-game.log: this program has no console to show it in
+	// its output goes to build/run/hotel-luigi-runtime.log: this program has no console to show it in
 	ChildProcess game;
 	int code = -1;
-	if (game.start({program_build(paths, program) + "/" + GAME_EXE, main_elf(paths, program)}, paths.run, paths.run + "/witch-time-game.log"))
+	if (game.start({program_build(paths, program) + "/" + GAME_EXE, main_elf(paths, program)}, paths.run, paths.run + "/hotel-luigi-runtime.log"))
 		while (!game.wait(&code, 50))
 			SDL_PumpEvents();
 	SDL_ShowWindow(window);
@@ -172,7 +172,7 @@ void run_in_process(GameStart& start, const Paths& paths, SDL_Window* window, bo
 {
 	g_relaunch = relaunch;
 	using HostMain = int (*)(int, char**);
-	auto host_main = reinterpret_cast<HostMain>(dlsym(start.host, "wt_host_main"));
+	auto host_main = reinterpret_cast<HostMain>(dlsym(start.host, "hl_host_main"));
 	auto exit_hook = static_cast<void (**)(int)>(dlsym(start.host, "plat_exit_hook"));
 	g_display_close = static_cast<volatile int32_t*>(dlsym(start.host, "g_display_close"));
 	g_self = paths.self;
@@ -182,8 +182,8 @@ void run_in_process(GameStart& start, const Paths& paths, SDL_Window* window, bo
 		g_envp.push_back(e.data());
 	g_envp.push_back(nullptr);
 	*exit_hook = on_game_exit;
-	SDL_SetPointerProperty(SDL_GetGlobalProperties(), "witchtime.window", window);
-	std::string exe = program_build(paths, start.program) + "/witch-time-game", elf = main_elf(paths, start.program);
+	SDL_SetPointerProperty(SDL_GetGlobalProperties(), "hotelluigi.window", window);
+	std::string exe = program_build(paths, start.program) + "/hotel-luigi-runtime", elf = main_elf(paths, start.program);
 	char* argv[] = {exe.data(), elf.data(), nullptr};
 	log_to_file(paths);
 	int code = host_main(2, argv);
@@ -195,7 +195,7 @@ void run_in_process(GameStart& start, const Paths& paths, SDL_Window* window, bo
 int run_child(const Paths& paths, SDL_Window* window, int program)
 {
 	SDL_HideWindow(window);
-	std::string exe = program_build(paths, program) + "/witch-time-game", elf = main_elf(paths, program);
+	std::string exe = program_build(paths, program) + "/hotel-luigi-runtime", elf = main_elf(paths, program);
 	std::fflush(nullptr);                      // the child must not write the launcher's pending output again
 	pid_t pid = fork();
 	if (pid == 0)
