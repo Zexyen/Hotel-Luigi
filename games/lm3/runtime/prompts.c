@@ -17,7 +17,8 @@
  * In the rooms and on dialog buttons the game shows pictures instead: small ASTC 4x4 images with mip levels, one or two
  * buttons each, a dark letter on a shaded cap (ICONS: their hashes and where the letter is). The cap stays; the letter is
  * painted over with the cap's shade and the family's symbol or name is drawn there, every level, as luminance + alpha
- * ASTC blocks (astc_la). Not replaced: SL / SR, sticks, HOME, the four-dot pictures; and the pictures of the level archives. */
+ * ASTC blocks (astc_la), or RGBA ones where the cap is coloured (astc_rgba). The level archives bring their own copies
+ * (the prompts over what Luigi can use), in ICONS too. Not replaced: SL / SR, sticks, HOME, the four-dot pictures. */
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -238,7 +239,7 @@ static void paint(int family, int by_letter, int ab) {
 
 /* ---------------------------------------------------------------- the buttons that are pictures */
 #define FMT_ASTC4 0x87
-typedef struct { uint64_t hash; uint8_t g, x, y, w, h, cut; } Icon;      /* the letter's box; cut: the symbol is a hole in a white disc */
+typedef struct { uint64_t hash; uint8_t g; uint16_t x, y, w, h; uint8_t cut; } Icon;      /* the letter's box; cut: the symbol is a hole in a white disc */
 static const Icon ICONS[] = {                               /* the entries of one picture follow each other */
     {0x06ffb48253c64b6eull, G_Y, 21, 19, 20, 28, 0},
     {0x110fa4f6150eeba1ull, G_ZL, 16, 23, 32, 22, 0},
@@ -277,6 +278,21 @@ static const Icon ICONS[] = {                               /* the entries of on
     {0xd938fc0b76712c0eull, G_ZL, 84, 25, 32, 18, 0},
     {0x17c28e08ebe051adull, G_A, 74, 46, 104, 111, 0},
     {0x76d20b5feb0ada12ull, G_A, 74, 68, 106, 113, 0},
+    {0x8d42666c8c512a29ull, G_A, 37, 23, 52, 55, 0},      /* from here: the pictures of the level archives */
+    {0x8d620f5c51278930ull, G_A, 37, 34, 52, 55, 0},
+    {0x0fc5194d1a2c0cd7ull, G_ZR, 14, 26, 35, 18, 0},
+    {0x15b5e161f11d2065ull, G_A, 18, 17, 28, 28, 0},
+    {0x24ef2c2c6b831f43ull, G_ZL, 19, 26, 32, 18, 0},
+    {0x27c218fa072243eeull, G_ZL, 19, 18, 32, 18, 0},
+    {0x33ce2228aac199d1ull, G_ZR, 14, 18, 35, 18, 0},
+    {0x474c5ec804e2b421ull, G_ZL, 19, 18, 32, 18, 0},
+    {0x8c2b150b9859cab6ull, G_ZL, 19, 26, 32, 18, 0},
+    {0xb9c258a73d15e624ull, G_X, 19, 19, 27, 28, 0},
+    {0xd4d32f36697b95ebull, G_A, 19, 12, 25, 27, 0},
+    {0xf54b1bbe63dcdf85ull, G_A, 38, 34, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 166, 34, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 294, 34, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 422, 34, 50, 54, 0},      /* 512 x 512, coloured: A filling up with green while it is held, 16 steps */
+    {0xf54b1bbe63dcdf85ull, G_A, 38, 162, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 166, 162, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 294, 162, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 422, 162, 50, 54, 0},
+    {0xf54b1bbe63dcdf85ull, G_A, 38, 290, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 166, 290, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 294, 290, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 422, 290, 50, 54, 0},
+    {0xf54b1bbe63dcdf85ull, G_A, 38, 418, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 166, 418, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 294, 418, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 422, 418, 50, 54, 0},
 };
 #define ICON_N (sizeof ICONS / sizeof ICONS[0])
 typedef struct { const Icon *first; uint8_t *mem, *orig, *shown; TexLayout L; } LiveIcon;
@@ -298,6 +314,28 @@ static void astc_la(const uint8_t *px, uint8_t *out) {
     }
     memcpy(out, &lo, 8); memcpy(out + 8, &hi, 8);
 }
+/* the same for a coloured block: RGBA endpoints of 8 bits, 16 weights of 2 bits */
+static void astc_rgba(const uint8_t *px, uint8_t *out) {
+    int a = 0, b = 0, best = 0, d[4];
+    for (int i = 0; i < 16; i++) for (int j = i + 1; j < 16; j++) {
+        int n = 0;
+        for (int c = 0; c < 4; c++) n += (px[i * 4 + c] - px[j * 4 + c]) * (px[i * 4 + c] - px[j * 4 + c]);
+        if (n > best) { best = n; a = i; b = j; }
+    }
+    if (px[a * 4] + px[a * 4 + 1] + px[a * 4 + 2] > px[b * 4] + px[b * 4 + 1] + px[b * 4 + 2]) { int t = a; a = b; b = t; }      /* the larger sum second, or the decoder swaps them */
+    memset(out, 0, 16);
+    #define BITS(at, n, v) for (int k_ = 0; k_ < (n); k_++) if ((v) >> k_ & 1) out[((at) + k_) >> 3] |= (uint8_t)(1 << (((at) + k_) & 7))
+    BITS(0, 11, 0x42); BITS(13, 4, 12);
+    for (int c = 0; c < 4; c++) { BITS(17 + c * 16, 8, px[a * 4 + c]); BITS(25 + c * 16, 8, px[b * 4 + c]); d[c] = px[b * 4 + c] - px[a * 4 + c]; }
+    for (int i = 0; i < 16; i++) {
+        int t = 0;
+        for (int c = 0; c < 4; c++) t += (px[i * 4 + c] - px[a * 4 + c]) * d[c];
+        int q = best ? (t * 6 / best + 1) / 2 : 0;
+        q = q < 0 ? 0 : q > 3 ? 3 : q;
+        for (int k = 0; k < 2; k++) if (q >> k & 1) out[(127 - (i * 2 + k)) >> 3] |= (uint8_t)(1 << ((127 - (i * 2 + k)) & 7));      /* weights come from the block's end, backwards */
+    }
+    #undef BITS
+}
 /* astc_la against the decoder the renderers use: 0 = it cannot be trusted here, and the pictures stay the game's */
 static int astc_ok(void) {
     static int ok = -1;
@@ -307,6 +345,10 @@ static int astc_ok(void) {
         astc_la(px, blk);
         ok = tex_decode_block_rgba8(FMT_ASTC4, blk, back, 16) == 0;
         for (int i = 0; ok && i < 64; i++) ok = abs(px[i] - back[i]) <= 14;
+        for (int i = 0; i < 16; i++) { px[i * 4] = (uint8_t)(20 + i * 3); px[i * 4 + 1] = (uint8_t)(60 + i * 12); px[i * 4 + 2] = (uint8_t)(10 + i); px[i * 4 + 3] = (uint8_t)(255 - i * 4); }
+        astc_rgba(px, blk);
+        ok = ok && tex_decode_block_rgba8(FMT_ASTC4, blk, back, 16) == 0;
+        for (int i = 0; ok && i < 64; i++) ok = abs(px[i] - back[i]) <= 34;      /* 4 weight steps */
         if (!ok) printf("button prompts: the ASTC self-check failed, the game's button pictures stay\n");
     }
     return ok;
@@ -350,15 +392,17 @@ static void stamp(uint8_t *rgba, const uint8_t *was, int w, int h, const Icon *i
     box[0] = x0 < box[0] ? x0 : box[0]; box[1] = y0 < box[1] ? y0 : box[1]; box[2] = x1 > box[2] ? x1 : box[2]; box[3] = y1 > box[3] ? y1 : box[3];
     long frame = 0, fn = 0;
     int lo = 255, hi = 0;
+    #define LUM(p) ((p)[0] > (p)[1] ? ((p)[0] > (p)[2] ? (p)[0] : (p)[2]) : ((p)[1] > (p)[2] ? (p)[1] : (p)[2]))      /* a cap may be coloured */
     for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) {
-        int v = was[((size_t)y * w + x) * 4];
+        int v = LUM(was + ((size_t)y * w + x) * 4);
         if (x < ic->x || x >= ic->x + ic->w || y < ic->y || y >= ic->y + ic->h) { frame += v; fn++; }
         lo = v < lo ? v : lo; hi = v > hi ? v : hi;
     }
     int light = !fn || frame / fn > 127, inkv = light ? lo : hi;      /* a dark letter on a light cap, or the other way round */
     for (int y = y0; y < y1; y++) {
         int face = light ? 0 : 255;
-        for (int x = x0 > 2 ? x0 - 2 : 0; x < (x1 + 2 < w ? x1 + 2 : w); x++) { int v = was[((size_t)y * w + x) * 4]; face = light ? (v > face ? v : face) : (v < face ? v : face); }
+        const uint8_t *fp = was + ((size_t)y * w + x0) * 4;      /* the texel of that shade: its colour */
+        for (int x = x0 > 2 ? x0 - 2 : 0; x < (x1 + 2 < w ? x1 + 2 : w); x++) { const uint8_t *p = was + ((size_t)y * w + x) * 4; int v = LUM(p); if (light ? v > face : v < face) { face = v; fp = p; } }
         for (int x = x0; x < x1; x++) {
             int i0 = (int)floorf(((x - cx) / k + mx) * SS + .5f), i1 = (int)floorf(((x + 1 - cx) / k + mx) * SS + .5f);
             int j0 = (int)floorf(((y - cy) / k + my) * SS + .5f), j1 = (int)floorf(((y + 1 - cy) / k + my) * SS + .5f), n = 0;
@@ -368,9 +412,10 @@ static void stamp(uint8_t *rgba, const uint8_t *was, int w, int h, const Icon *i
             int c = n * 255 / ((i1 - i0) * (j1 - j0));
             uint8_t *px = rgba + ((size_t)y * w + x) * 4;
             if (ic->cut) { px[0] = px[1] = px[2] = 255; px[3] = (uint8_t)(255 - c); }
-            else px[0] = px[1] = px[2] = (uint8_t)(face + (inkv - face) * c / 255);
+            else for (int ch = 0; ch < 3; ch++) px[ch] = (uint8_t)(fp[ch] + ((face ? inkv * fp[ch] / face : inkv) - fp[ch]) * c / 255);
         }
     }
+    #undef LUM
 }
 /* every live picture from the game's own blocks, like paint() */
 static void paint_icons(int family, int by_letter, int ab) {
@@ -404,7 +449,9 @@ static void paint_icons(int family, int by_letter, int ab) {
                         int tx = bx * 4 + x < lw ? bx * 4 + x : lw - 1, ty = by * 4 + y < lh ? by * 4 + y : lh - 1;
                         memcpy(px + (y * 4 + x) * 4, rgba + ((size_t)ty * lw + tx) * 4, 4);
                     }
-                    astc_la(px, lin + ((size_t)by * wb + bx) * 16);
+                    int grey = 1;
+                    for (int i = 0; grey && i < 16; i++) grey = abs(px[i * 4] - px[i * 4 + 1]) < 9 && abs(px[i * 4 + 1] - px[i * 4 + 2]) < 9;
+                    (grey ? astc_la : astc_rgba)(px, lin + ((size_t)by * wb + bx) * 16);
                 }
                 tex_swizzle_level(L, lv, lin, l->shown + L->lvl_offset[lv]);
             }
@@ -443,7 +490,7 @@ void prompts_tick(void) {
 
 /* a picture of ICONS? */
 static void icon_texture(uint8_t *mem, const uint8_t *limit, const TexLayout *L) {
-    if (L->width > 256 || L->height > 256 || L->layers != 1 || L->linear || L->levels > TEX_MAX_LEVELS || (limit && mem + L->layer_size > limit)) return;
+    if (L->width > 512 || L->height > 512 || L->layers != 1 || L->linear || L->levels > TEX_MAX_LEVELS || (limit && mem + L->layer_size > limit)) return;
     uint64_t h = 0xcbf29ce484222325ull;
     for (size_t i = 0; i < L->lvl_size[0]; i++) h = (h ^ mem[i]) * 0x100000001b3ull;
     for (const Icon *ic = ICONS; ic < ICONS + ICON_N; ic++) if (ic->hash == h && ic->x + ic->w <= L->width && ic->y + ic->h <= L->height) {
