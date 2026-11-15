@@ -121,8 +121,8 @@ static const char *const k_default_ini =
 "hud_area = screen\r\n"
 "\r\n"
 "; frame_time_overlay = off | on\r\n"
-";   on: the average frame time of the last second in the window title ('.. fps - 16.67 ms per frame') and as a\r\n"
-";   'frame-time:' line in the log. (Bars drawn into the picture are not implemented yet.)\r\n"
+";   on: the frame rate and the average frame time of the last second at the top right of the picture (Vulkan), in\r\n"
+";   the window title ('.. fps - 16.67 ms per frame') and as a 'frame-time:' line in the log. Also a row of the F1 menu.\r\n"
 "frame_time_overlay = off\r\n"
 "\r\n"
 "; frame_rate = 30 | 60 .. 120\r\n"
@@ -511,7 +511,7 @@ int gfx_option_set(const char *key, const char *val) {
     g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch; g_opt.cutscene_fps = t.cutscene_fps;
     g_opt.texture_lod_bias = t.texture_lod_bias; g_opt.scale = t.scale; g_opt.hud_centre = t.hud_centre;
     g_opt.model_lod_high = t.model_lod_high; g_opt.no_film_grain = t.no_film_grain; g_opt.upscaler = t.upscaler;
-    g_opt.hdr = t.hdr; g_opt.hdr_paper_white = t.hdr_paper_white; g_opt.hdr_peak = t.hdr_peak;      /* [witchtime] nvn_vk_draw.c reads them at every present */
+    g_opt.hdr = t.hdr; g_opt.hdr_paper_white = t.hdr_paper_white; g_opt.hdr_peak = t.hdr_peak; g_opt.overlay = t.overlay;      /* [witchtime] nvn_vk_draw.c reads them at every present */
     printf("graphics options: %s = %s written to %s\n", key, val, path);
     fflush(stdout);
     return 1;

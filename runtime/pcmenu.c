@@ -80,6 +80,8 @@ static const Row k_rows[] = {
      {"auto", "display", "clock", "off", "on", "mailbox"}, {"Auto", "Display", "Clock", "Off", "On", "Mailbox"}},
     {"frame_rate", "Frame rate", "30: the game as made. Above: a frame for every display refresh at that rate; the game's speed stays the same. Applies at the next start.", NULL, "30", A_RESTART, 0,
      {"30", "60", "90", "120"}, {"30 fps", "60 fps", "90 fps", "120 fps"}},
+    {"frame_time_overlay", "Performance overlay", "The frame rate and the frame time of the last second, at the top right of the picture.", NULL, "off", A_LIVE, 0,
+     {"off", "on"}, {"Off", "On"}},
     {"resolution_scale", "Internal resolution", "The size the game renders at, times its own. Applies when this panel closes. The first time away from 1.0 the game may stop for a while as its shaders are prepared.", "WT_VK_SCALE", "1.0", A_SCALE, 0,
      {"0.4", "0.5", "0.6", "0.75", "0.8", "1.0", "1.2", "1.6", "2.0", "2.4", "3.0"},
      {"0.4 \xC3\x97", "0.5 \xC3\x97", "0.6 \xC3\x97", "0.75 \xC3\x97", "0.8 \xC3\x97", "1.0 \xC3\x97", "1.2 \xC3\x97", "1.6 \xC3\x97", "2.0 \xC3\x97", "2.4 \xC3\x97", "3.0 \xC3\x97"}},
@@ -534,6 +536,26 @@ static void draw_debug(int W, int H) {
     }
     text(&g_f_ui, (float)pad, pad + rh * (g_dbg.n + 1) + (int)(rh * 0.72f), g_dbg.foot, 14 * s, C_PALE, 0);
 }
+/* The performance overlay (frame_time_overlay = on): display.c's last second at the top right, over the running game as
+ * the debug list is (kind 2), which is shown instead of it while it is on. Drawn again only when its text changed. */
+static char g_perf[32];
+void pcmenu_perf(int fps, double ms) {
+    char t[sizeof g_perf];
+    snprintf(t, sizeof t, "%d fps  %.1f ms", fps, ms);
+    AcquireSRWLockExclusive(&g_lock);
+    if (strcmp(t, g_perf) && (g_f_head.data || fonts_init())) { strcpy(g_perf, t); g_ver++; }
+    ReleaseSRWLockExclusive(&g_lock);
+}
+static int perf_on(void) { return g_perf[0] && gfx_options()->overlay; }
+static void draw_perf(int W, int H) {
+    float s = scale_of(W, H), px = 17 * s;
+    int pad = (int)(8 * s), w = (int)text_w(&g_f_head, g_perf, px, 0) + 2 * pad, h = (int)(26 * s);
+    alloc_panel(w, h);
+    if (!g_px) return;
+    g_rect[0] = W - w - pad; g_rect[1] = pad; g_rect[2] = w; g_rect[3] = h;
+    rect(0, 0, w, h, C_DARK, 1);
+    text(&g_f_head, (float)pad, (int)(h * 0.72f), g_perf, px, C_YELLOW, 0);
+}
 /* the render thread (nvn_vk_draw.c): the first-start screen's numbers; reading: the game data is still being read */
 void pcmenu_prep_show(int pct, long long done, long long total, int eta, int reading, const char *info) {
     AcquireSRWLockExclusive(&g_lock);
@@ -552,16 +574,17 @@ void pcmenu_prep_hide(void) {
 
 /* render thread (nvn_vk_pcmenu.c): the panel (or the hint) for this window size, drawn again when something changed */
 int pcmenu_is_open(void) { return g_open != 0; }
-int pcmenu_kind(void) { return g_open ? 1 : g_prep.on ? 3 : g_dbg.on ? 2 : 0; }      /* what is shown: the menu, the first-start screen, a debug list */
+int pcmenu_kind(void) { return g_open ? 1 : g_prep.on ? 3 : g_dbg.on || perf_on() ? 2 : 0; }      /* what is shown: the menu, the first-start screen, a debug list or the performance overlay */
 int pcmenu_settled(void) { return pcmenu_kind() != 1 || (!g_close_at && GetTickCount64() - g_open_at >= 1000); }    /* the menu done opening (its slide, its rows): WT_PCMENU_SHOT waits for it */
 int pcmenu_visible(void) { return pcmenu_kind() != 0; }
 int pcmenu_panel_size(int W, int H, int r[4], unsigned *gen) {
     static int drawn_kind = -1;
-    int kind = pcmenu_kind();
+    int kind = pcmenu_kind(), dbg = g_dbg.on;
+    if (kind == 2 && !dbg) kind = 4;                       /* the performance overlay: the renderer's kind 2, its own drawing */
     if (!kind) return 0;
     AcquireSRWLockExclusive(&g_lock);
     if (g_drawn_ver != g_ver || g_for_w != W || g_for_h != H || drawn_kind != kind) {
-        if (kind == 1) draw_panel(W, H); else if (kind == 2) draw_debug(W, H); else draw_prep(W, H);
+        if (kind == 1) draw_panel(W, H); else if (kind == 2) draw_debug(W, H); else if (kind == 4) draw_perf(W, H); else draw_prep(W, H);
         g_drawn_ver = g_ver; g_for_w = W; g_for_h = H; drawn_kind = kind; g_gen++;
     }
     memcpy(r, g_rect, sizeof g_rect); *gen = g_gen;

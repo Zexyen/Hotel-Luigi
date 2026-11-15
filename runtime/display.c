@@ -900,6 +900,7 @@ static void clock_stat(LONG64 n, LARGE_INTEGER now) {
         (long long)(g_cs_hist[0] - h_last[0]), (long long)(g_cs_hist[1] - h_last[1]), (long long)(g_cs_hist[2] - h_last[2]), (long long)(g_cs_hist[3] - h_last[3]), (long long)(late - late_last), 10);
     t_last = now; sig_last = sig; late_last = late; steps_last = g_cs_steps; memcpy(h_last, g_cs_hist, sizeof h_last);
 }
+void pcmenu_perf(int fps, double ms);                      /* pcmenu.c: the performance overlay's numbers */
 /* New pacing, part 1 (nvnQueuePresentTexture, after the frame is in the window): decides the refresh that shows it. */
 static void frame_queued(void) {
     static LARGE_INTEGER second_start;
@@ -938,6 +939,7 @@ static void frame_queued(void) {
         if (gfx_options()->overlay && second_frames) {       /* track O: frame_time_overlay = on */
             double ms = (double)(now.QuadPart - second_start.QuadPart) * 1000.0 / (double)g_freq.QuadPart / (double)second_frames;
             printf("frame-time: %.2f ms per frame over the last second (%lld frames)\n", ms, (long long)second_frames);
+            pcmenu_perf((int)second_frames, ms);
             snprintf(title, sizeof title, "%s - frame %lld - %lld fps - %.2f ms per frame", g_title, (long long)n, (long long)second_frames, ms);
         } else
         snprintf(title, sizeof title, "%s - frame %lld - %lld fps", g_title, (long long)n, (long long)second_frames);
@@ -1339,6 +1341,7 @@ void display_pace(void) {
     } else if (-left > frame_ticks) next.QuadPart = now.QuadPart - frame_ticks;
     if ((now.QuadPart - second_start.QuadPart) >= g_freq.QuadPart) {
         char title[160];
+        if (gfx_options()->overlay && second_frames) pcmenu_perf((int)second_frames, (double)(now.QuadPart - second_start.QuadPart) * 1000.0 / (double)g_freq.QuadPart / (double)second_frames);
         if (gfx_options()->overlay && second_frames) printf("frame-time: %.2f ms per frame over the last second (%lld frames)\n", (double)(now.QuadPart - second_start.QuadPart) * 1000.0 / (double)g_freq.QuadPart / (double)second_frames, (long long)second_frames);
         if (gfx_options()->overlay && second_frames) snprintf(title, sizeof title, "%s - frame %lld - %lld fps - %.2f ms per frame", g_title, (long long)n, (long long)second_frames, (double)(now.QuadPart - second_start.QuadPart) * 1000.0 / (double)g_freq.QuadPart / (double)second_frames);
         else
