@@ -48,14 +48,17 @@ static void hid_EnqueueVibrationValue(Ctx *c) {
     RET(0);                                                     /* Result: success (the SDK aborts on anything else) */
 }
 
-/* nn::hid::GetNpadState(NpadFullKeyState *, id): the runtime's own, then the debug menu's turn (debug_menu.c) at player 1's */
-int lm3_debug_tick(Ctx *c, uint64_t pad); void lm3_debug_boot(void); int lm3_debug_on(void);
+/* nn::hid::GetNpadState(NpadFullKeyState *, id): the runtime's own, then at player 1's Discord's turn (presence.c) and,
+ * with LM3_DEBUG, the debug menu's (debug_menu.c) */
+int lm3_debug_tick(Ctx *c, uint64_t pad); void lm3_debug_boot(void); int lm3_debug_on(void); void lm3_presence_tick(Ctx *c);
 static ImportFn g_pad_state;
-static void hid_GetNpadState_debug(Ctx *c) {
+static void hid_GetNpadState_tick(Ctx *c) {
     uint64_t out = A0;
     uint32_t id = *(uint32_t *)(uintptr_t)A1;
     g_pad_state(c);
-    if (!id && lm3_debug_tick(c, *(uint64_t *)(uintptr_t)(out + 8))) memset((void *)(uintptr_t)(out + 8), 0, 0x18);      /* buttons and sticks, as nnhid.c pad_gate */
+    if (id) return;
+    lm3_presence_tick(c);
+    if (lm3_debug_on() && lm3_debug_tick(c, *(uint64_t *)(uintptr_t)(out + 8))) memset((void *)(uintptr_t)(out + 8), 0, 0x18);      /* buttons and sticks, as nnhid.c pad_gate */
 }
 
 static const ImportDef lm3_imports[] = {
@@ -126,6 +129,6 @@ void lm3_image_options(void) {
 
 void register_lm3_imports(void) {
     register_imports(lm3_imports, (int)(sizeof lm3_imports / sizeof lm3_imports[0]));
-    static const ImportDef pad = {"_ZN2nn3hid12GetNpadStateEPNS0_16NpadFullKeyStateERKj", hid_GetNpadState_debug};
-    if (lm3_debug_on() && (g_pad_state = import_lookup(pad.name))) register_imports(&pad, 1);
+    static const ImportDef pad = {"_ZN2nn3hid12GetNpadStateEPNS0_16NpadFullKeyStateERKj", hid_GetNpadState_tick};
+    if ((g_pad_state = import_lookup(pad.name))) register_imports(&pad, 1);
 }
