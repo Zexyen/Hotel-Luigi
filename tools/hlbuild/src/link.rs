@@ -807,6 +807,28 @@ pub fn pe_imports(b: &[u8]) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// game.dll cannot import from the program: every runtime function the lifted sdk calls (`sdk_x(c`, in what
+    /// sdklift.rs writes and in sdklift.h's macros) is forwarded by game_shim.c and handed over by gamedll.c (#30)
+    #[test]
+    fn lifted_sdk_calls_are_forwarded() {
+        let rt = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+        let read = |f: &str| fs::read_to_string(rt.join(f)).unwrap();
+        let (shim, host) = (read("game_shim.c"), read("gamedll.c"));
+        let callers = include_str!("sdklift.rs").split("mod tests").next().unwrap().to_string() + &read("sdklift.h");
+        let mut n = 0;
+        for (i, _) in callers.match_indices("sdk_") {
+            let name: String = callers[i..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+            let after = &callers[i + name.len()..];
+            if name == "sdk_call_indirect" || !["(c)", "(c,", "((c)"].iter().any(|p| after.starts_with(p)) {
+                continue; // sdk_call_indirect: static in sdklift_gen.c
+            }
+            assert!(shim.contains(&format!("host.{}(", name)), "game_shim.c does not forward {}", name);
+            assert!(host.split("GameHost h = {").nth(1).unwrap().contains(&name), "gamedll.c does not hand over {}", name);
+            n += 1;
+        }
+        assert!(n >= 6, "{} calls found", n);
+    }
+
     #[test]
     fn table_flags_unchanged() {
         let win = ["-O1", "-g", "-Wno-everything", "-fno-strict-aliasing", "-mcx16"];
