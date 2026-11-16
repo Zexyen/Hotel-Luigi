@@ -17,7 +17,7 @@ pub const RUNTIME_SOURCES: &[&str] = &["lm3_imports.c", "prompts.c", "debug_menu
 pub const EXPORTS: &[&str] = &["game_fsr_w", "game_fsr_h", "game_fsr_phases"];
 
 // ---- the one version this port handles
-pub const VERSION: &str = "Luigi's Mansion 3 (0100DCA0064A6000), the build with main build ID 79e5950ffa85acf6 (nnSdk 7.3.2)";
+pub const VERSION: &str = "Luigi's Mansion 3 version 1.4.0, the latest update (0100DCA0064A6000), the build with main build ID 79e5950ffa85acf6 (nnSdk 7.3.2)";
 /// the dump's exefs files: name, size, sha256, NSO build id. The first is main
 pub const EXEFS: &[(&str, u64, &str, Option<&str>)] = &[
     ("main", 11830677, "0689854bc8af51316daaa1978a8aceecd45bb2ba19a4c39496739201946c6283", Some("79e5950ffa85acf63e28c9aec051eac27d6f7f8d")),

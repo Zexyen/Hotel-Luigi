@@ -1,6 +1,6 @@
 //! `hlbuild setup`: from a fresh clone and YOUR OWN dump to a runnable build, on Linux and Windows. The launcher follows
 //! the step lines, build/setup_state.json and build/logs/; every step runs inside this program. The dump is one folder:
-//! exefs/ (main, sdk, subsdk0, rtld, main.npdm: plain NSO files of the build in VERSION) and romfs/ (*.pkz, movie/).
+//! exefs/ (main, sdk, subsdk1, rtld, main.npdm: plain NSO files of the build in VERSION) and romfs/ (*.pkz, movie/).
 //! Steps, resumable (a finished one is skipped; --from <step> repeats it and the rest; tools/hlbuild/README.md "Steps"):
 //!   deps     the compiler and the libraries the link step needs (always runs)
 //!   verify   the dump is the exact version this port handles (SHA-256, NSO build ID, RomFS manifest)
@@ -537,7 +537,7 @@ fn step_verify(cx: &mut Ctx) -> Result<(), Fail> {
         if !p.is_file() {
             if REQUIRED.contains(&name) {
                 return Err(Fail(format!(
-                    "exefs/{} is missing: extract the whole ExeFS (main, sdk, subsdk0, rtld, main.npdm)",
+                    "exefs/{} is missing: extract the whole ExeFS (main, sdk, subsdk1, rtld, main.npdm)",
                     name
                 )));
             }

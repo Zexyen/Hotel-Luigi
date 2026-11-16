@@ -30,13 +30,13 @@ One folder with the decrypted, extracted contents of your own copy:
 
 ```
 <dump>/
-  exefs/    main, sdk, subsdk0, rtld, main.npdm    (plain NSO files)
+  exefs/    main, sdk, subsdk1, rtld, main.npdm    (plain NSO files)
   romfs/    *.pkz, movie/, ...                     (239 files, about 7.5 GB)
 ```
 
-Only one version is supported: title `0100DCA0064A6000`, the build whose `main` has build ID `79e5950ffa85acf6`
-(nnSdk 7.3.2). The first build step checks every file by SHA-256 and says what differs. Encrypted packages (`.nsp`,
-`.xci`, `.nca`, `.nsz`, `.xcz`) are refused, and no keys are used or needed.
+Only one version is supported: 1.4.0, the latest update (title `0100DCA0064A6000`), the build whose `main` has build
+ID `79e5950ffa85acf6` (nnSdk 7.3.2). The first build step checks every file by SHA-256 and says what differs. Encrypted
+packages (`.nsp`, `.xci`, `.nca`, `.nsz`, `.xcz`) are refused, and no keys are used or needed.
 
 The game is not distributed here in any form, and will not be. Do not ask for it in issues.
 
