@@ -50,6 +50,9 @@ A release archive brings everything the build needs (the launcher, the build too
 and lld), so the PC needs no compiler or Python: take the one for your system from the
 [releases page](https://github.com/Zexyen/Hotel-Luigi/releases), unpack it and start the launcher in it.
 
+With Discord running, your status shows the floor, the room and your money (Rich Presence). `HL_DISCORD=0` in the
+environment switches it off; `HL_DISCORD_APP_ID=<id>` uses a Discord application of your own.
+
 ## Build from source
 
 Needs: Rust, clang and lld, CMake and Ninja, and the development files of SDL3 (3.2 or newer), FreeType, Vulkan
