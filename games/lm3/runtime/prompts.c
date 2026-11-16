@@ -11,7 +11,7 @@
  * Face buttons: by position (default layout) Switch A, the right button, is Circle / Xbox B, and so on; Xbox takes the
  * game's own letters, swapped. By printed letter (nnpad_prompts_by_letter) A is the bottom button: the letters are right,
  * but the pictures that show WHERE a button sits (four dots) swap the same way. swap_confirm (nnpad_menu_swapped) turns
- * A and B round once more, on a Switch pad too: `ab` below = the game's A is the bottom button.
+ * A and B round once more in the menus (prompts_in_play), on a Switch pad too: `ab` below = the game's A is the bottom button.
  * Keyboard: the keys bound in [keyboard] (the first of a binding), the mouse as a mouse.
  *
  * In the rooms and on dialog buttons the game shows pictures instead: small ASTC 4x4 images with mip levels, one or two
@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "nnpad.h"
+#include "hostrt.h"
 #define SS 12                                               /* the game's prompts are 68 texels across: 3.7 subsamples a texel */
 #include "prompt_art.h"
 #include "tex_decode.h"
@@ -470,10 +471,17 @@ static void paint_icons(int family, int by_letter, int ab) {
     free(s);
 }
 
+/* GameplayState is on top of the game's state stack (as presence.c asks): no menu, so swap_confirm does not apply.
+ * The pad poll's thread reads it as it is; a state change seen a poll late does no harm. */
+int prompts_in_play(void) {
+    uint64_t *gsm = *(uint64_t **)(uintptr_t)(GUEST_BASE + 0x1cea920), *play = *(uint64_t **)(uintptr_t)(GUEST_BASE + 0x1c69280);
+    uint32_t n = gsm ? *(uint32_t *)gsm : 0;
+    return n && gsm[1] && ((uint64_t **)(uintptr_t)gsm[1])[n - 1] == play;
+}
 /* From player 1's pad poll: repaint when the device in use, the bindings or the settings change, or a page came. */
 void prompts_tick(void) {
     int family = nnpad_button_prompts(), by_letter = family > 1 && family < 4 && nnpad_prompts_by_letter(), any = 0;
-    int ab = by_letter ^ nnpad_menu_swapped();              /* (never with the keyboard's prompts: nnpad_menu_swapped) */
+    int ab = by_letter ^ (nnpad_menu_swapped() && !prompts_in_play());      /* (never with the keyboard's prompts: nnpad_menu_swapped) */
     uint64_t sig = (uint64_t)(by_letter + ab * 2) + 1;
     if (family == 4) { for (int i = 0; i < KB_N; i++) sig = sig * 31 + (uint64_t)nnpad_kb_vk(i); sig = sig * 2 + (uint64_t)nnpad_mouse_cfg(NULL, NULL); }
     AcquireSRWLockExclusive(&g_lock);

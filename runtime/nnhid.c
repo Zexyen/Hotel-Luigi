@@ -560,7 +560,8 @@ static void fight_shot_poll(int ticks) {
  * [keyboard]). Polls closer together than 4 ms (the game reads the pads more than once a frame) get the same value. */
 int nnpad_mouse_cfg(float *sens, int *invert);          /* nnpad_sdl.c */
 const char *nnpad_menu_swap_setting(void);
-#define AB_SWAPPED(b) (((b) & ~3ull) | ((b) & 1) << 1 | ((b) >> 1 & 1))      /* swap_confirm: the pad's A and B change places, for the game and for the panel */
+#define AB_SWAPPED(b) (((b) & ~3ull) | ((b) & 1) << 1 | ((b) >> 1 & 1))      /* swap_confirm: the pad's A and B change places, for the game's menus and for the panel */
+int prompts_in_play(void);                             /* the game's prompts.c: no menu is open, the buttons stay as the game has them */
 void display_mouse_want(int on); void display_mouse_take(int *dx, int *dy);      /* display.c */
 static int mouse_stick(int *ox, int *oy) {
     static LARGE_INTEGER fq, last;
@@ -626,7 +627,9 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
             wired = ps.wired;
             if (devices_live()) {
                 if (ps.buttons || abs(ps.lx) > STICK_MAX / 2 || abs(ps.ly) > STICK_MAX / 2 || abs(ps.rx) > STICK_MAX / 2 || abs(ps.ry) > STICK_MAX / 2) prompts_used = 0;   /* a drifting stick is not use */
-                buttons |= !strcmp(nnpad_menu_swap_setting(), "on") ? AB_SWAPPED(ps.buttons) : ps.buttons;      /* the setting itself, not nnpad_menu_swapped: that one follows the device last used, a poll late */
+                static uint8_t swap[8];                      /* in menus only; a held A or B keeps its meaning across the menu closing or opening */
+                if (!(ps.buttons & 3)) swap[id & 7] = !strcmp(nnpad_menu_swap_setting(), "on") && !prompts_in_play();      /* the setting itself, not nnpad_menu_swapped: that one follows the device last used, a poll late */
+                buttons |= swap[id & 7] ? AB_SWAPPED(ps.buttons) : ps.buttons;
                 if (ps.lx || ps.ly) { lx = ps.lx; ly = ps.ly; }
                 if (ps.rx || ps.ry || (!rx && !ry)) { rx = ps.rx; ry = ps.ry; }      /* [witchtime] was !rx: a vertical-only mouse move was lost */
             }

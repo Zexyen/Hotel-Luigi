@@ -97,7 +97,7 @@ static const Row k_rows[] = {
      {"keep", "stretch"}, {"Keep shape", "Stretch"}},
     {"button_prompts", "Button prompts", "Which buttons the game shows. Auto follows what you use, pad, keyboard or mouse. The others always show that set.", NULL, "auto", A_PROMPTS, 0,
      {"auto", "playstation", "xbox", "switch", "keyboard"}, {"Auto", "PlayStation", "Xbox", "Switch", "Keyboard"}},
-    {"swap_confirm", "Swap Confirm", "The pad's A and B change places: the bottom button confirms, the right one goes back, in play too. Prompts follow; this panel when it next opens.", NULL, "off", A_MENU_SWAP, 0,
+    {"swap_confirm", "Swap Confirm", "In menus the pad's A and B change places: the bottom button confirms, the right one goes back. Prompts follow; this panel when it next opens.", NULL, "off", A_MENU_SWAP, 0,
      {"off", "on"}, {"Off", "On"}},
     {"layout", "Face buttons", "Position: the right button acts as A, as on a Switch. Printed letter: the button marked A, Cross as A on PlayStation pads. Prompts follow.", NULL, "auto", A_LAYOUT, 0,
      {"auto", "positional", "labels"}, {"Auto", "Position", "Printed letter"}},
