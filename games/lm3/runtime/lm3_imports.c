@@ -27,7 +27,6 @@ static void c_sincosf(Ctx *c) { float x = c->v[0].f[0]; *(float *)(uintptr_t)A0 
 static uint64_t g_argv[1];
 static void os_GetHostArgv(Ctx *c) { RET((uint64_t)(uintptr_t)g_argv); }
 
-static void ret1(Ctx *c) { RET(1); }
 /* nn::hid::GetTouchScreenState<1>: docked, no touch can arrive: a state with no touches (0x38 bytes) */
 static void hid_GetTouchScreenState1(Ctx *c) { memset((void *)(uintptr_t)A0, 0, 0x38); }
 /* nn::hid::GetNpadControllerColor: hid 604 (0x4b8ca), "no controller of that kind": the game keeps its default colours */
@@ -69,7 +68,6 @@ static const ImportDef lm3_imports[] = {
     {"_ZN2nn3hid22GetNpadControllerColorEPNS0_19NpadControllerColorERKj", hid_NoControllerColor},
     {"_ZN2nn3hid22GetNpadControllerColorEPNS0_19NpadControllerColorES2_RKj", hid_NoControllerColor},
     {"_ZN2nn3hid17StopSixAxisSensorERKNS0_19SixAxisSensorHandleE", nothing},
-    {"_ZN2nn3hid21IsSixAxisSensorAtRestERKNS0_19SixAxisSensorHandleE", ret1},     /* a pad lying still */
     {"_ZN2nn3hid30SetNpadJoyAssignmentModeSingleERKj", nothing},
     {"_ZN2nn3hid14DisconnectNpadERKj", nothing},
     /* notifications and performance settings change nothing on a PC */
