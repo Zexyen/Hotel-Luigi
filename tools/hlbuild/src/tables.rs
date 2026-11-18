@@ -156,7 +156,8 @@ pub fn run(root: &Path, log: &mut dyn FnMut(String)) -> Result<(), String> {
     }
     let found: Vec<(&str, &[u8])> = imports
         .iter()
-        .filter(|n| n.starts_with("_ZN2nn4util") || n.starts_with("_ZN2nn3hid6NpadId"))
+        // all of nn::hid's data: VibrationNode::DefaultVibrationSampleInterval left at 0 made the game's 5 ms vibration timer a one-shot (no rumble)
+        .filter(|n| n.starts_with("_ZN2nn4util") || n.starts_with("_ZN2nn3hid"))
         .filter_map(|n| {
             syms.get(*n)
                 .filter(|v| 0 < v.1 && v.1 <= 1 << 20)

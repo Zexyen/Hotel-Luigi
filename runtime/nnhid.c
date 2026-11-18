@@ -7,6 +7,7 @@
  *
  * Keyboard: arrows = left stick, Z/X/C/V = A/B/X/Y, Q/E = L/R, A/S = ZL/ZR,
  *           Enter = Plus, Backspace = Minus, I/J/K/L = d-pad up/left/down/right. */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -772,6 +773,34 @@ static void hid_GetKeyboardState(Ctx *c) {
  * StartSixAxisSensor sets the per-controller "sensor enabled" flag; an invalid handle is an error.
  * Hardware limit (row "controllers" of the audit): XInput delivers no motion, so the record stays the one at rest. */
 static struct { int ever, connected, started; ULONGLONG since; int64_t base, last; } g_six[8];
+/* A pad with a gyro: the module's fused attitude, rebuilt here. d = the direction matrix (rows = the pad's axes in the
+ * room). Turned by the gyro (revolutions/s, the pad's frame) over dt seconds and pulled toward the accelerometer's
+ * gravity while the pad is not being shaken, so pitch and roll cannot drift (yaw can, as on the console).
+ * NOT VERIFIED on a console: the module's own filter and its gain. */
+static void att_step(float d[9], const float gyro[3], const float accel[3], float dt) {
+    float w[3], v[3] = {-d[2], -d[5], -d[8]}, n = sqrtf(accel[0] * accel[0] + accel[1] * accel[1] + accel[2] * accel[2]);
+    for (int i = 0; i < 3; i++) w[i] = gyro[i] * 6.2831853f * dt;
+    if (n > 0.8f && n < 1.2f) {                              /* w += gain * (measured gravity x expected gravity) */
+        float k = 1.0f * dt / n;
+        w[0] += k * (accel[1] * v[2] - accel[2] * v[1]); w[1] += k * (accel[2] * v[0] - accel[0] * v[2]); w[2] += k * (accel[0] * v[1] - accel[1] * v[0]);
+    }
+    float t = sqrtf(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+    if (t > 1e-9f) {                                         /* d = R(-w) d (Rodrigues), column by column */
+        float s = sinf(t) / t, q = (1.0f - cosf(t)) / (t * t);
+        for (int j = 0; j < 3; j++) {
+            float c[3] = {d[j], d[3 + j], d[6 + j]};
+            float a[3] = {w[1] * c[2] - w[2] * c[1], w[2] * c[0] - w[0] * c[2], w[0] * c[1] - w[1] * c[0]};      /* w x c */
+            float b[3] = {w[1] * a[2] - w[2] * a[1], w[2] * a[0] - w[0] * a[2], w[0] * a[1] - w[1] * a[0]};      /* w x (w x c) */
+            for (int i = 0; i < 3; i++) d[3 * i + j] = c[i] - s * a[i] + q * b[i];
+        }
+    }
+    float *x = d, *y = d + 3, *z = d + 6;                    /* rows orthonormal again: rounding adds up over hours */
+    n = sqrtf(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]); for (int i = 0; i < 3; i++) x[i] /= n;
+    z[0] = x[1] * y[2] - x[2] * y[1]; z[1] = x[2] * y[0] - x[0] * y[2]; z[2] = x[0] * y[1] - x[1] * y[0];
+    n = sqrtf(z[0] * z[0] + z[1] * z[1] + z[2] * z[2]); for (int i = 0; i < 3; i++) z[i] /= n;
+    y[0] = z[1] * x[2] - z[2] * x[1]; y[1] = z[2] * x[0] - z[0] * x[2]; y[2] = z[0] * x[1] - z[1] * x[0];
+}
+static struct { float d[9], angle[3]; LONGLONG t; } g_att[8];
 static void hid_GetSixAxisSensorState(Ctx *c) {             /* (SixAxisSensorState *out, const SixAxisSensorHandle &) */
     uint64_t o = A0;
     uint32_t handle = rd32(A1), kind = handle & 0xff, id = (handle >> 8) & 0xff;
@@ -788,11 +817,24 @@ static void hid_GetSixAxisSensorState(Ctx *c) {             /* (SixAxisSensorSta
     memset((void *)(uintptr_t)o, 0, 0x60);
     wr64(o, 5000000);                                        /* delta time, ns */
     wr64(o + 8, (uint64_t)g_six[id].last);                   /* sampling number */
-    {   NnPadState ps;                                       /* a pad with a gyro (SDL): its acceleration (G) at +0x10 and angular velocity (revolutions/s) at +0x1c; angle and direction stay at rest */
+    {   NnPadState ps;                                       /* a pad with a gyro (SDL): its acceleration (G) at +0x10 and angular velocity (revolutions/s) at +0x1c */
         if (sdl_on() && nnpad_get((int)id, &ps) && ps.has_motion) {
+            /* the angle (revolutions, +0x28) and the direction (+0x34) too: Luigi's Mansion 3 drops a record whose
+             * direction has a zero in its first row (main 0xb622a0), which the bare identity has: no motion at all */
+            LARGE_INTEGER now, hz; QueryPerformanceCounter(&now); QueryPerformanceFrequency(&hz);
+            float dt = g_att[id].t ? (float)(now.QuadPart - g_att[id].t) / (float)hz.QuadPart : 0;
+            if (!g_att[id].t) g_att[id].d[0] = g_att[id].d[4] = g_att[id].d[8] = 1.0f;
+            g_att[id].t = now.QuadPart;
+            if (dt > 0.1f) dt = 0;                           /* the game was not asking (a pause, a loading screen) */
+            for (int i = 0; i < 3; i++) g_att[id].angle[i] += ps.gyro[i] * dt;
+            att_step(g_att[id].d, ps.gyro, ps.accel, dt);
             memcpy((void *)(uintptr_t)(o + 0x10), ps.accel, 12); memcpy((void *)(uintptr_t)(o + 0x1c), ps.gyro, 12);
-        } else { f = -1.0f; memcpy((void *)(uintptr_t)(o + 0x18), &f, 4); }          /* acceleration z at rest */
+            memcpy((void *)(uintptr_t)(o + 0x28), g_att[id].angle, 12); memcpy((void *)(uintptr_t)(o + 0x34), g_att[id].d, 36);
+            wr32(o + 0x58, 1);                               /* attribute: connected */
+            return;
+        }
     }
+    f = -1.0f; memcpy((void *)(uintptr_t)(o + 0x18), &f, 4);                       /* acceleration z at rest */
     f = 1.0f;
     memcpy((void *)(uintptr_t)(o + 0x34), &f, 4); memcpy((void *)(uintptr_t)(o + 0x44), &f, 4); memcpy((void *)(uintptr_t)(o + 0x54), &f, 4);   /* direction = identity */
     wr32(o + 0x58, 1);                                                             /* attribute: connected */
@@ -1169,7 +1211,13 @@ static void th_mouse(int dx, int dy) { g_mouse_test_dx += dx; g_mouse_test_dy +=
 static uint32_t th_led(uint32_t id) { Ctx c; memset(&c, 0, sizeof c); c.x[0] = (uint64_t)(uintptr_t)&id; hid_GetPlayerLedPattern(&c); return (uint32_t)c.x[0]; }
 int nnhid_pad_selftest(void) {
     NnHidHooks h = {th_style, th_state, th_vibrate, th_six, th_test_mode, th_led, th_kb, th_key, th_mouse};
-    return nnpad_selftest(&h);
+    float d[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1}, turn[3] = {0, 0, 0.25f}, still[3] = {0, 0, 0}, flat[3] = {0, 0, -1}, side[3] = {-1, 0, 0};
+    for (int i = 0; i < 100; i++) att_step(d, turn, flat, 0.01f);          /* a quarter turn about z: the pad's x points along the room's y */
+    int ok = fabsf(d[0]) < 0.01f && fabsf(d[1] - 1.0f) < 0.01f && fabsf(d[3] + 1.0f) < 0.01f && fabsf(d[8] - 1.0f) < 0.01f;
+    for (int i = 0; i < 2000; i++) att_step(d, still, side, 0.01f);        /* gravity along the pad's -x: its x axis ends up pointing up */
+    ok = ok && fabsf(d[2] - 1.0f) < 0.01f;
+    printf("  hid: six-axis attitude: the gyro turns the direction matrix, the accelerometer rights it: %s\n", ok ? "ok" : "FAILED");
+    return !ok + nnpad_selftest(&h);
 }
 
 #define H(n) "_ZN2nn3hid" n
@@ -1186,6 +1234,7 @@ static const ImportDef hid_imports[] = {
     {H("21InitializeTouchScreenEv"), hid_InitializeTouchScreen}, {H("19GetTouchScreenStateILm16EEEvPNS0_16TouchScreenStateIXT_EEE"), hid_GetTouchScreenState},
     {H("21GetSixAxisSensorStateEPNS0_18SixAxisSensorStateERKNS0_19SixAxisSensorHandleE"), hid_GetSixAxisSensorState},
     {H("18StartSixAxisSensorERKNS0_19SixAxisSensorHandleE"), hid_StartSixAxisSensor},
+    {H("21IsSixAxisSensorAtRestERKNS0_19SixAxisSensorHandleE"), hid_IsSixAxisSensorAtRest},
     {H("18SendVibrationValueERKNS0_21VibrationDeviceHandleERKNS0_14VibrationValueE"), hid_SendVibrationValue},
     {H("25InitializeVibrationDeviceERKNS0_21VibrationDeviceHandleE"), hid_InitializeVibrationDevice},
 };
