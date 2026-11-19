@@ -45,9 +45,10 @@ static struct {
     VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT vids; VkPhysicalDeviceCustomBorderColorFeaturesEXT cbc; VkPhysicalDeviceProvokingVertexFeaturesEXT pv;
     VkPhysicalDeviceIndexTypeUint8FeaturesEXT iu8; VkPhysicalDevicePrimitiveTopologyListRestartFeaturesEXT plr; VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT vad;
     VkPhysicalDeviceExtendedDynamicState3FeaturesEXT eds3;
+    VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT badv; int has_adv;      /* issue 38: advanced blend equations (OP_BLEND) */
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gpl;
     VkPhysicalDeviceFaultFeaturesEXT fault;        /* [issue 140] fault_dump */
-    const char *exts[16]; uint32_t next;
+    const char *exts[20]; uint32_t next;
     int has_vids, has_cbc, has_pv, has_iu8, has_plr, has_vad, has_push, has_eds3, has_fault, debug;
     int has_gpl, ext_gpl, ext_so, has_budget;
     int dyn_a2c;                                   /* [issue 50] alpha to coverage is dynamic state (else part of the pipeline key) */
@@ -88,6 +89,7 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     EXT(has_plr, "VK_EXT_primitive_topology_list_restart", plr, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRIMITIVE_TOPOLOGY_LIST_RESTART_FEATURES_EXT)
     EXT(has_vad, "VK_EXT_vertex_attribute_divisor", vad, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT)
     if (!(getenv("HL_VK_EDS3") && !atoi(getenv("HL_VK_EDS3")))) { EXT(has_eds3, "VK_EXT_extended_dynamic_state3", eds3, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT) }
+    if (!(getenv("HL_VK_ADVBLEND") && !atoi(getenv("HL_VK_ADVBLEND")))) { EXT(has_adv, "VK_EXT_blend_operation_advanced", badv, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BLEND_OPERATION_ADVANCED_FEATURES_EXT) }      /* HL_VK_ADVBLEND=0: as a GPU without it */
     /* session 9: graphics pipeline libraries (nvn_vk_m4.c "graphics pipeline libraries"): the stage pair is compiled at loading
      * without the pass formats, a draw only LINKS. HL_VK_GPL=1 turns it on (needs extended dynamic state 3 as well). */
     D.ext_gpl = has_name(dext, ndext, "VK_EXT_graphics_pipeline_library") && has_name(dext, ndext, "VK_KHR_pipeline_library"); D.ext_so = has_name(dext, ndext, "VK_EXT_shader_object");
@@ -119,8 +121,17 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
          * to coverage out of the dynamic state. Here it goes into the pipeline key on that branch's whole-pipeline path, as on a GPU
          * without extended dynamic state 3. HL_VK_DYN_A2C=0 / 1 forces either way on whole pipelines. */
         VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        VkPhysicalDeviceBlendOperationAdvancedPropertiesEXT ap = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BLEND_OPERATION_ADVANCED_PROPERTIES_EXT};
         D.drv.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES; p2.pNext = &D.drv;
+        if (D.has_adv) D.drv.pNext = &ap;
         vkGetPhysicalDeviceProperties2(V.gpu, &p2);
+        D.drv.pNext = NULL;
+        /* issue 38: the game's advanced blend equations (the overlay of the ScreamPark menus) as the driver's own, as on the
+         * console and in the OpenGL renderer. Only where every equation, a source that is not premultiplied and every overlap
+         * can be asked for per draw; elsewhere (AMD, Intel) they stay nvn_vk_missing. NOT RUN on such a driver by us yet. */
+        D.has_adv = D.has_adv && D.has_eds3 && D.eds3.extendedDynamicState3ColorBlendAdvanced && ap.advancedBlendAllOperations && ap.advancedBlendNonPremultipliedSrcColor &&
+                    ap.advancedBlendCorrelatedOverlap && ap.advancedBlendMaxColorAttachments >= 1;
+        printf("nvn_vk: advanced blend equations (VK_EXT_blend_operation_advanced, set per draw): %s\n", D.has_adv ? "yes" : "no");
         const char *e = getenv("HL_VK_DYN_A2C");
         int amd_sc = D.drv.driverID == VK_DRIVER_ID_AMD_PROPRIETARY && strstr(D.drv.driverInfo, "shader compiler") != NULL;
         D.dyn_a2c = D.has_eds3 && (D.has_gpl || (e && e[0] ? atoi(e) != 0 : !amd_sc));      /* the libraries hold no alpha to coverage: always dynamic with them */
@@ -578,7 +589,7 @@ static int g_tset_used, g_tset_list_used;
  * keeps them; the shadow is forgotten where a command buffer begins and where our own stencil clear sets state of its own.
  * HL_VK_DYNSHADOW=0: everything sent at every change as before. */
 typedef struct { VkViewport vp; VkRect2D sc; float lw, bias[3], blendc[4]; uint32_t scm[2], swm[2], sref[2], cull, ff, dte, dwe, dop, ste, sop[2][4], dbe, rd, dbt; float dbr[2]; } DynSh;
-typedef struct { VkBool32 en[8]; VkColorBlendEquationEXT eq[8]; VkColorComponentFlags wm[8]; uint32_t poly, a2c, smask, samples, dclamp; } DynSh3;
+typedef struct { VkBool32 en[8]; VkColorBlendEquationEXT eq[8]; VkColorComponentFlags wm[8]; uint32_t poly, a2c, smask, samples, dclamp; uint8_t adv[8][2]; } DynSh3;      /* adv: R.blend[i][6..7] */
 static DynSh g_dsh;
 static DynSh3 g_dsh3;
 static int g_dsh_ok, g_dsh3_ok, g_dsh_topo = -1, g_dsh_rst = -1, g_dsh_on = -1;
@@ -2415,6 +2426,7 @@ static void set_dynamic_state3(int samples) {
         n.en[i] = R.blend_on >> i & 1; n.wm[i] = (R.chanmask >> (i * 4)) & 15;
         n.eq[i].srcColorBlendFactor = blend_factor(b[0]); n.eq[i].dstColorBlendFactor = blend_factor(b[1]); n.eq[i].colorBlendOp = blend_op(b[4]);
         n.eq[i].srcAlphaBlendFactor = blend_factor(b[2]); n.eq[i].dstAlphaBlendFactor = blend_factor(b[3]); n.eq[i].alphaBlendOp = blend_op(b[5]);
+        n.adv[i][0] = b[6]; n.adv[i][1] = b[7];
     }
     n.poly = R.poly[2] == 0 ? VK_POLYGON_MODE_POINT : R.poly[2] == 1 ? VK_POLYGON_MODE_LINE : VK_POLYGON_MODE_FILL;
     {   static int fa2c = -1;                      /* TEST ONLY: HL_VK_TEST bit 1024: alpha to coverage on for every draw, as AMD's Polaris driver does (issue 50) */
@@ -2425,7 +2437,18 @@ static void set_dynamic_state3(int samples) {
     int all = !g_dsh3_ok || !dsh_on(), sent = 0;
     const DynSh3 *o = &g_dsh3;
     if (all || memcmp(n.en, o->en, sizeof n.en)) { vkCmdSetColorBlendEnableEXT(R.cmd, 0, cnt, n.en); sent++; }
-    if (all || memcmp(n.eq, o->eq, sizeof n.eq)) { vkCmdSetColorBlendEquationEXT(R.cmd, 0, cnt, n.eq); sent++; }
+    if (all || memcmp(n.eq, o->eq, sizeof n.eq) || memcmp(n.adv, o->adv, sizeof n.adv)) {
+        /* the last of the two calls counts for a target: the equations for all (so a target that leaves an advanced one gets its own back), then the advanced ones */
+        vkCmdSetColorBlendEquationEXT(R.cmd, 0, cnt, n.eq); sent++;
+        for (uint32_t i = 0; i < cnt; i++) if (n.adv[i][0]) {
+            /* NVN's AdvancedMode 5..50 in VkBlendOp's order (ZERO_EXT + ...); the flags: bits 3..4 overlap (the same numbers), 5 premultiplied source,
+             * 6 normalised destination (taken as "clamp the result": NOT VERIFIED on a console) */
+            static const uint8_t op[46] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 35, 36, 37, 38, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 39, 40, 22, 41, 23, 24, 42, 25, 26, 27, 28, 29, 30, 43, 44, 45, 31, 32, 33, 34};
+            unsigned m = n.adv[i][0], f = n.adv[i][1];
+            VkColorBlendAdvancedEXT a = {(VkBlendOp)(VK_BLEND_OP_ZERO_EXT + op[m - 5]), (f >> 5) & 1, VK_TRUE, (VkBlendOverlapEXT)((f >> 3) & 3), (f >> 6) & 1};
+            vkCmdSetColorBlendAdvancedEXT(R.cmd, i, 1, &a);
+        }
+    }
     if (all || memcmp(n.wm, o->wm, sizeof n.wm)) { vkCmdSetColorWriteMaskEXT(R.cmd, 0, cnt, n.wm); sent++; }
     if (all || n.poly != o->poly) { vkCmdSetPolygonModeEXT(R.cmd, (VkPolygonMode)n.poly); sent++; }
     if (D.dyn_a2c && (all || n.a2c != o->a2c)) { vkCmdSetAlphaToCoverageEnableEXT(R.cmd, n.a2c); sent++; }
@@ -4509,7 +4532,15 @@ static void exec(const Cmd *m, int depth) {
     case OP_VBUF: for (int i = 0; i < (int)a[1] && (int)a[0] + i < 32; i++) memcpy(&R.vbuf[a[0] + i], blob + i * 16, 16); break;
     case OP_VATTR: R.nattr = (int)a[0] < 32 ? (int)a[0] : 32; memcpy(R.vattr, blob, (size_t)R.nattr * 4); break;
     case OP_VSTREAM: for (int i = 0; i < (int)a[0] && i < 32; i++) memcpy(&R.vstream[i], blob + i * 8, 8); break;
-    case OP_BLEND: { const uint8_t *b = (const uint8_t *)&a[0]; if (b[7]) nvn_vk_missing("an advanced blend equation (nvnBlendStateSetAdvancedMode)"); memcpy(R.blend[b[0] & 7], b + 1, 6); R.dyn3_dirty = 1; break; }
+    case OP_BLEND: {
+        const uint8_t *b = (const uint8_t *)&a[0];
+        uint8_t *t = R.blend[b[0] & 7];
+        int adv = b[7] >= 5 && b[7] <= 50 && (b[0] >> 3 & 3) < 3;      /* an advanced blend equation (nvnBlendStateSetAdvancedMode), set_dynamic_state3 */
+        if (b[7] && !(adv && D.has_adv)) nvn_vk_missing("an advanced blend equation (nvnBlendStateSetAdvancedMode) on a GPU without VK_EXT_blend_operation_advanced");
+        memcpy(t, b + 1, 6); t[6] = adv && D.has_adv ? b[7] : 0; t[7] = t[6] ? b[0] : 0;
+        R.dyn3_dirty = 1;
+        break;
+    }
     case OP_COLOR: { const uint8_t *b = (const uint8_t *)&a[0]; R.blend_on = b[0]; R.logic = b[1]; R.alpha_func = b[2]; R.dyn3_dirty = 1; if (b[1] != 3 && !D.f2.features.logicOp) nvn_vk_missing("a logic op on a GPU without logicOp"); break; }
     case OP_CHANMASK: R.chanmask = (uint32_t)a[0]; R.dyn3_dirty = 1; break;
     case OP_MULTISAMPLE: { const uint8_t *b = (const uint8_t *)&a[0]; memcpy(R.ms, b, 24); R.dyn3_dirty = 1; if (b[3] || b[5]) nvn_vk_missing("a multisample state with coverage-to-colour, coverage modulation, sample locations or raster samples"); break; }
@@ -6124,6 +6155,7 @@ static void vkd_init(void) {
     if (D.has_push) { vkCmdPushDescriptorSetKHR = (PFN_vkCmdPushDescriptorSetKHR)vkGetDeviceProcAddr(V.device, "vkCmdPushDescriptorSetKHR"); if (!vkCmdPushDescriptorSetKHR) D.has_push = 0; }
     if (D.has_eds3) {
 #define X3(n) n = (PFN_##n)vkGetDeviceProcAddr(V.device, #n); if (!n) vkd_fail("the device has VK_EXT_extended_dynamic_state3 but no " #n);
+        if (D.has_adv) { X3(vkCmdSetColorBlendAdvancedEXT) }
         X3(vkCmdSetColorBlendEnableEXT) X3(vkCmdSetColorBlendEquationEXT) X3(vkCmdSetColorWriteMaskEXT) X3(vkCmdSetPolygonModeEXT) X3(vkCmdSetAlphaToCoverageEnableEXT) X3(vkCmdSetSampleMaskEXT)
         if (D.f2.features.depthClamp) { X3(vkCmdSetDepthClampEnableEXT) }
 #undef X3

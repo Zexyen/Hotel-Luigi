@@ -96,6 +96,7 @@ static uint64_t g_spv_unused;
 static int g_offline;                              /* --prepare-shaders: stages are translated and written to ..\cache\vk, no Vulkan device exists */
 static PFN_vkCmdSetColorBlendEnableEXT vkCmdSetColorBlendEnableEXT;
 static PFN_vkCmdSetColorBlendEquationEXT vkCmdSetColorBlendEquationEXT;
+static PFN_vkCmdSetColorBlendAdvancedEXT vkCmdSetColorBlendAdvancedEXT;
 static PFN_vkCmdSetColorWriteMaskEXT vkCmdSetColorWriteMaskEXT;
 static PFN_vkCmdSetPolygonModeEXT vkCmdSetPolygonModeEXT;
 static PFN_vkCmdSetAlphaToCoverageEnableEXT vkCmdSetAlphaToCoverageEnableEXT;
@@ -694,7 +695,7 @@ static uint32_t pipe_dyn_list(VkDynamicState *dyn) {
     uint32_t ndyn = 20;
     memcpy(dyn, base, sizeof base);
     if (D.has_eds3) {
-        dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_POLYGON_MODE_EXT;
+        dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT; if (D.has_adv) dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_BLEND_ADVANCED_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_POLYGON_MODE_EXT;
         if (D.dyn_a2c) dyn[ndyn++] = VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT;      /* [issue 50] else static, from the key */
         dyn[ndyn++] = VK_DYNAMIC_STATE_SAMPLE_MASK_EXT;
         if (D.f2.features.depthClamp) dyn[ndyn++] = VK_DYNAMIC_STATE_DEPTH_CLAMP_ENABLE_EXT;
@@ -1125,7 +1126,7 @@ whole:;
         VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE, VK_DYNAMIC_STATE_VERTEX_INPUT_EXT};
     uint32_t ndyn = D.has_vids ? 20 : 19;          /* finding 116: without the extension the vertex input is in the pipeline (the last entry is left out) */
     if (D.has_eds3) {
-        dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_POLYGON_MODE_EXT;
+        dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT; if (D.has_adv) dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_BLEND_ADVANCED_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT; dyn[ndyn++] = VK_DYNAMIC_STATE_POLYGON_MODE_EXT;
         if (D.dyn_a2c) dyn[ndyn++] = VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT;      /* [issue 50] else static, from the key */
         dyn[ndyn++] = VK_DYNAMIC_STATE_SAMPLE_MASK_EXT;
         if (D.f2.features.depthClamp) dyn[ndyn++] = VK_DYNAMIC_STATE_DEPTH_CLAMP_ENABLE_EXT;
