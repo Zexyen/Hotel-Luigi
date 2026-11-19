@@ -1220,6 +1220,18 @@ int nnhid_pad_selftest(void) {
     return !ok + nnpad_selftest(&h);
 }
 
+/* ShowControllerSupport(const ControllerSupportArg &): the applet in which the players connect their controllers. It
+ * succeeds only with playerCountMin of them connected (the argument's first byte, [doc] the SDK's ControllerSupportArg).
+ * There is no such screen here, so with too few it answers as if the player had backed out (hid 3101,
+ * ResultControllerSupportCanceled). Luigi's Mansion 3 looks only at success or not (main 0xb5c9a0); told "fine" with a
+ * controller missing it opened the applet again at once, for ever: the flashing screen of issue 38. */
+static void hid_ShowControllerSupport(Ctx *c) {
+    int need = (int8_t)rd32(A0), have = 0;
+    for (uint32_t id = 0; id < 8; id++) have += player_connected(id);
+    if (have < need) printf("nn::hid: ShowControllerSupport: %d controller(s) connected, the game asks for %d: cancelled\n", have, need);
+    RET(have < need ? 0x183aca : 0);
+}
+
 #define H(n) "_ZN2nn3hid" n
 static const ImportDef hid_imports[] = {
     {H("18InitializeKeyboardEv"), hid_InitializeKeyboard}, {H("16GetKeyboardStateEPNS0_13KeyboardStateE"), hid_GetKeyboardState},  /* [Recomps#1] */
@@ -1237,6 +1249,7 @@ static const ImportDef hid_imports[] = {
     {H("21IsSixAxisSensorAtRestERKNS0_19SixAxisSensorHandleE"), hid_IsSixAxisSensorAtRest},
     {H("18SendVibrationValueERKNS0_21VibrationDeviceHandleERKNS0_14VibrationValueE"), hid_SendVibrationValue},
     {H("25InitializeVibrationDeviceERKNS0_21VibrationDeviceHandleE"), hid_InitializeVibrationDevice},
+    {H("21ShowControllerSupportERKNS0_20ControllerSupportArgE"), hid_ShowControllerSupport},
 };
 
 void register_hid_imports(void) {

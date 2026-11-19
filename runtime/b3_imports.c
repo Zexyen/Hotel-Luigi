@@ -15,7 +15,6 @@
 #define RET(v) (c->x[0] = (uint64_t)(v))
 
 static void nothing(Ctx *c) { (void)c; }
-static void ret0(Ctx *c) { RET(0); }
 static void ret2(Ctx *c) { RET(2); }
 
 /* pthread_once(pthread_once_t *, void (*)(void)): musl's once word, 0 = not run, 1 = running, 2 = done.
@@ -301,7 +300,6 @@ static const ImportDef b3_imports[] = {
     {"_ZN2nn3hid20GetTouchScreenStatesILm1EEEiPNS0_16TouchScreenStateIXT_EEEi", hid_GetTouchScreenStates1},
     {"_ZN2nn3hid22GetVibrationDeviceInfoEPNS0_19VibrationDeviceInfoERKNS0_21VibrationDeviceHandleE", hid_GetVibrationDeviceInfo},
     {"clock", c_clock},
-    {"_ZN2nn3hid21ShowControllerSupportERKNS0_20ControllerSupportArgE", ret0},   /* the applet: "controllers are fine" */
 };
 
 void register_b3_imports(void) {
