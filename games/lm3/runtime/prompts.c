@@ -76,7 +76,7 @@ typedef struct {
 enum { LIVE_MAX = 16 };
 static Live g_live[LIVE_MAX];
 static SRWLOCK g_lock = SRWLOCK_INIT;
-static int g_family = 1, g_dirty;                           /* dirty: a page came since the last paint */
+static int g_family = 1, g_dirty, g_dirty_pages;            /* dirty: a page or a picture came since the last paint; dirty_pages: a page */
 static uint64_t g_sig = 1;                                 /* prompts_tick's, of the game's own */
 
 static size_t bytes_of(const Page *p) { return (size_t)p->size * p->size; }      /* BC3: a byte a texel */
@@ -299,7 +299,7 @@ static const Icon ICONS[] = {                               /* the entries of on
     {0xf54b1bbe63dcdf85ull, G_A, 38, 418, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 166, 418, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 294, 418, 50, 54, 0}, {0xf54b1bbe63dcdf85ull, G_A, 422, 418, 50, 54, 0},
 };
 #define ICON_N (sizeof ICONS / sizeof ICONS[0])
-typedef struct { const Icon *first; uint8_t *mem, *orig, *shown; TexLayout L; } LiveIcon;
+typedef struct { const Icon *first; uint8_t *mem, *orig, *shown; TexLayout L; int done; } LiveIcon;      /* done: painted for the family in use */
 enum { ICON_MAX = 96 };
 static LiveIcon g_icon[ICON_MAX];
 
@@ -422,11 +422,12 @@ static void stamp(uint8_t *rgba, const uint8_t *was, int w, int h, const Icon *i
     }
     #undef LUM
 }
-/* every live picture from the game's own blocks, like paint() */
-static void paint_icons(int family, int by_letter, int ab) {
+/* every live picture from the game's own blocks, like paint(); all = 0: only the ones that came since the last paint */
+static void paint_icons(int family, int by_letter, int ab, int all) {
     uint8_t *s = (family > 1 || ab) && astc_ok() ? malloc(S * S) : NULL;
     for (LiveIcon *l = g_icon; l < g_icon + ICON_MAX; l++) {
-        if (!l->mem) continue;
+        if (!l->mem || (l->done && !all)) continue;
+        l->done = 1;
         const TexLayout *L = &l->L;
         int w = L->lvl_w[0], h = L->lvl_h[0], box[4] = {w, h, 0, 0};
         size_t n = (size_t)w * h * 4;
@@ -478,12 +479,34 @@ int prompts_in_play(void) {
     uint32_t n = gsm ? *(uint32_t *)gsm : 0;
     return n && gsm[1] && ((uint64_t **)(uintptr_t)gsm[1])[n - 1] == play;
 }
+/* A change of family repaints every page and picture: 0.6 s with the keyboard's on a fast PC, which froze the game
+ * whenever player 1 went from pad to mouse or back (issue 38). So it runs beside the game, the lock held.
+ * shortcut: a texture the game makes or frees during those 0.6 s waits for the lock; paint texture by texture, the
+ * lock dropped in between, if a device change during a loading screen is seen to stall it. */
+typedef struct { int family, by_letter, ab; uint64_t sig; } Want;
+static Want g_want;
+static volatile LONG g_busy;
+static void repaint(void) {                                    /* lock held */
+    paint(g_want.family, g_want.by_letter, g_want.ab);
+    paint_icons(g_want.family, g_want.by_letter, g_want.ab, 1);
+    g_family = g_want.family; g_sig = g_want.sig; g_dirty = g_dirty_pages = 0;
+    printf("button prompts: %s%s%s\n", g_family == 2 ? "PlayStation" : g_family == 3 ? "Xbox" : g_family == 4 ? "keyboard" : "Switch", g_want.by_letter ? ", face buttons by printed letter" : "", g_want.ab != g_want.by_letter ? ", A and B swapped" : "");
+}
+static DWORD WINAPI repaint_thread(void *p) {
+    (void)p;
+    AcquireSRWLockExclusive(&g_lock);
+    repaint();
+    ReleaseSRWLockExclusive(&g_lock);
+    g_busy = 0;
+    return 0;
+}
 /* From player 1's pad poll: repaint when the device in use, the bindings or the settings change, or a page came. */
 void prompts_tick(void) {
     int family = nnpad_button_prompts(), by_letter = family > 1 && family < 4 && nnpad_prompts_by_letter(), any = 0;
     int ab = by_letter ^ (nnpad_menu_swapped() && !prompts_in_play());      /* (never with the keyboard's prompts: nnpad_menu_swapped) */
     uint64_t sig = (uint64_t)(by_letter + ab * 2) + 1;
     if (family == 4) { for (int i = 0; i < KB_N; i++) sig = sig * 31 + (uint64_t)nnpad_kb_vk(i); sig = sig * 2 + (uint64_t)nnpad_mouse_cfg(NULL, NULL); }
+    if (g_busy) return;                                        /* the repaint has the lock; the next poll looks again */
     AcquireSRWLockExclusive(&g_lock);
     for (Live *l = g_live; l < g_live + LIVE_MAX; l++) {
         if (l->mem && memcmp(l->mem, l->shown, bytes_of(l->p))) { free(l->orig); *l = (Live){0}; }      /* not what we left there: the game has reused the memory */
@@ -493,12 +516,14 @@ void prompts_tick(void) {
         if (l->mem && memcmp(l->mem, l->shown, l->L.layer_size)) { free(l->orig); *l = (LiveIcon){0}; }
         any |= l->mem != NULL;
     }
-    if (any && (g_dirty || family != g_family || sig != g_sig)) {
-        int said = family != g_family || sig != g_sig;
-        paint(family, by_letter, ab);
-        paint_icons(family, by_letter, ab);
-        g_family = family; g_sig = sig; g_dirty = 0;
-        if (said) printf("button prompts: %s%s%s\n", family == 2 ? "PlayStation" : family == 3 ? "Xbox" : family == 4 ? "keyboard" : "Switch", by_letter ? ", face buttons by printed letter" : "", ab != by_letter ? ", A and B swapped" : "");
+    if (any && (family != g_family || sig != g_sig)) {         /* another family: everything again, on a thread of its own */
+        g_want = (Want){family, by_letter, ab, sig};
+        HANDLE h = CreateThread(NULL, 0, repaint_thread, NULL, 0, NULL);
+        if (h) { g_busy = 1; CloseHandle(h); } else repaint();
+    } else if (any && g_dirty) {                               /* new textures, at once: they are right when first drawn */
+        if (g_dirty_pages) paint(family, by_letter, ab);
+        paint_icons(family, by_letter, ab, 0);
+        g_dirty = g_dirty_pages = 0;
     }
     ReleaseSRWLockExclusive(&g_lock);
 }
@@ -541,7 +566,7 @@ void prompts_texture(uint8_t *mem, const uint8_t *limit, const TexLayout *L) {
             *l = (Live){.p = p, .mem = mem, .orig = copy, .shown = copy + n};
             memcpy(l->orig, mem, n); memcpy(l->shown, mem, n);
             cells_of(l);
-            g_dirty = 1;
+            g_dirty = g_dirty_pages = 1;
         }
         ReleaseSRWLockExclusive(&g_lock);
         prompts_tick();
