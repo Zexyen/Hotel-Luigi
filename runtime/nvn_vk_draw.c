@@ -2287,12 +2287,12 @@ static int g_fs_screen, g_fs_small;
 /* #257: nvn_front_handle for the handle bound at a unit, with the pools set now. The answer is kept while the pools and
  * the handle stay as they were (nvn_front_pool_gen): a bind asks, and the draws that follow, most of which bind nothing
  * new, read it here. Asking the pools for every sampler of every draw (a ride: 17,000 a frame, each entry out of the
- * cache after the frame's ring copies) was 8 % of the render thread. WT_VK_TEXMEMO=0: asked every time; =2 (test): both,
+ * cache after the frame's ring copies) was 8 % of the render thread. HL_VK_TEXMEMO=0: asked every time; =2 (test): both,
  * compared. Render thread only. */
 static int tex_lookup(int s, unsigned u, Tex **t, View *view, SamplerParams *sp) {
     static struct { TexPool *tp; SamplerPool *sp; uint64_t nh; LONG64 gen1; Tex *t; View view; SamplerParams smp; int r; } memo[6][32], *m;
     static int on = -1;
-    if (on < 0) { const char *e = getenv("WT_VK_TEXMEMO"); on = e ? atoi(e) : 1; }
+    if (on < 0) { const char *e = getenv("HL_VK_TEXMEMO"); on = e ? atoi(e) : 1; }
     LONG64 gen1 = nvn_front_pool_gen() + 1;
     uint64_t nh = R.nvn_tex[s][u];
     int r;
