@@ -28,7 +28,7 @@ for a in "$@"; do
     esac
 done
 # A through the title, the file select ("r" moves to Start), the save notice and the cutscene's prompts
-script="22:Z 30:Z 37:Z 44:Z 50+0.4:r 53:Z 58:Z 63:Z"
+script="22:Z 30:Z 37:Z 44:Z 50+1.0:r 53:Z 58:Z 63:Z"
 t=70; while [ $t -le 290 ]; do script="$script $t:Z"; t=$((t + 6)); done
 if [ -n "$from" ]; then
     [ -d "$repo/build/playtest/$from/user/save" ] || { echo "playtest: run '$from' left no save" >&2; exit 2; }
