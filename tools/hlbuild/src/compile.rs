@@ -7,7 +7,7 @@
 //! Objects without a C file are deleted. Functions over OPTNONE statements get optnone; a file over the time limit is
 //! tried again with smaller thresholds, then at -O0. The code is compiled against runtime/freestanding instead of the
 //! system's C library headers (the same objects, without a libc development package: `hlbuild check-freestanding`).
-//! On Windows the objects are MinGW ones (target.rs), for game.dll.
+//! On Windows the objects are MinGW ones (target.rs), for game.dll; on macOS Mach-O ones, for game.dylib.
 
 use crate::target::{self, mtime_ns, Target};
 use crate::util::sha256_file;
@@ -394,7 +394,8 @@ fn compile_one(c: &Cfg, name: &str, env: &dyn Fn(&mut Command)) -> (Option<i32>,
 /// the lifted code's flags after `-c OPT`, without the target's and the header folders (check-freestanding uses them
 /// too). They are hashed into every player's object stamps: a change compiles every build again
 pub fn lifted_flags(t: Target) -> Vec<String> {
-    let mut flags: Vec<String> = ["-ffp-contract=off", "-w", "-fno-strict-aliasing", "-mcx16"].map(String::from).into();
+    let mut flags: Vec<String> = ["-ffp-contract=off", "-w", "-fno-strict-aliasing"].map(String::from).into();
+    flags.extend(t.cpu());
     flags.extend(t.pic());
     flags.push(FORCE_INLINE.into());
     flags
@@ -412,6 +413,11 @@ pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&
     let free = format!("{}/freestanding", inc); // no system headers: runtime/freestanding/README.md
     let mut flags = t.clang_flags();
     flags.extend(lifted_flags(t));
+    let level = t.cpu_level(); // in the stamps' hash with the rest: a build moved to another processor compiles again
+    if let Some(l) = level.first() {
+        log(format!("compile: for this PC's processor ({})", l));
+    }
+    flags.extend(level);
     flags.extend(["-nostdlibinc", "-isystem", &free, "-I", &inc, "-I", &gen].map(String::from));
     // [lm3] the game is compiled on the PC that plays it: with FMA3 here, the lifted fmaf (NEON fmla: four a lane) is the
     // instruction instead of a call into game_shim.c's fmaf (11 % of the three game threads in the lobby, lprof
@@ -575,5 +581,6 @@ mod tests {
         let linux = ["-ffp-contract=off", "-w", "-fno-strict-aliasing", "-mcx16", "-fPIC", "-Dinline=inline __attribute__((always_inline))"];
         assert_eq!(lifted_flags(Target::Linux), linux);
         assert_eq!(lifted_flags(Target::Windows), [&linux[..4], &linux[5..]].concat());
+        assert_eq!(lifted_flags(Target::MacOS), [&linux[..3], &linux[4..]].concat());
     }
 }

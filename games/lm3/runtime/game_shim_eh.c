@@ -35,6 +35,12 @@ void h_aspect(Ctx *c) {
  * AMD's jitter phase count. A game that supports FSR shifts its projection by them, each frame, in a host override. */
 __declspec(dllexport) volatile int game_fsr_w, game_fsr_h, game_fsr_phases;
 
+/* Motion vectors for moving objects (runtime/nvn_vk_fsr.c fsr_mv_last): by the address of an object's constant-buffer
+ * slot this frame, the slot it used last frame. A game fills it from a host override of its upload; empty (as here),
+ * objects keep the camera's vector. */
+typedef struct { volatile uint64_t dst, prev; } GameMvPair;
+__declspec(dllexport) GameMvPair game_mv_pairs[1 << 16];
+
 /* graphics.ini frame_rate = 60 .. 120: the game's step keeps the time a hitch takes (cutscene sound ahead of the picture).
  * FrameTimer::Update (0x79f320) steps by 0.8 x the last step + 0.2 x the mean of the middle 7 of the last 11 frame times
  * (main+0x13c91ec, +0x13c90a8), so a long frame is left out of the mean and its time is never stepped, while Wwise plays

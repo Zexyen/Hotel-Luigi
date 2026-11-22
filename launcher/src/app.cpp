@@ -235,7 +235,15 @@ bool App::create_window()
 		h = int(h * f);
 	}
 	// a Vulkan window: the game makes its own Vulkan surface on it after the launcher lets go (runtime/display.c)
-	window = SDL_CreateWindow(APP_NAME, w, h, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+#ifdef __APPLE__
+	// macOS: the screens are drawn with Metal (SDL's GPU API has no Vulkan there), and the game makes a window of its own
+	const SDL_WindowFlags api = SDL_WINDOW_METAL;
+	const SDL_GPUShaderFormat shaders = SDL_GPU_SHADERFORMAT_MSL;
+#else
+	const SDL_WindowFlags api = SDL_WINDOW_VULKAN;
+	const SDL_GPUShaderFormat shaders = SDL_GPU_SHADERFORMAT_SPIRV;
+#endif
+	window = SDL_CreateWindow(APP_NAME, w, h, api | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
 	if (!window)
 	{
 		std::fprintf(stderr, "launcher: no window: %s\n", SDL_GetError());
@@ -247,7 +255,7 @@ bool App::create_window()
 		SDL_SetWindowIcon(window, icon);
 		SDL_DestroySurface(icon);
 	}
-	gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, false, nullptr);
+	gpu = SDL_CreateGPUDevice(shaders, false, nullptr);
 	if (!gpu || !SDL_ClaimWindowForGPUDevice(gpu, window))
 	{
 		std::fprintf(stderr, "launcher: no Vulkan device for the launcher's screens: %s\n", SDL_GetError());
@@ -654,7 +662,11 @@ void App::handle(SDL_Event& ev)
 		if (std::abs(int(ev.gaxis.value)) > 16384)            // past half, as the game: a drifting stick is not use
 			prompts_use(SDL_GetGamepadFromID(ev.gaxis.which));
 		return;
-	case SDL_EVENT_MOUSE_BUTTON_DOWN: prompts_use(4); break;
+	case SDL_EVENT_MOUSE_BUTTON_DOWN:
+		prompts_use(4);
+		if (ev.button.button == SDL_BUTTON_LEFT && hint_click(ev.button.x * SDL_GetWindowPixelDensity(window)))
+			return;
+		break;
 	case SDL_EVENT_KEY_DOWN:
 	{
 		prompts_use(4);
@@ -680,6 +692,29 @@ void App::handle(SDL_Event& ev)
 		typed = true;
 	if (ev.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED || ev.type == SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED)
 		rescale();
+}
+
+// a click on a hint of the bottom row presses its key (issue 197). RmlUi never sees the click: it would move the focus
+// to the hint, and the keys act on the focused control. x: the pointer, in the context's pixels.
+bool App::hint_click(float x)
+{
+	Rml::Element* e = ctx->GetHoverElement();
+	while (e && !e->HasAttribute("key"))
+		e = e->GetParentNode();
+	if (!e)
+		return false;
+	using namespace Rml::Input;
+	const Rml::String k = e->GetAttribute<Rml::String>("key", "");
+	if (k == "back")
+		back();
+	else if (k == "change")                      // one glyph for both ways: its left half steps back, the rest (and the word) on
+	{
+		Rml::Element* g = e->GetFirstChild();
+		key(g && x < g->GetAbsoluteOffset(Rml::BoxArea::Border).x + g->GetOffsetWidth() / 2 ? KI_LEFT : KI_RIGHT);
+	}
+	else
+		key(k == "q" ? KI_Q : k == "e" ? KI_E : KI_RETURN);
+	return true;
 }
 
 // the control under the mouse takes the focus (not shown as the keys' focus), so one row is lit, not the hovered one and
@@ -1355,7 +1390,12 @@ void App::tick()
 			play_after_stop = false;
 			want_play = true;
 		}
-		if (TEXTURES && built_game && !runner.exit_code && built && ini_get(paths.config + "/graphics.ini", "", "bc7_textures", "on") == "on" && !file_exists(paths.build + "/cache/bc7/complete"))
+#ifdef __APPLE__
+		const bool gpu_has_astc = true;          // Apple's GPUs read the game's ASTC textures as they are: nothing to convert
+#else
+		const bool gpu_has_astc = false;         // not known here: the pack is made, and the game uses it where the GPU lacks ASTC
+#endif
+		if (TEXTURES && !gpu_has_astc && built_game && !runner.exit_code && built && ini_get(paths.config + "/graphics.ini", "", "bc7_textures", "on") == "on" && !file_exists(paths.build + "/cache/bc7/complete"))
 		{
 			std::error_code ec;
 			if (double(std::filesystem::space(paths.build, ec).available) + folder_bytes(paths.build + "/cache/bc7") >= TEX_NEED)

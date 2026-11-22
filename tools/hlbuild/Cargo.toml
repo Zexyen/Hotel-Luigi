@@ -2,7 +2,7 @@
 name = "hlbuild"
 version = "0.1.0"
 edition = "2021"
-description = "Hotel Luigi build pipeline: from your own dump to a runnable build, on Linux and Windows"
+description = "Hotel Luigi build pipeline: from your own dump to a runnable build, on Linux, Windows and macOS"
 license = "GPL-3.0-only"
 publish = false
 

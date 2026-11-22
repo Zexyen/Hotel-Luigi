@@ -32,6 +32,7 @@ VKD(X)
 static PFN_vkCmdSetVertexInputEXT vkCmdSetVertexInputEXT;
 static PFN_vkCmdDrawIndexedIndirectCount vkCmdDrawIndexedIndirectCount_; static PFN_vkCmdDrawIndirectCount vkCmdDrawIndirectCount_;      /* [witchtime] issues 132, 133: g_gpucount */
 static PFN_vkCmdPushDescriptorSetKHR vkCmdPushDescriptorSetKHR;
+#include "nvn_vk_rec.c"                            /* [witchtime] issue 257, TEST (HL_VK_REC=1): the per-draw commands on a recording thread */
 static PFN_vkGetPhysicalDeviceFeatures2 vkGetPhysicalDeviceFeatures2;
 static PFN_vkGetPhysicalDeviceProperties2 vkGetPhysicalDeviceProperties2;
 static PFN_vkGetPhysicalDeviceFormatProperties vkGetPhysicalDeviceFormatProperties;
@@ -48,9 +49,11 @@ static struct {
     VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT badv; int has_adv;      /* issue 38: advanced blend equations (OP_BLEND) */
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT gpl;
     VkPhysicalDeviceFaultFeaturesEXT fault;        /* [issue 140] fault_dump */
-    const char *exts[20]; uint32_t next;
+    struct { VkStructureType sType; void *pNext; VkBool32 f[15]; } port;      /* [witchtime] VkPhysicalDevicePortabilitySubsetFeaturesKHR (vulkan_beta.h), macOS */
+    const char *exts[24]; uint32_t next;
     int has_vids, has_cbc, has_pv, has_iu8, has_plr, has_vad, has_push, has_eds3, has_fault, debug;
     int has_gpl, ext_gpl, ext_so, has_budget;
+    int sg_known; uint32_t sg_stages;              /* [witchtime] the stages with subgroup operations (nvn_vk_m4.c vk_lone_lane) */
     int dyn_a2c;                                   /* [issue 50] alpha to coverage is dynamic state (else part of the pipeline key) */
     VkPhysicalDeviceDriverProperties drv;
     VkPhysicalDeviceMemoryProperties mp;
@@ -81,6 +84,12 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
     D.f12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES; D.f13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
     D.f2.pNext = &D.f11; D.f11.pNext = &D.f12; D.f12.pNext = &D.f13; tail = &D.f13.pNext;
     D.exts[D.next++] = "VK_KHR_swapchain";
+    if (has_name(dext, ndext, "VK_KHR_portability_subset")) {      /* macOS (MoltenVK): a device that has it must be given it */
+        /* its features are off unless asked for, like any other: view swizzles, comparison samplers set per use and the
+         * samplers' LOD bias among them (the validation layer named all three in the first scenes) */
+        D.exts[D.next++] = "VK_KHR_portability_subset";
+        D.port.sType = (VkStructureType)1000163000; *tail = &D.port; tail = &D.port.pNext;
+    }
 #define EXT(flag, name, st, stype) if (has_name(dext, ndext, name)) { D.flag = 1; D.exts[D.next++] = name; D.st.sType = stype; *tail = &D.st; tail = &D.st.pNext; }
     if (!(getenv("HL_VK_VIDS") && !atoi(getenv("HL_VK_VIDS")))) { EXT(has_vids, "VK_EXT_vertex_input_dynamic_state", vids, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT) }      /* HL_VK_VIDS=0, TEST: as a GPU without it (finding 116) */
     EXT(has_cbc, "VK_EXT_custom_border_color", cbc, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT)
@@ -122,10 +131,14 @@ static void vkd_device_info(VkDeviceCreateInfo *di, const VkExtensionProperties 
          * without extended dynamic state 3. HL_VK_DYN_A2C=0 / 1 forces either way on whole pipelines. */
         VkPhysicalDeviceProperties2 p2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
         VkPhysicalDeviceBlendOperationAdvancedPropertiesEXT ap = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BLEND_OPERATION_ADVANCED_PROPERTIES_EXT};
-        D.drv.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES; p2.pNext = &D.drv;
-        if (D.has_adv) D.drv.pNext = &ap;
+        VkPhysicalDeviceVulkan11Properties p11 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES};
+        D.drv.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES; p2.pNext = &D.drv; D.drv.pNext = &p11;
+        if (D.has_adv) p11.pNext = &ap;
         vkGetPhysicalDeviceProperties2(V.gpu, &p2);
         D.drv.pNext = NULL;
+        D.sg_stages = p11.subgroupSupportedStages; D.sg_known = 1;
+        if (!(D.sg_stages & VK_SHADER_STAGE_VERTEX_BIT) || !(D.sg_stages & VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT))
+            printf("nvn_vk: subgroup operations in stages 0x%x only: a vertex or tessellation stage without them is translated as a warp of one lane\n", (unsigned)D.sg_stages);
         /* issue 38: the game's advanced blend equations (the overlay of the ScreamPark menus) as the driver's own, as on the
          * console and in the OpenGL renderer. Only where every equation, a source that is not premultiplied and every overlap
          * can be asked for per draw; elsewhere (AMD, Intel) they stay nvn_vk_missing. NOT RUN on such a driver by us yet. */
@@ -319,8 +332,9 @@ static struct {
     Slot slot[NSLOT]; int cur, recording; uint64_t serial, done;      /* serial: number of the last submission; done: every submission up to here has finished */
     VkCommandBuffer cmd;
     /* stream ring */
-    VkBuffer ring; VMem ring_mem; uint64_t ring_pos, ring_size; uint32_t gen;
+    VkBuffer ring; VMem ring_mem; uint64_t ring_pos, ring_size; uint32_t gen, ring_gen, tex_mem_gen, vrc_gen;
     struct { uint64_t addr, size, off; uint32_t gen; } acache[8192];
+    uint16_t acache_used[8192]; int acache_n; uint64_t acache_lo, acache_hi;
     VkBuffer zero; VMem zero_mem;
     /* pass */
     int in_pass, pass_w, pass_h;
@@ -347,6 +361,7 @@ static struct {
     struct { VTex *d, *c; int level, layer; } twin[8]; int ntwin;      /* twins drawn into by the pass (twin_flush at its end) */
     int64_t row_stride, image_stride;
     int dyn_dirty, vi_dirty, dyn3_dirty, dyn3_samples;      /* dyn3: the extended-dynamic-state-3 group (blend, masks, polygon mode, multisample) */
+    uint32_t vi_ver, vi_attr_ver, vi_ints, vi_sints, vi_streams;
     void *pipe_bound;
     LONG64 frame_draws, frame_skipped, frame_clears, pipelines, modules, uploads, upload_bytes, images, images_live, views, ring_wraps, feedback, flushes, sets;
     LONG64 sets_reused, tset_collisions, dummy_kind;
@@ -397,6 +412,8 @@ static void oq_end(void) {
 }
 static uint64_t vk_now_ns(void);
 static void oq_poll(void);
+static void ring_inval_all(void);
+static void ring_inval_range(uint64_t addr, uint64_t size);
 static void oq_land(int si) {                     /* slot_wait: the slot's GPU work has finished */
     int n = g_oq_used[si];
     static uint64_t r[OQ_MAX];
@@ -407,7 +424,7 @@ static void oq_land(int si) {                     /* slot_wait: the slot's GPU w
         OqEv *e = &g_oq_ev[si][i];
         if (e->q >= 0) g_oq_run += r[e->q];
         else if (e->q == OQ_EV_RESET) g_oq_run = 0;
-        else if (e->addr) { uint64_t d[2] = {g_oq_run, vk_now_ns()}; memcpy((void *)(uintptr_t)e->addr, d, 16); R.gen++; }
+        else if (e->addr) { uint64_t d[2] = {g_oq_run, vk_now_ns()}; memcpy((void *)(uintptr_t)e->addr, d, 16); ring_inval_range(e->addr, 16); }
     }
     g_oq_nev[si] = 0;
 }
@@ -439,7 +456,7 @@ static void lr_land(int si) {                     /* slot_wait: the slot's GPU w
             const uint8_t *src = e->mem.map;
             for (int y = 0; y < e->h; y++) memcpy(e->dst + (size_t)y * (size_t)e->stride, src + (size_t)y * (size_t)e->stride, (size_t)e->w * (size_t)e->bpb);
             g_lr_landed++; g_lr_bytes += (LONG64)e->w * e->bpb * e->h;
-            R.gen++;                              /* guest memory changed: ranges are streamed again */
+            ring_inval_range((uint64_t)(uintptr_t)e->dst, (uint64_t)e->stride * (uint64_t)e->h);      /* guest memory changed: overlapping ranges are streamed again */
         } else g_lr_dropped++;
         if (g_lr_nfree < 16) { g_lr_free[g_lr_nfree].buf = e->buf; g_lr_free[g_lr_nfree].mem = e->mem; g_lr_free[g_lr_nfree++].size = e->size; }
         else { vkDestroyBuffer(V.device, e->buf, NULL); vmem_free(e->mem); }
@@ -593,12 +610,26 @@ typedef struct { VkBool32 en[8]; VkColorBlendEquationEXT eq[8]; VkColorComponent
 static DynSh g_dsh;
 static DynSh3 g_dsh3;
 static int g_dsh_ok, g_dsh3_ok, g_dsh_topo = -1, g_dsh_rst = -1, g_dsh_on = -1;
+static int g_dsh_vi_ok, g_dsh_vb_ok, g_dsh_ib_ok, g_dsh_pc_ok;
+static uint32_t g_dsh_vi_ver, g_dsh_vi_pres, g_dsh_vnb, g_dsh_pc[5];
+static VkBuffer g_dsh_vb[17], g_dsh_ib;
+static VkDeviceSize g_dsh_vo[17], g_dsh_iboff;
+static VkIndexType g_dsh_it;
+static VkDescriptorSet g_dsh_tset;
+static VkPipelineLayout g_dsh_tset_lay, g_dsh_pc_lay;
 static LONG64 g_dsh_sent, g_dsh_kept;              /* state commands recorded / left out (printed with nvn_vk_perf) */
-static void dsh_forget(void) { g_dsh_ok = g_dsh3_ok = 0; g_dsh_topo = g_dsh_rst = -1; }
+static void dsh_forget(void) {
+    g_dsh_ok = g_dsh3_ok = 0; g_dsh_topo = g_dsh_rst = -1;
+    g_dsh_vi_ok = g_dsh_vb_ok = g_dsh_ib_ok = g_dsh_pc_ok = 0;
+    g_dsh_tset = VK_NULL_HANDLE; g_dsh_tset_lay = VK_NULL_HANDLE; g_dsh_pc_lay = VK_NULL_HANDLE;
+}
 static int dsh_on(void) { if (g_dsh_on < 0) g_dsh_on = !(getenv("HL_VK_DYNSHADOW") && !atoi(getenv("HL_VK_DYNSHADOW"))); return g_dsh_on; }
 static int g_cb_lazy_bar;                        /* [witchtime] cb_defer_pending: the next command buffer starts with a full barrier */
+static uint64_t g_gpu_writes, g_gpu_writes_cmd;    /* [witchtime] g_gpu_writes (below) when the command buffer being recorded began */
+static int g_gce_n; static void gce_flush(void);   /* [witchtime] counts of indirect draws the GPU applies without drawIndirectCount (gce_add, below) */
 static void cmd_begin(void) {
     if (R.recording) return;
+    g_gpu_writes_cmd = g_gpu_writes;
     dsh_forget();
     g_tset_gen++; g_tset_used = 0; g_tset_list_used = 0;
     R.cur = (R.cur + 1) % NSLOT;
@@ -654,6 +685,7 @@ static uint64_t cmd_submit(VkSemaphore wait, VkSemaphore signal) {
     if (g_pt_on > 0 && g_pt_slot[R.cur].n) g_pt_draws[g_pt_slot[R.cur].kind[g_pt_slot[R.cur].n - 1]] += g_cmd_draws - g_pt_slot[R.cur].d0;
     if (g_tl_t0) { LONG64 now = tk(); if (!g_tl_first) g_tl_first = now; g_tl_last = now; }
     VKC(vkEndCommandBuffer(s->cmd));
+    if (g_gce_n) gce_flush();
     VkCommandBuffer cbs[2];
     uint32_t ncb = 0;
     if (s->up_rec) {                               /* [Recomps#1] finding 140: the copies into vertex buffers kept on the GPU, before the draws that read them */
@@ -681,10 +713,34 @@ static void cmd_wait_all(void) { cmd_submit(NULL, NULL); for (int i = 0; i < NSL
 /* ---------------------------------------------------------------- stream ring */
 #define RING_ALIGN 256
 static void cb_ring_wrap(void);
+static uint64_t g_vrc_lo = ~0ull, g_vrc_hi;
+static void ring_inval_all(void) {
+    R.gen++; R.tex_mem_gen++; R.vrc_gen++;
+    R.acache_n = 0; R.acache_lo = ~0ull; R.acache_hi = 0;
+}
+static int ring_range_on(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("HL_VK_RING_RANGE"); on = e ? atoi(e) : 1; }
+    return on;
+}
+static void ring_inval_range(uint64_t addr, uint64_t size) {
+    if (!ring_range_on() || !addr || !size) { ring_inval_all(); return; }
+    uint64_t end = addr + size;
+    if (addr < R.acache_hi && end > R.acache_lo) {
+        for (int k = 0; k < R.acache_n; k++) {
+            unsigned idx = R.acache_used[k];
+            if (R.acache[idx].gen == R.gen && R.acache[idx].size && R.acache[idx].addr < end && addr < R.acache[idx].addr + R.acache[idx].size) {
+                R.acache[idx].addr = 0; R.acache[idx].size = 0;
+            }
+        }
+    }
+    if (nvn_front_tex_cluster_hit(addr, size)) R.tex_mem_gen++;
+    if (addr < g_vrc_hi && end > g_vrc_lo) R.vrc_gen++;
+}
 static uint64_t ring_raw(const void *p, uint64_t n) {
     R.ring_pos = (R.ring_pos + RING_ALIGN - 1) & ~(uint64_t)(RING_ALIGN - 1);
     if (n > R.ring_size / 4) vkd_fail("a range of %llu bytes does not fit the stream ring (%llu MB)", (unsigned long long)n, (unsigned long long)(R.ring_size >> 20));
-    if (R.ring_pos + n > R.ring_size) { cmd_wait_all(); cb_ring_wrap(); R.ring_pos = 0; R.gen++; R.ring_wraps++; }     /* everything that reads the ring has finished */
+    if (R.ring_pos + n > R.ring_size) { cmd_wait_all(); cb_ring_wrap(); R.ring_pos = 0; R.ring_gen++; ring_inval_all(); R.ring_wraps++; }     /* everything that reads the ring has finished */
     uint64_t off = R.ring_pos;
     if (p) memcpy((uint8_t *)R.ring_mem.map + off, p, (size_t)n);
     R.ring_pos += n;
@@ -695,17 +751,30 @@ static int g_ngcp;                                 /* [witchtime] issues 132, 13
 static void gcp_patch(uint64_t addr, uint64_t size, uint64_t off);
 static uint64_t ring_put(uint64_t addr, uint64_t size) {
     unsigned h = (unsigned)(((addr >> 4) ^ (size * 0x9E3779B1u)) * 2654435761u) >> 19;
+    int tomb = -1;
     g_rp_asked++;
     for (int probe = 0; probe < 8; probe++) {
         unsigned i = (h + (unsigned)probe) & 8191;
-        if (R.acache[i].gen == R.gen && R.acache[i].addr == addr && R.acache[i].size == size) { g_rp_hits++; return R.acache[i].off; }
-        if (R.acache[i].gen != R.gen) { h = i; break; }
+        if (R.acache[i].gen == R.gen) {
+            if (R.acache[i].addr == addr && R.acache[i].size == size) { g_rp_hits++; return R.acache[i].off; }
+            if (!R.acache[i].size && tomb < 0) tomb = (int)i;
+            continue;
+        }
+        h = tomb >= 0 ? (unsigned)tomb : i;
+        break;
     }
+    if (tomb >= 0 && R.acache[h & 8191].gen == R.gen && R.acache[h & 8191].size) h = (unsigned)tomb;
     uint64_t off = ring_raw(P(addr), size);
     if (g_ngcp) gcp_patch(addr, size, off);
     g_rp_bytes += (LONG64)size;
     h &= 8191;
+    if (R.acache[h].gen != R.gen) {
+        if (R.acache_n < 8192) R.acache_used[R.acache_n++] = (uint16_t)h;
+        else { ring_inval_all(); R.acache_used[R.acache_n++] = (uint16_t)h; }
+    }
     R.acache[h].addr = addr; R.acache[h].size = size; R.acache[h].off = off; R.acache[h].gen = R.gen;
+    if (addr < R.acache_lo) R.acache_lo = addr;
+    if (addr + size > R.acache_hi) R.acache_hi = addr + size;
     return off;
 }
 
@@ -760,7 +829,7 @@ static VkFlags fmt_aspect(VkFormat f) {
     default: return VK_IMAGE_ASPECT_COLOR_BIT;
     }
 }
-static VkFormat vertex_vkfmt(int nf) {
+static VkFormat vertex_vkfmt_compute(int nf) {
     if ((nf >= 0x01 && nf <= 0x30) || (nf >= 0x6D && nf <= 0x78)) return comp_fmt(nf >= 0x6D ? 4 : (nf - 1) / 12 + 1, nf >= 0x6D ? nf - 0x6D : (nf - 1) % 12);
     if (nf >= 0x51 && nf <= 0x68) {
         int comps = (nf - 0x51) / 6 + 1, t = (nf - 0x51) % 6;
@@ -772,6 +841,12 @@ static VkFormat vertex_vkfmt(int nf) {
     case 0x6A: return VK_FORMAT_A2B10G10R10_SINT_PACK32; case 0x6B: return VK_FORMAT_A2B10G10R10_USCALED_PACK32; case 0x6C: return VK_FORMAT_A2B10G10R10_SSCALED_PACK32;
     }
     return VK_FORMAT_UNDEFINED;
+}
+static VkFormat vertex_vkfmt(int nf) {
+    static VkFormat lut[256];
+    static int init;
+    if (!init) { for (int i = 0; i < 256; i++) lut[i] = vertex_vkfmt_compute(i); init = 1; }
+    return (unsigned)nf < 256u ? lut[nf] : VK_FORMAT_UNDEFINED;
 }
 /* The vertex input of a draw as Vulkan describes it (the draw, and the look-ahead of nvn_vk_m4.c). Attribute i reads
  * location i; a stream an attribute names that has a buffer (bit set in `present`) gets a binding of its own, in the order
@@ -822,6 +897,8 @@ struct VTex {
     uint32_t magic; Tex *t; VkImage img; VMem mem; VkFormat fmt; VkImageLayout layout; VkFlags aspect;
     int w, h, d, levels, layers, samples, expand, decode, bc7, is3d, feedback, bpb, bw, bh;
     int storage;                                   /* [witchtime] made with VK_IMAGE_USAGE_STORAGE_BIT */
+    int drawn;                                     /* has been the colour target of a pass */
+    uint32_t touch_gen, attach_gen;                /* bumped on layout change / upload / write; matches g_attach_gen while bound as target */
     int rs; float sx, sy;                          /* track O: rs = 1 when the image is scaled from the game's texture, smaller or larger (w, h are the image's; sx, sy = image / game; PR #8) */
     int post;                                      /* [witchtime] issue 118: of the picture's scale (after FSR), not the scene's (rs_size) */
     VTex *twin;                                    /* a depth image's colour twin (twin_get) */
@@ -937,6 +1014,20 @@ static Tex *g_rs_keep[256];
 static int g_rs_nkeep;
 static LONG64 g_rs_demoted;
 static int g_rs_demoting;                          /* vk_drop called by the demotion below (not a finalize) */
+/* [witchtime] issue 126: the mist (the clouds of erasure's patches, drawn into the 520x360 class) fades against the scene with
+ * the minimum of #5548's half-size depth image, which stays at the game's size. At a scale its cut-out around characters and
+ * buildings steps in 2 game pixels (4.8 of the picture's at 2160p), and #5548 takes 2x2 texels of the scaled depth for each,
+ * a part of the footprint: over an object that fades through the dither the minimum misses it in a grid of dots. #5548's own
+ * colour target holds the same linear depth for every pixel of the scaled scene (red), so those draws sample it instead, with
+ * a sampler that returns the minimum of its 2x2 texels (the dither's pixels are the image's). Not at 1.0 (nothing is kept).
+ * HL_VK_MISTDEPTH=0: off; =alt (TEST): on in odd frames only, an A/B in two frames of one run. */
+static Tex *g_rs_fine_kept, *g_rs_fine_full;       /* the kept image and the colour target of the draw that stored it */
+static LONG64 g_rs_fine_draws;
+static int rs_fine_on(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("HL_VK_MISTDEPTH"); on = !e ? 1 : !strcmp(e, "alt") ? 2 : atoi(e) != 0; }
+    return on == 2 ? (int)(nvn_front_frame_next() & 1) : on;
+}
 static Tex *g_rs_post[64];                         /* [witchtime] issue 118: tonemap targets made at the picture's scale (rs_promote) */
 static int g_rs_npost;
 static int rs_post_has(const Tex *t) { for (int i = 0; i < g_rs_npost; i++) if (g_rs_post[i] == t) return 1; return 0; }
@@ -970,6 +1061,7 @@ static void vt_layout(VTex *vt, VkImageLayout to) {
     cmd_begin();
     image_barrier(vt->img, vt->aspect, vt->layout, to);
     vt->layout = to;
+    vt->touch_gen++;
 }
 static void vt_check(VTex *vt) { if (vt->magic != 0x56544558) vkd_fail("an image is used after it was destroyed (texture record %p)", (void *)vt); }
 static void vt_destroy(VTex *vt) {
@@ -1004,6 +1096,7 @@ static void vk_drop(int kind, void *host) {
     lr_forget(t);                                  /* [Recomps#1] finding 118 */
     if (g_rs_nkeep && !g_rs_demoting) rs_keep_forget(t);      /* [witchtime] finalized: a later texture at this address starts over */
     if (g_rs_npost && !g_rs_demoting) rs_post_forget(t);      /* [witchtime] issue 118: the same for a tonemap target */
+    if (!g_rs_demoting && (t == g_rs_fine_kept || t == g_rs_fine_full)) g_rs_fine_kept = g_rs_fine_full = NULL;      /* [witchtime] issue 126 */
     if (g_hdr_tm == t && !g_rs_demoting) g_hdr_tm = NULL;
     VTex *vt = t->vk;
     if (!vt) return;
@@ -1307,7 +1400,7 @@ static VTex *vt_get2(Tex *t, int sync) {
     }
     vt_check(vt);
     if (sync) alias_sync(t, vt);
-    if (sync && nvn_front_tex_changed(t, R.gen)) {
+    if (sync && nvn_front_tex_changed(t, R.tex_mem_gen)) {
         if (!tu0) tu0 = tk();
         g_put_vt = vt;
         cmd_begin();
@@ -1489,14 +1582,28 @@ static VkImageView vt_view(VTex *vt, const EView *e, int dim, int attach) {
 
 /* ---------------------------------------------------------------- samplers (shared by value, never deleted before shutdown) */
 static struct { SamplerParams p; VkSampler s; } g_smp[2048];
+static int16_t g_smp_ht[4096];                     /* 0 = empty, i + 1 = g_smp[i] */
 static int g_nsmp;
+static uint32_t g_smp_gen = 1;
+static void sampler_table_reset(void) { g_nsmp = 0; memset(g_smp_ht, 0, sizeof g_smp_ht); g_smp_gen++; }
 static VkSampler g_smp_old[4096];                 /* [witchtime] samplers of an earlier anisotropic filtering (the PC menu flushed the table), kept to shutdown */
 static int g_nsmp_old;
 static VkSampler g_smp_default;
+static uint64_t sampler_hash(const SamplerParams *p) {
+    uint64_t w[6], h = 0xcbf29ce484222325ULL;
+    memcpy(w, p, sizeof w);
+    for (int k = 0; k < 6; k++) { h = (h ^ w[k]) * 0x9E3779B97F4A7C15ull; h ^= h >> 29; }
+    return h;
+}
 static VkSampler sampler_get(const SamplerParams *p) {
     static const VkSamplerAddressMode wrap[8] = {VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE,
                                                  VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE};
-    for (int i = 0; i < g_nsmp; i++) if (!memcmp(&g_smp[i].p, p, sizeof *p)) return g_smp[i].s;
+    unsigned slot = (unsigned)sampler_hash(p) & 4095;
+    for (int probe = 0; probe < 4096; probe++) {
+        int16_t e = g_smp_ht[(slot + (unsigned)probe) & 4095];
+        if (!e) { slot = (slot + (unsigned)probe) & 4095; break; }
+        if (!memcmp(&g_smp[e - 1].p, p, sizeof *p)) return g_smp[e - 1].s;
+    }
     VkSamplerCreateInfo ci = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     VkSamplerCustomBorderColorCreateInfoEXT cb = {VK_STRUCTURE_TYPE_SAMPLER_CUSTOM_BORDER_COLOR_CREATE_INFO_EXT};
     VkSamplerReductionModeCreateInfo red = {VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO};
@@ -1546,7 +1653,8 @@ static VkSampler sampler_get(const SamplerParams *p) {
     VkSampler s;
     VKC(vkCreateSampler(V.device, &ci, NULL, &s));
     if (g_nsmp == 2048) vkd_fail("more than 2048 distinct samplers");
-    g_smp[g_nsmp].p = *p; g_smp[g_nsmp++].s = s;
+    g_smp[g_nsmp].p = *p; g_smp[g_nsmp].s = s;
+    g_smp_ht[slot] = (int16_t)(++g_nsmp);
     return s;
 }
 
@@ -1766,6 +1874,7 @@ static VStage *vstage_get(Prog *p, int s, const uint32_t *key, uint32_t fo) {
     v->next = g_vstage[h & 4095]; g_vstage[h & 4095] = v;
     st->vk = v;
     snprintf(what, sizeof what, "program #%d %s stage", p->serial, s == 5 ? "compute" : s == 2 ? "geometry" : s == 3 ? "tess control" : s == 4 ? "tess evaluation" : s ? "fragment" : "vertex");
+    in.lone_lane = vk_lone_lane(s);
     if (!mx_translate(&in, &out)) { printf("nvn_vk: %s: machine code not translated: %s\n", what, out.why); fflush(stdout); return NULL; }
     uint64_t spv_hash = 0;
     glsl_dump(p->serial, s, 0, out.glsl);                 /* [Recomps#1] TEST ONLY: HL_VK_GLSLDUMP */
@@ -2002,11 +2111,12 @@ static VkImageView target_view(const TargetRef *r, VTex *vt) {
     return vt_view(vt, &e, -1, 1);
 }
 static void fl_pass(int w, int h, int fmt, int win, int ncol, int depth);      /* nvn_vk_flash.c (session 13) */
-static void fsr_draw(VStage *fs); static void fsr_present(void); static void fsr_shutdown(void);      /* [witchtime] nvn_vk_fsr.c (issue 118) */
+static void fsr_draw(VStage *fs); static void fsr_mv_streams(int from_cb, VStage *vs); static void fsr_present(void); static void fsr_shutdown(void);      /* [witchtime] nvn_vk_fsr.c (issue 118) */
 static VkImageView fsr_dither_view(int s, unsigned u, Tex *t, VTex *vt, const View *view); static VkImageView fsr_up_view(int s, Tex *t, VTex *vt, const View *view);
 static int g_vk_test;                              /* session 13, TEST ONLY: HL_VK_TEST (see the dynamic state) */
 static int g_dp_potential;                         /* [witchtime] issues 132, 133: draw_prepare for an indirect draw whose count or records the GPU decides */
 static int g_dp_fs_stores;                         /* [witchtime] issue 147: the draw just prepared has a fragment stage that stores into images */
+static uint32_t g_tex_batch_gen = 1, g_attach_gen = 1;
 static int pass_begin(void) {
     VkRenderingAttachmentInfo ca[8], da;
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
@@ -2026,7 +2136,7 @@ static int pass_begin(void) {
             int lv = target_level(&R.col[i]), ly = (R.col[i].view.set & 0x82) == 0x82 ? R.col[i].view.lay0 : 0;
             VTex *tw = (R.col[i].view.set & 0x84) == 0x84 ? twin_get(vt, R.col[i].view.format) : NULL;
             if (!tw || R.ntwin == 8) { nvn_vk_missing("a depth format bound as colour target (other than 16-bit depth through an R16 view)"); continue; }
-            t->gpu_written = 1; vt->gw = 1;
+            t->gpu_written = 1; vt->gw = 1; vt->attach_gen = g_attach_gen;
             twin_copy(vt, tw, lv, ly, 1);
             vt_layout(tw, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             ca[i].imageView = twin_view(tw, lv, ly); ca[i].imageLayout = tw->layout;
@@ -2034,14 +2144,14 @@ static int pass_begin(void) {
             R.twin[R.ntwin].d = vt; R.twin[R.ntwin].c = tw; R.twin[R.ntwin].level = lv; R.twin[R.ntwin].layer = ly; R.ntwin++;
             continue;
         }
-        t->gpu_written = 1; vt->gw = 1; vt->wstamp = ++g_wstamp;
+        t->gpu_written = 1; vt->gw = 1; vt->wstamp = ++g_wstamp; vt->drawn = 1; vt->attach_gen = g_attach_gen;
         vt_layout(vt, vt->feedback ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         ca[i].imageView = target_view(&R.col[i], vt); ca[i].imageLayout = vt->layout;
         if (!w) { w = lvl_(vt->w, target_level(&R.col[i])); h = lvl_(vt->h, target_level(&R.col[i])); if (vt->rs) { R.pass_rs = 1; R.pass_sx = vt->sx; R.pass_sy = vt->sy; } }
     }
     if (R.depth.tex && !R.depth.tex->dead) {
         VTex *vt = vt_get(R.depth.tex);
-        R.depth.tex->gpu_written = 1; vt->gw = 1;
+        R.depth.tex->gpu_written = 1; vt->gw = 1; vt->attach_gen = g_attach_gen;
         if (vt->aspect == VK_IMAGE_ASPECT_COLOR_BIT) nvn_vk_missing("a colour format bound as depth target");
         else if (RS_ON && rs_ui_native() && vt->rs && !R.pass_rs && w && (lvl_(vt->w, target_level(&R.depth)) != w || lvl_(vt->h, target_level(&R.depth)) != h)) g_rs_mixed++;      /* session 9 (HL_VK_UI_NATIVE): an unscaled colour target with a scaled depth target: the pass runs WITHOUT depth (counted, reported at exit); PR #8 review: != (not <), above 1.0 the scaled depth is LARGER than the colour */
         else {
@@ -2252,26 +2362,103 @@ static int g_hud_mid_draw;
  * image (scaled, or kept at the game's size: those are read by screen position) and samples a small texture (64 x 64 or
  * less: a pattern) gets the image's own pixels instead (mx_fcs 1): the pattern is even, at the image's resolution. */
 static int g_fs_screen, g_fs_small;
+/* #257: nvn_front_handle for the handle bound at a unit, with the pools set now. The answer is kept while the pools and
+ * the handle stay as they were (nvn_front_pool_gen): a bind asks, and the draws that follow, most of which bind nothing
+ * new, read it here. Asking the pools for every sampler of every draw (a ride: 17,000 a frame, each entry out of the
+ * cache after the frame's ring copies) was 8 % of the render thread. HL_VK_TEXMEMO=0: asked every time; =2 (test): both,
+ * compared. Render thread only. */
+typedef struct {
+    TexPool *tp; SamplerPool *sp; uint64_t nh; LONG64 gen1;
+    Tex *t; View view; SamplerParams smp; int r;
+    VkSampler vk_smp; uint32_t smp_gen;
+    uint32_t dims[4]; uint8_t isint, c2_ok;
+    VTex *res_vt; VkImageView res_view;
+    uint32_t res_batch, res_attach, res_vt_touch, res_tex_gen;
+    uint8_t res_dim, res_ok, res_fs_screen, res_fs_small, res_is64;
+} TexMemo;
+#define TEX_HC_N 4096
+static TexMemo g_tex_hc[TEX_HC_N];
+static int g_texmemo_on = -1;
+static inline TexMemo *tex_hc_slot(uint64_t nh) { return &g_tex_hc[(unsigned)((nh * 0x9E3779B97F4A7C15ull) >> 52)]; }
+static int tex_lookup_h(uint64_t nh, Tex **t, View *view, SamplerParams *sp, TexMemo **out_m) {
+    if (g_texmemo_on < 0) { const char *e = getenv("HL_VK_TEXMEMO"); g_texmemo_on = e ? atoi(e) : 1; }
+    LONG64 gen1 = nvn_front_pool_gen() + 1;
+    int r;
+    TexMemo *m = tex_hc_slot(nh);
+    if (out_m) *out_m = m;
+    *t = NULL;
+    if (g_texmemo_on && m->gen1 == gen1 && m->tp == R.tpool && m->sp == R.spool && m->nh == nh) {
+        r = m->r; *view = m->view; *sp = m->smp;
+        if ((r & 1) && !m->t->dead) *t = m->t; else r &= ~1;
+        if (g_texmemo_on == 2) {
+            Tex *t2 = NULL; View v2 = *view; SamplerParams s2 = *sp;
+            int r2 = nvn_front_handle(R.tpool, R.spool, nh, &t2, &v2, &s2);
+            static int said;
+            if ((r2 != r || t2 != *t || ((r & 1) && memcmp(&v2, view, sizeof v2)) || ((r & 2) && memcmp(&s2, sp, sizeof s2))) && !said++) printf("nvn_vk_texmemo: FAILED: handle %llx: kept %d %p, the pools say %d %p\n", (unsigned long long)nh, r, (void *)*t, r2, (void *)t2);
+        }
+        return r;
+    }
+    r = nvn_front_handle(R.tpool, R.spool, nh, t, view, sp);
+    m->gen1 = gen1; m->tp = R.tpool; m->sp = R.spool; m->nh = nh; m->t = *t; m->r = r;
+    m->smp_gen = 0; m->c2_ok = 0; m->res_ok = 0;
+    if (r & 1) m->view = *view;
+    if (r & 2) m->smp = *sp;
+    return r;
+}
+static int tex_lookup(int s, unsigned u, Tex **t, View *view, SamplerParams *sp) { return tex_lookup_h(R.nvn_tex[s][u], t, view, sp, NULL); }
 static void resolve_sampler(int s, VStage *v, int i) {
     unsigned u = v->smp[i].unit;
+    int dim = v->smp[i].dim;
+    if (g_texmemo_on < 0) { const char *e = getenv("HL_VK_TEXMEMO"); g_texmemo_on = e ? atoi(e) : 1; }
+    uint64_t nh = u < 32 ? R.nvn_tex[s][u] : 0;
+    TexMemo *m = u < 32 ? tex_hc_slot(nh) : NULL;
+    LONG64 gen1 = nvn_front_pool_gen() + 1;
+    if (m && g_texmemo_on == 1 && m->res_ok && m->res_dim == dim &&
+        m->gen1 == gen1 && m->tp == R.tpool && m->sp == R.spool && m->nh == nh &&
+        m->res_batch == g_tex_batch_gen &&
+        m->smp_gen == g_smp_gen && m->res_tex_gen == R.tex_mem_gen &&
+        !(s == 1 && u == 14 && m->res_is64) &&
+        !m->t->dead && m->t->vk == m->res_vt &&
+        !((m->t->b.flags & 8) && m->t->b.target == 1) &&      /* [lm3] a target takes a larger alias's texels at the bind (alias_sync, in vt_get) */
+        m->res_vt->attach_gen != g_attach_gen &&
+        m->res_vt->touch_gen == m->res_vt_touch && m->res_vt->layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL &&
+        !(s == 5 && m->res_vt->rs) &&
+        !drawlog_on() && !shlog_on()) {
+        g_dtex[g_ndtex].view = m->res_view; g_dtex[g_ndtex].smp = m->vk_smp; g_dtex[g_ndtex].layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        if (s == 1) { g_fs_screen |= m->res_fs_screen; g_fs_small |= m->res_fs_small; }
+        g_ndtex++; g_ptr_n++;
+        return;
+    }
     Tex *t = NULL;
     View view;
     SamplerParams sp;
     LONG64 rt0 = g_ptm_on > 0 ? tk() : 0;
-    int r = u < 32 ? nvn_front_handle(R.tpool, R.spool, R.nvn_tex[s][u], &t, &view, &sp) : 0;
+    int r = u < 32 ? tex_lookup_h(nh, &t, &view, &sp, &m) : 0;
     if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[0] += x - rt0; rt0 = x; }
-    if ((r & 1) && s == 1 && t->b.format == 0x1 && t->b.target == 1 && t->b.height == g_rs_bh && t->b.width * 9 == t->b.height * 16) g_movie_y = 1;      /* [witchtime] a movie's Y plane */
-    g_dtex[g_ndtex].view = g_dummy.v[v->smp[i].dim]; g_dtex[g_ndtex].smp = g_smp_default; g_dtex[g_ndtex].layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    int is_movie = (r & 1) && t->b.format == 0x1 && t->b.target == 1 && t->b.height == g_rs_bh && t->b.width * 9 == t->b.height * 16;
+    if (is_movie && s == 1) g_movie_y = 1;      /* [witchtime] a movie's Y plane */
+    g_dtex[g_ndtex].view = g_dummy.v[dim]; g_dtex[g_ndtex].smp = g_smp_default; g_dtex[g_ndtex].layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     if (r & 1) {
         Tex *c = s == 1 && R.ncol == 1 ? R.col[0].tex : NULL;
-        if (c && rs_pyramid_next(t->b.format, t->b.width, t->b.height, v->in_attr, c->b.format, c->b.width, c->b.height) && RS_ON && rs_keep_has(t)) rs_keep_level(c);
+        int rs_special = is_movie;
+        if (c && rs_pyramid_next(t->b.format, t->b.width, t->b.height, v->in_attr, c->b.format, c->b.width, c->b.height) && RS_ON && rs_keep_has(t)) { rs_keep_level(c); rs_special = 1; }
         VTex *vt = vt_get(t);
+        if (s == 1 && t == g_rs_fine_kept && rs_fine_on() && R.ncol && R.col[0].tex && rs_extra_class(R.col[0].tex->b.width, R.col[0].tex->b.height)) {      /* [witchtime] issue 126: the mist reads the scaled depth */
+            Tex *f = g_rs_fine_full;
+            VTex *fv = f && !f->dead ? vt_get(f) : NULL;
+            if (fv && fv->rs && fv->samples == 1 && D.f12.samplerFilterMinmax && fmt_supported(fv->fmt, VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT)) {
+                t = f; vt = fv; view.set = 0; g_rs_fine_draws++; rs_special = 1;
+                sp.reduction = 1; sp.min = sp.mag = 1;      /* the minimum of the 2x2 texels at the sample, level 0 */
+            }
+        }
         VkImageView dither = fsr_dither_view(s, u, t, vt, &view);      /* [witchtime] issue 118: this frame's phase of the dither while FSR runs (may end the pass) */
         if (!dither) dither = fsr_up_view(s, t, vt, &view);           /* [witchtime] issue 118: FSR's output for a tonemap at the picture's scale (may end the pass) */
         if (g_ptm_on > 0) { LONG64 x = tk(); g_ptr[1] += x - rt0; rt0 = x; }
-        if (s == 1) { if (vt->rs || rs_keep_has(t)) g_fs_screen = 1; else if (t->b.width <= 64 && t->b.height <= 64) g_fs_small = 1; }      /* [witchtime] the dither */
+        int fs_scr = (vt->rs || rs_keep_has(t)) ? 1 : 0;
+        int fs_sml = (!fs_scr && t->b.width <= 64 && t->b.height <= 64) ? 1 : 0;
+        if (s == 1) { g_fs_screen |= fs_scr; g_fs_small |= fs_sml; }      /* [witchtime] the dither */
         EView e;
-        int attached = R.depth.tex == t, dim = v->smp[i].dim;
+        int attached = R.depth.tex == t;
         for (int k = 0; k < R.ncol; k++) attached |= R.col[k].tex == t;
         eview_of(t, vt, &view, &e);
         int have = target_dim(e.target);
@@ -2294,7 +2481,33 @@ static void resolve_sampler(int s, VStage *v, int i) {
             for (q = 0; on && q < (uint64_t)nseen && seen[q] != key; q++) {}
             if (on && q == (uint64_t)nseen && nseen < 1024) { seen[nseen++] = key; printf("nvn_vk_rt: TEST: stage 5 program #%d samples a SCALED %dx%d format 0x%x (unit %u)\n", R.prog[s] ? R.prog[s]->serial : -1, t->b.width, t->b.height, t->b.format, u); }
         }
-        if (r & 2) g_dtex[g_ndtex].smp = sampler_get(&sp);
+        if (r & 2) {
+            if (m && !rs_special && m->smp_gen == g_smp_gen) g_dtex[g_ndtex].smp = m->vk_smp;
+            else {
+                VkSampler vsmp = sampler_get(&sp);
+                g_dtex[g_ndtex].smp = vsmp;
+                if (m && !rs_special) { m->vk_smp = vsmp; m->smp_gen = g_smp_gen; }
+            }
+        } else if (m && !rs_special) { m->vk_smp = g_smp_default; m->smp_gen = g_smp_gen; }
+        if (m && g_texmemo_on && ok && vt->samples == 1 && !attached && !dither && !rs_special &&
+            vt->layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL &&
+            !(t == g_rs_fine_kept || rs_keep_has(t) || (vt->drawn && g_rs_mode >= 1))) {
+            if (g_texmemo_on == 2 && m->res_ok && m->res_dim == dim &&
+                m->res_batch == g_tex_batch_gen &&
+                m->smp_gen == g_smp_gen && m->res_tex_gen == R.tex_mem_gen &&
+                !(s == 1 && u == 14 && m->res_is64) && !(s == 5 && vt->rs) &&
+                m->t == t && m->res_vt == vt && vt->attach_gen != g_attach_gen && m->res_vt_touch == vt->touch_gen) {
+                static int said;
+                if ((m->res_view != g_dtex[g_ndtex].view || m->vk_smp != g_dtex[g_ndtex].smp || m->res_fs_screen != fs_scr || m->res_fs_small != fs_sml) && !said++)
+                    printf("nvn_vk_texmemo: FAILED: resolved sampler mismatch stage %d unit %u\n", s, u);
+            }
+            m->res_vt = vt; m->res_view = g_dtex[g_ndtex].view;
+            m->res_batch = g_tex_batch_gen; m->res_attach = g_attach_gen;
+            m->res_vt_touch = vt->touch_gen; m->res_tex_gen = R.tex_mem_gen;
+            m->res_dim = (uint8_t)dim; m->res_fs_screen = (uint8_t)fs_scr; m->res_fs_small = (uint8_t)fs_sml;
+            m->res_is64 = (uint8_t)(t->b.width == 64 && t->b.height == 64);
+            m->res_ok = 1;
+        }
         if (drawlog_on()) printf("DLM s%d u%u tex=%p mem=%p image=%p refs=%d drawn=%d flags=0x%x\n", s, u, (void *)t, (void *)t->mem, (void *)vt, vt->refs, t->gpu_written, t->b.flags);
         if (drawlog_on()) printf("DLT s%d u%u tex=%p fmt=0x%x %dx%dx%d lv=%d tgt=%d view(fmt=0x%x lvl0=%d nlvl=%d swz=%d%d%d%d) dim=%d have=%d ok=%d rs=%d smp=%d min=%u mag=%u wrap=%u,%u,%u lod=%g..%g bias=%g aniso=%g cmode=%u border=%g,%g,%g,%g\n",
                                s, u, (void *)t, t->b.format, t->b.width, t->b.height, t->b.depth, nvn_front_tex_levels(t), t->b.target, e.format, e.lvl0, e.nlvl, e.swz[0], e.swz[1], e.swz[2], e.swz[3], dim, have, ok, vt->rs,
@@ -2592,7 +2805,10 @@ typedef struct { uint64_t wm_off; uint32_t written; int16_t cb[16]; } CDisp;
 static CB g_cb[CB_N];
 static CDisp g_cdisp[2048];
 static int g_ncdisp, g_cb_live, g_cb_pending, g_cb_cached = -1;
-static int g_live_idx[CB_N], g_live_n;                /* [witchtime] the entries made live in this batch (cb_live_add) */
+static int g_live_idx[CB_N], g_live_n, g_live_disjoint = 1; /* [witchtime] the entries made live in this batch (cb_live_add) */
+static uint64_t g_live_end[CB_N];                     /* #257: where each entry ended when it was added: the walks skip an entry that cannot hold or meet the range without reading its buffer */
+static uint64_t g_live_key[CB_N], g_live_max;         /* #156: the list is sorted by the address each entry was added with; the largest size added since it was empty */
+static int g_kept_indexed;                            /* 1 while g_kept_idx holds every state==3 buffer (cb_kept_index) */
 static uint64_t g_cb_serial;                       /* the submission the pending CBs wait for */
 /* HL_VK_CBKEEP: the buffer's bytes go to guest memory. With the snapshot of the fill (HL_VK_CBMERGE, the default) only
  * the words compute changed since the fill are written, and a word the game changed since then stays the game's. */
@@ -2647,7 +2863,7 @@ static void cb_land(int midbatch) {                /* the GPU has finished every
         CB *c = &g_cb[i];
         if (!c->state || c->state >= 3) continue;
         if (g_cb_keep > 0 && c->state == 2) {      /* HL_VK_CBKEEP: the batch is over: the buffer stays, nothing is copied */
-            c->stale |= c->dirty; c->dirty = 0; c->state = 3; c->age = 0; g_cb_nkept++;
+            c->stale |= c->dirty; c->dirty = 0; c->state = 3; c->age = 0; g_cb_nkept++; g_kept_indexed = 0;
             if (c->addr < g_kept_lo) g_kept_lo = c->addr;
             if (c->addr + c->size > g_kept_hi) g_kept_hi = c->addr + c->size;
             if (g_cb_keep == 2) cg_guard(i, c->addr, c->size);
@@ -2676,11 +2892,11 @@ static void cb_land(int midbatch) {                /* the GPU has finished every
         c->state = c->dirty = 0;
         c->busy = midbatch ? R.serial + 1 : 0;
     }
-    g_cb_live = g_cb_pending = 0; g_live_n = 0; g_live_lo = ~0ull; g_live_hi = 0;      /* no entry is live (state 1) any more */
+    g_cb_live = g_cb_pending = 0; g_live_n = 0; g_live_disjoint = 1; g_live_lo = ~0ull; g_live_hi = 0;      /* no entry is live (state 1) any more */
     nvn_front_ccmp_landed();                       /* HL_COMPUTE_CMP: what the dispatches wrote is in guest memory now */
     g_cb_epoch++;
     g_tm[1] += tk() - t0;
-    R.gen++;                                       /* guest memory changed: ranges are streamed again */
+    ring_inval_all();                              /* guest memory changed: ranges are streamed again */
 }
 static void cb_ring_wrap(void) { if (g_cb_pending) cb_land(0); else cb_masks(); }      /* after cmd_wait_all: the mask words in the ring are about to be reused */
 /* [witchtime] issues 132, 133: at a batch start the last batch's buffers become kept WITHOUT waiting for the GPU. cb_sync
@@ -2701,12 +2917,12 @@ static int cb_defer_pending(void) {
     for (int i = 0; i < CB_N; i++) {
         CB *c = &g_cb[i];
         if (c->state != 2) continue;
-        c->stale = 1; c->dirty = 0; c->state = 3; c->age = 0; g_cb_nkept++;      /* kserial: the submission that ended its batch (cb_batch_end) */
+        c->stale = 1; c->dirty = 0; c->state = 3; c->age = 0; g_cb_nkept++; g_kept_indexed = 0;      /* kserial: the submission that ended its batch (cb_batch_end) */
         if (c->addr < g_kept_lo) g_kept_lo = c->addr;
         if (c->addr + c->size > g_kept_hi) g_kept_hi = c->addr + c->size;
     }
     g_ncdisp = 0;                                  /* their write masks are not read */
-    g_cb_pending = 0; g_live_n = 0; g_cb_epoch++; g_cb_lazy_n++;
+    g_cb_pending = 0; g_live_n = 0; g_live_disjoint = 1; g_cb_epoch++; g_cb_lazy_n++;
     g_cb_lazy_bar = 1;                             /* the next command buffer begins with a full barrier; one being recorded gets it now */
     if (R.recording) {
         VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
@@ -2734,30 +2950,43 @@ static int cb_kept_wrote(CB *k);                  /* below cb_guest_wrote */
  * in the slot's `up` command buffer after a barrier; and the bytes reach guest memory once the source's writer has finished
  * (gcp_settle_upto, oldest first, only the bytes nobody changed since, as the copy-back merge). Any other CPU read or write of
  * the destination, any change of the source buffer and the game's fence waits settle first, waiting if they must. Kept
- * vertex buffers do not take an overlaid range (vrc_cb_touch). HL_VK_GPUCOPY=0: off. */
+ * vertex buffers do not take an overlaid range (vrc_cb_touch). HL_VK_GPUCOPY=0: off.
+ * Issue 156: B3 dispatches into that luminance buffer again every frame, and "the source changes" meant a wait for the last
+ * frame whenever the GPU was behind (a frame then cost replay plus GPU: 25 fps in the Chapter 1 ride on an RX 6800 XT). Now
+ * the bytes move on the GPU instead (gcp_src_rewritten): the slot's `up` buffer, which runs before the dispatch, copies them
+ * into a slot of a small side buffer, and the overlay reads that slot from this submission on. HL_VK_GPUCOPY_SIDE=0: off. */
 #define GCP_N 32
-typedef struct { uint64_t dst, size, soff, wserial; int src; uint8_t *snap; } GCopy;
+#define GCP_SIDE 4096                              /* bytes per side slot = the largest overlay (gcp_add) */
+typedef struct { uint64_t dst, size, soff, wserial, sserial; int src, side; uint8_t *snap; } GCopy;      /* side: slot of the side buffer, written by submission sserial; -1 none */
 static GCopy g_gcp[GCP_N];
-static int g_gpucopy = -1, g_gcp_busy;
-static LONG64 g_gcp_made, g_gcp_patches, g_gcp_waits, g_gcp_dropped;
+static int g_gpucopy = -1, g_gcp_busy, g_gcp_sideon = -1;
+static LONG64 g_gcp_made, g_gcp_patches, g_gcp_waits, g_gcp_dropped, g_gcp_sides;
+static VkBuffer g_gcp_sbuf;
+static VMem g_gcp_smem;
+static uint32_t g_gcp_sused;                       /* one bit per side slot */
 static VkCommandBuffer up_cmd(void);
 static int gcp_hits(int i, uint64_t addr, uint64_t size) { return addr < g_gcp[i].dst + g_gcp[i].size && g_gcp[i].dst < addr + size; }
-static void gcp_remove(int i) { free(g_gcp[i].snap); memmove(&g_gcp[i], &g_gcp[i + 1], (size_t)(g_ngcp - i - 1) * sizeof g_gcp[0]); g_ngcp--; }
+static int gcp_sided(const GCopy *o) { return o->side >= 0 && R.serial >= o->sserial; }      /* the copy into its side slot was submitted: the source buffer no longer holds its bytes */
+static volatile uint64_t g_gcp_min = ~0ull;         /* the oldest writer among the copies not settled (nvn_vk_sync_done, any thread) */
+static void gcp_min(void) { uint64_t m = ~0ull; for (int i = 0; i < g_ngcp; i++) if (g_gcp[i].wserial < m) m = g_gcp[i].wserial; g_gcp_min = m; }
+static void gcp_remove(int i) { free(g_gcp[i].snap); if (g_gcp[i].side >= 0) g_gcp_sused &= ~(1u << g_gcp[i].side); memmove(&g_gcp[i], &g_gcp[i + 1], (size_t)(g_ngcp - i - 1) * sizeof g_gcp[0]); g_ngcp--; gcp_min(); }
 static void gcp_settle_upto(int last, int wait) {  /* overlays 0..last reach guest memory, oldest first; wait 0: only while their source's writer has finished */
     if (g_gcp_busy) return;                        /* a wait below can come back here (slot_wait does not, cb_poll does) */
     g_gcp_busy = 1;
     for (; g_ngcp && last >= 0; last--) {
         GCopy *o = &g_gcp[0];
-        if (R.done < o->wserial) {
+        int sided = gcp_sided(o);                  /* else the source buffer still holds the bytes (a side copy not submitted yet has not run) */
+        uint64_t need = sided ? o->sserial : o->wserial;
+        if (R.done < need) {
             if (!wait) break;
-            for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= o->wserial) slot_wait(&R.slot[i]);
-            if (R.done < o->wserial) R.done = o->wserial;      /* submitted (its batch has ended) and every slot up to it has finished */
+            for (int i = 0; i < NSLOT; i++) if (R.slot[i].pending && R.slot[i].serial <= need) slot_wait(&R.slot[i]);
+            if (R.done < need) R.done = need;      /* submitted (its batch has ended) and every slot up to it has finished */
             g_gcp_waits++;
         }
         uint8_t *g = P(o->dst);
-        const uint8_t *m = (const uint8_t *)g_cb[o->src].mem.map + o->soff;
+        const uint8_t *m = sided ? (const uint8_t *)g_gcp_smem.map + (uint64_t)o->side * GCP_SIDE : (const uint8_t *)g_cb[o->src].mem.map + o->soff;
         for (uint64_t k = 0; k < o->size; k++) if (g[k] == o->snap[k]) g[k] = m[k];      /* a byte the game changed since stays the game's */
-        R.gen++;                                   /* guest memory changed: ranges are streamed again */
+        ring_inval_range(o->dst, o->size);         /* guest memory changed: overlapping ranges are streamed again */
         gcp_remove(0);
     }
     g_gcp_busy = 0;
@@ -2774,8 +3003,41 @@ static void gcp_overwritten(uint64_t addr, uint64_t size) {      /* the CPU writ
 }
 static void gcp_src_changes(const CB *c) {         /* the source buffer is about to change or go: what was copied from it settles */
     int last = -1, idx = (int)(c - g_cb);
-    for (int i = 0; i < g_ngcp; i++) if (g_gcp[i].src == idx) last = i;
+    for (int i = 0; i < g_ngcp; i++) if (g_gcp[i].src == idx && !gcp_sided(&g_gcp[i])) last = i;
     if (last >= 0) gcp_settle_upto(last, 1);
+}
+static void gcp_up_barrier(Slot *sl, VkCommandBuffer up) {      /* once per `up` buffer: the source's writer is in an earlier submission */
+    if (sl->up_ovl) return;
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    sl->up_ovl = 1;
+}
+/* Issue 156: compute is about to write a kept buffer again (cb_new). Overlays the GPU has not finished keep their bytes
+ * without a wait: copied into side slots by `up`, which runs before this command buffer's dispatch. What cannot move
+ * (switch off, no free slot, a writer not submitted) settles with the wait, as before. */
+static void gcp_src_rewritten(const CB *c) {
+    int idx = (int)(c - g_cb), n = 0;
+    gcp_settle_done();                             /* what the GPU has finished needs no slot */
+    if (g_gcp_sideon < 0) g_gcp_sideon = !(getenv("HL_VK_GPUCOPY_SIDE") && !atoi(getenv("HL_VK_GPUCOPY_SIDE")));
+    for (int i = 0; i < g_ngcp; i++) if (g_gcp[i].src == idx && g_gcp[i].side < 0) n++;
+    if (!n) return;
+    if (!g_gcp_sideon || c->wserial > R.serial || n > GCP_N - __builtin_popcount(g_gcp_sused)) { gcp_src_changes(c); return; }
+    if (!g_gcp_sbuf) g_gcp_sbuf = vbuf_new((uint64_t)GCP_N * GCP_SIDE, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, &g_gcp_smem);
+    VkCommandBuffer up = up_cmd();
+    gcp_up_barrier(&R.slot[R.cur], up);
+    for (int i = 0; i < g_ngcp; i++) {
+        GCopy *o = &g_gcp[i];
+        if (o->src != idx || o->side >= 0) continue;
+        o->side = __builtin_ctz(~g_gcp_sused); g_gcp_sused |= 1u << o->side;
+        o->sserial = R.serial + 1;                 /* the number the command buffer being recorded gets at its submission */
+        VkBufferCopy r = {o->soff, (uint64_t)o->side * GCP_SIDE, o->size};
+        vkCmdCopyBuffer(up, c->buf, g_gcp_sbuf, 1, &r);
+        g_gcp_sides++;
+    }
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};      /* gcp_patch reads the slots later in this `up` */
+    mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
 }
 static int gcp_add(uint64_t src, uint64_t dst, uint64_t size) {      /* 1 = the copy is an overlay (and nothing else is to be done) */
     if (g_gpucopy < 0) g_gpucopy = !(getenv("HL_VK_GPUCOPY") && !atoi(getenv("HL_VK_GPUCOPY")));
@@ -2789,10 +3051,11 @@ static int gcp_add(uint64_t src, uint64_t dst, uint64_t size) {      /* 1 = the 
     for (int i = 0; i < CB_N; i++) if (g_cb[i].state >= 3 && dst < g_cb[i].addr + g_cb[i].size && g_cb[i].addr < dst + size) return 0;      /* or a kept one's */
     for (int i = 0; i < g_ngcp; i++) if (gcp_hits(i, src, size)) return 0;      /* the source is another copy's destination */
     GCopy *o = &g_gcp[g_ngcp++];
-    o->dst = dst; o->size = size; o->src = (int)(s - g_cb); o->soff = src - s->addr; o->wserial = s->wserial;
+    o->dst = dst; o->size = size; o->src = (int)(s - g_cb); o->soff = src - s->addr; o->wserial = s->wserial; o->side = -1; o->sserial = 0;
     o->snap = malloc((size_t)size); memcpy(o->snap, P(dst), (size_t)size);
+    gcp_min();
     g_gcp_made++;
-    R.gen++;                                       /* the range is streamed again, now with the patch */
+    ring_inval_range(dst, size);                   /* the range is streamed again, now with the patch */
     return 1;
 }
 static void gcp_patch(uint64_t addr, uint64_t size, uint64_t off) {      /* ring_put copied [addr, +size) to the ring at off: the GPU copies go over it */
@@ -2802,11 +3065,12 @@ static void gcp_patch(uint64_t addr, uint64_t size, uint64_t off) {      /* ring
         uint64_t x0 = o->dst > addr ? o->dst : addr, x1 = o->dst + o->size < addr + size ? o->dst + o->size : addr + size;
         VkCommandBuffer up = up_cmd();
         Slot *sl = &R.slot[R.cur];
-        if (!sl->up_ovl) {                         /* the source's writer is in an earlier submission */
-            VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-            mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
-            vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
-            sl->up_ovl = 1;
+        gcp_up_barrier(sl, up);
+        if (o->side >= 0) {                        /* its bytes are in the side slot: written earlier in this `up` or by an earlier submission */
+            VkBufferCopy r = {(uint64_t)o->side * GCP_SIDE + (x0 - o->dst), off + (x0 - addr), x1 - x0};
+            vkCmdCopyBuffer(up, g_gcp_sbuf, R.ring, 1, &r);
+            g_gcp_patches++;
+            continue;
         }
         VkBufferCopy r = {o->soff + (x0 - o->dst), off + (x0 - addr), x1 - x0};
         vkCmdCopyBuffer(up, g_cb[o->src].buf, R.ring, 1, &r);
@@ -2827,7 +3091,7 @@ static void cb_kept_land(CB *c, int cause) {
     c->state = 0; c->stale = c->dirty = 0; c->busy = c->touch ? R.serial + 2 : c->kserial; c->touch = 0;      /* touch: a draw of this batch names the buffer (buf_ref): it may be in the command buffer after the one being recorded */
     g_ck_land[cause]++;
     if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
-    R.gen++;                                       /* guest memory changed */
+    ring_inval_range(c->addr, c->size);            /* guest memory changed */
     { LONG64 dt = tk() - t0; g_tm[1] += dt; g_ck_land_tk += dt; if (dt > g_ck_land_max) g_ck_land_max = dt; }
 }
 /* Round 16, HL_VK_CBASYNC (default 1; 0 = every landing reads the buffer itself): a kept buffer that was not dispatched
@@ -2868,7 +3132,7 @@ static void cb_land_finish(CB *c) {                /* state 4 and its copy has f
     cb_keep_back(c, (const uint8_t *)c->stg_mem.map);
     c->state = 0; c->stale = c->dirty = 0; c->busy = c->lserial > c->kserial ? c->lserial : c->kserial;
     if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
-    R.gen++;
+    ring_inval_range(c->addr, c->size);
     { LONG64 dt = tk() - t0; g_tm[1] += dt; g_ck_land_tk += dt; if (dt > g_ck_land_max) g_ck_land_max = dt; }
 }
 static void cb_land_force(CB *c, int cause) {      /* the bytes are needed in guest memory now */
@@ -2893,7 +3157,21 @@ static void cb_landing_poll(void) {                /* at the start of a batch: l
  * all 256 entries (runs p16_e_bfe / p16t_bf_g: draw preparation 4.1 -> 5.5-6.5 ms); now with the few of the list, inside
  * bounds that are exact at the start of the batch. */
 static int16_t g_kept_idx[CB_N];
-static int g_kept_n;
+static int g_kept_n, g_kept_disjoint = 1;
+static uint64_t g_kept_key[CB_N], g_kept_end[CB_N], g_kept_max;      /* #156: sorted by address, as the live list (cb_live_from); the largest size in it */
+static int g_cb_hi, g_cb_bound = -1;
+static int cb_kept_from(uint64_t addr, uint64_t size) {      /* the first entry that can hold or overlap a range starting at addr; walk while g_kept_key[n] < addr + size */
+    (void)size;
+    if (g_kept_disjoint) {
+        int lo = 0, hi = g_kept_n;
+        while (lo < hi) { int m = (lo + hi) / 2; if (g_kept_key[m] <= addr) lo = m + 1; else hi = m; }
+        return lo > 0 ? lo - 1 : 0;
+    }
+    uint64_t from = addr > g_kept_max ? addr - g_kept_max : 0;
+    int lo = 0, hi = g_kept_n;
+    while (lo < hi) { int m = (lo + hi) / 2; if (g_kept_key[m] < from) lo = m + 1; else hi = m; }
+    return lo;
+}
 /* #45: the pages of the buffers buf_ref walks, hashed: a page with no bit is in none of them. Most ranges a draw names
  * touch no compute buffer, and the walks cost 16 ms a frame on the chapter 3 ride (20,000 ranges, 170 kept buffers). A
  * bit that is no longer true only costs the walk. */
@@ -2909,18 +3187,52 @@ static int cb_pf_any(uint64_t addr, uint64_t size) {
     for (; p <= e; p++) { unsigned h = (unsigned)(p * 2654435761u) >> 14; if (g_cb_pf[h >> 6] >> (h & 63) & 1) return 1; }
     return 0;
 }
+/* #156: every walk asks the filter, not only buf_ref's: the demon rides have 600 live buffers, and the walks of the vertex
+ * streams' and indirect draws' ranges were half of the render thread (15 of its 27 ms at 2,400 draws). 1 = no live or kept
+ * buffer has a page of the range. HL_VK_CBPF: 0 off, 2 test: nothing is skipped and a walk's hit the filter denies is reported. */
+static int g_cb_pf_mode = -1;
+static int cb_pf_skip(uint64_t addr, uint64_t size) {
+    if (g_cb_pf_mode < 0) { const char *e = getenv("HL_VK_CBPF"); g_cb_pf_mode = e ? atoi(e) : 1; }
+    return g_cb_pf_mode == 1 && !cb_pf_any(addr, size);
+}
+static void cb_pf_hit(uint64_t addr, uint64_t size, const char *who) {      /* a walk found a buffer */
+    static int said;
+    if (g_cb_pf_mode == 2 && !cb_pf_any(addr, size) && !said++) printf("nvn_vk_cbpf: FAILED: %s: range %llx +%llx is in a buffer the filter denies\n", who, (unsigned long long)addr, (unsigned long long)size);
+}
 static void cb_kept_index(void) {
-    g_kept_n = 0; g_kept_lo = ~0ull; g_kept_hi = 0;
+    g_kept_n = 0; g_kept_lo = ~0ull; g_kept_hi = 0; g_kept_max = 0; g_kept_disjoint = 1; g_kept_indexed = 1;
     memset(g_cb_pf, 0, sizeof g_cb_pf);
     for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1) cb_pf_set(c->addr, c->size); }
     if (!g_cb_nkept) return;
-    for (int i = 0; i < CB_N; i++) {
+    for (int i = 0; i < g_cb_hi; i++) {
         if (g_cb[i].state < 3) continue;
         cb_pf_set(g_cb[i].addr, g_cb[i].size);
-        g_kept_idx[g_kept_n++] = (int16_t)i;
+        g_kept_idx[g_kept_n] = (int16_t)i;
+        g_kept_key[g_kept_n] = g_cb[i].addr;
+        g_kept_end[g_kept_n] = g_cb[i].addr + g_cb[i].size;
+        g_kept_n++;
         if (g_cb[i].addr < g_kept_lo) g_kept_lo = g_cb[i].addr;
         if (g_cb[i].addr + g_cb[i].size > g_kept_hi) g_kept_hi = g_cb[i].addr + g_cb[i].size;
+        if (g_cb[i].size > g_kept_max) g_kept_max = g_cb[i].size;
     }
+    /* inline shell sort (no qsort callback / random g_cb[] chasing) */
+    static const int gaps[] = {701, 301, 132, 57, 23, 10, 4, 1};
+    for (int gi = 0; gi < 8; gi++) {
+        int gap = gaps[gi];
+        for (int i = gap; i < g_kept_n; i++) {
+            uint64_t tk = g_kept_key[i], te = g_kept_end[i];
+            int16_t ti = g_kept_idx[i];
+            int j = i;
+            while (j >= gap && g_kept_key[j - gap] > tk) {
+                g_kept_key[j] = g_kept_key[j - gap];
+                g_kept_end[j] = g_kept_end[j - gap];
+                g_kept_idx[j] = g_kept_idx[j - gap];
+                j -= gap;
+            }
+            g_kept_key[j] = tk; g_kept_end[j] = te; g_kept_idx[j] = ti;
+        }
+    }
+    for (int n = 1; n < g_kept_n; n++) if (g_kept_end[n - 1] > g_kept_key[n]) { g_kept_disjoint = 0; break; }
 }
 /* [witchtime] issues 132, 133: a guest-memory command overwrites every byte of a kept (or landing) buffer: what compute left
  * there is never read again, so the entry is dropped instead of landed. B3 clears its culling counts at the start of each frame
@@ -2929,7 +3241,7 @@ static int g_cb_discard = -1;
 static void cb_kept_discard(uint64_t addr, uint64_t size) {
     if (g_cb_discard < 0) g_cb_discard = !(getenv("HL_VK_CBDISCARD") && !atoi(getenv("HL_VK_CBDISCARD")));
     if (!g_cb_discard || !g_cb_nkept || addr >= g_kept_hi || addr + size <= g_kept_lo) return;
-    for (int n = 0; n < g_kept_n && g_cb_nkept; n++) {      /* the kept and landing buffers as at the batch start (the set only shrinks) */
+    for (int n = cb_kept_from(addr, size); n < g_kept_n && g_kept_key[n] < addr + size && g_cb_nkept; n++) {      /* the kept and landing buffers as at the batch start (the set only shrinks) */
         int i = g_kept_idx[n];
         CB *c = &g_cb[i];
         if (c->state < 3 || c->addr < addr || c->addr + c->size > addr + size) continue;
@@ -2941,13 +3253,17 @@ static void cb_kept_discard(uint64_t addr, uint64_t size) {
         if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
     }
 }
-static void cb_kept_range(uint64_t addr, uint64_t size, int cause) {
-    if (!g_cb_nkept || addr >= g_kept_hi || addr + size <= g_kept_lo) return;
-    for (int n = 0; n < g_kept_n && g_cb_nkept; n++) {
+static void cb_kept_range_nopf(uint64_t addr, uint64_t size, int cause) {
+    for (int n = cb_kept_from(addr, size); n < g_kept_n && g_kept_key[n] < addr + size && g_cb_nkept; n++) {
         int i = g_kept_idx[n];
         if (g_cb[i].state < 3 || !(addr < g_cb[i].addr + g_cb[i].size && g_cb[i].addr < addr + size)) continue;
+        cb_pf_hit(addr, size, "cb_kept_range");
         if (g_cb[i].state == 3) cb_kept_land(&g_cb[i], cause); else cb_land_force(&g_cb[i], cause);
     }
+}
+static void cb_kept_range(uint64_t addr, uint64_t size, int cause) {
+    if (!g_cb_nkept || addr >= g_kept_hi || addr + size <= g_kept_lo || cb_pf_skip(addr, size)) return;
+    cb_kept_range_nopf(addr, size, cause);
 }
 /* HL_VK_CBKEEP, the write check (HL_VK_CBWW=0: off). The whole pages inside the range are asked of the write watch
  * (a stamp newer than the one of the fill = the CPU wrote one of them); the bytes of the range on its first and last,
@@ -3033,31 +3349,111 @@ static void cb_sync(void) {                        /* guest memory must hold wha
  * is read. buf_ref asks cb_inside / cb_overlap for about 15,000 ranges a frame in Tokyo, and the walk up to g_cb_hi (several
  * hundred entries once the table holds kept buffers) was the largest part of buf_ref; live entries are a few dozen. Live
  * entries do not overlap (cb_new lands an overlapping one first), so the order does not change what is found. */
+/* #156: the first place in the list whose key is addr or more. A buffer that holds or overlaps [addr, addr + size) starts
+ * above addr - g_live_max and below addr + size: the walks look only there (the rides have 600 live buffers, and a walk
+ * of them all for each range that passes the page filter was a fifth of the render thread). An entry whose slot was
+ * taken again keeps its old key; the walks test the buffer's own fields, as before, so it can only cost a compare. */
+static int cb_live_from(uint64_t addr) {
+    int lo = 0, hi = g_live_n;
+    while (lo < hi) { int m = (lo + hi) / 2; if (g_live_key[m] < addr) lo = m + 1; else hi = m; }
+    return lo;
+}
+static int cb_live_upper(uint64_t addr) {
+    int lo = 0, hi = g_live_n;
+    while (lo < hi) { int m = (lo + hi) / 2; if (g_live_key[m] <= addr) lo = m + 1; else hi = m; }
+    return lo;
+}
 static void cb_live_add(CB *c) {
     if (g_live_n == CB_N) {                        /* full of entries that left state 1: keep the live ones */
         int n = 0;
-        for (int i = 0; i < g_live_n; i++) if (g_cb[g_live_idx[i]].state == 1) g_live_idx[n++] = g_live_idx[i];
+        for (int i = 0; i < g_live_n; i++) if (g_cb[g_live_idx[i]].state == 1) { g_live_idx[n] = g_live_idx[i]; g_live_end[n] = g_live_end[i]; g_live_key[n++] = g_live_key[i]; }
         g_live_n = n;
+        g_live_disjoint = 1;
+        for (int i = 1; i < g_live_n; i++) if (g_live_end[i - 1] > g_live_key[i]) g_live_disjoint = 0;
     }
-    g_live_idx[g_live_n++] = (int)(c - g_cb);
+    if (!g_live_n) { g_live_max = 0; g_live_disjoint = 1; }
+    int at = cb_live_from(c->addr);
+    memmove(&g_live_idx[at + 1], &g_live_idx[at], (size_t)(g_live_n - at) * sizeof g_live_idx[0]);
+    memmove(&g_live_key[at + 1], &g_live_key[at], (size_t)(g_live_n - at) * sizeof g_live_key[0]);
+    memmove(&g_live_end[at + 1], &g_live_end[at], (size_t)(g_live_n - at) * sizeof g_live_end[0]);
+    g_live_idx[at] = (int)(c - g_cb); g_live_key[at] = c->addr; g_live_end[at] = c->addr + c->size; g_live_n++;
+    if (c->size > g_live_max) g_live_max = c->size;
+    if ((at > 0 && g_live_end[at - 1] > g_live_key[at]) || (at + 1 < g_live_n && g_live_end[at] > g_live_key[at + 1])) g_live_disjoint = 0;
     cb_pf_set(c->addr, c->size);
 }
 static void cb_batch_end(void) {
     if (!g_cb_live) return;
     g_cb_serial = cmd_submit(NULL, NULL);
     for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1) { c->state = 2; c->kserial = g_cb_serial; c->touch = 0; if (!c->wserial || c->wserial > g_cb_serial) c->wserial = g_cb_serial; } }
-    g_live_n = 0;
+    g_live_n = 0; g_live_disjoint = 1;
     g_cb_pending = g_cb_live; g_cb_live = 0; g_live_lo = ~0ull; g_live_hi = 0;
 }
 /* g_cb_hi = one past the highest entry cb_new has ever handed out (it never goes down): the walks for kept buffers stop
  * there. The searches for live ones read g_live_idx (above). */
-static int g_cb_hi, g_cb_bound = -1;
 static CB *cb_inside(uint64_t addr, uint64_t size) {
-    for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr >= c->addr && addr + size <= c->addr + c->size) return c; }
+    static CB *last;                               /* #156: the indirect draws of a pass read their counts from one buffer */
+    int hit = last && last->state == 1 && addr >= last->addr && addr + size <= last->addr + last->size;
+    if (hit && g_cb_pf_mode != 2) return last;
+    if (g_cb_pf_mode == 2) {                       /* test: the whole list finds a holder when, and only when, the walk below does */
+        static int said; int all = 0, walk = 0;
+        for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr >= c->addr && addr + size <= c->addr + c->size) all = 1; }
+        if (g_live_disjoint) {
+            int n = cb_live_upper(addr) - 1;
+            if (n >= 0 && g_live_end[n] >= addr + size) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr >= c->addr && addr + size <= c->addr + c->size) walk = 1; }
+        } else {
+            for (int n = cb_live_from(addr > g_live_max ? addr - g_live_max : 0); n < g_live_n && g_live_key[n] <= addr; n++) { CB *c = &g_cb[g_live_idx[n]]; if (g_live_end[n] >= addr + size && c->state == 1 && addr >= c->addr && addr + size <= c->addr + c->size) walk = 1; }
+        }
+        if (all != walk && !said++) printf("nvn_vk_cbpf: FAILED: cb_inside: range %llx +%llx: the sorted walk says %d, the whole list %d\n", (unsigned long long)addr, (unsigned long long)size, walk, all);
+    }
+    if (cb_pf_skip(addr, size)) return NULL;
+    if (g_live_disjoint) {
+        int n = cb_live_upper(addr) - 1;
+        if (n >= 0 && g_live_end[n] >= addr + size) {
+            CB *c = &g_cb[g_live_idx[n]];
+            if (c->state == 1 && addr >= c->addr && addr + size <= c->addr + c->size) {
+                cb_pf_hit(addr, size, "cb_inside");
+                if (hit && c != last) { static int said; if (!said++) printf("nvn_vk_cbpf: FAILED: cb_inside: range %llx +%llx is in two live buffers\n", (unsigned long long)addr, (unsigned long long)size); }
+                return last = c;
+            }
+        }
+        return NULL;
+    }
+    for (int n = cb_live_from(addr > g_live_max ? addr - g_live_max : 0); n < g_live_n && g_live_key[n] <= addr; n++) {      /* #257: a buffer that holds the range starts at or below it */
+        if (g_live_end[n] < addr + size) continue;      /* an entry keeps the extent it was added with (cb_live_from) */
+        CB *c = &g_cb[g_live_idx[n]];
+        if (c->state != 1 || addr < c->addr || addr + size > c->addr + c->size) continue;
+        cb_pf_hit(addr, size, "cb_inside");
+        if (hit && c != last) { static int said; if (!said++) printf("nvn_vk_cbpf: FAILED: cb_inside: range %llx +%llx is in two live buffers\n", (unsigned long long)addr, (unsigned long long)size); }
+        return last = c;
+    }
     return NULL;
 }
+static void cb_live_check(uint64_t addr, uint64_t size, int found, const char *who) {      /* HL_VK_CBPF=2 (test): the walk of the whole list finds the same */
+    static int said;
+    int all = 0;
+    for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) all = 1; }
+    if (all != found && !said++) printf("nvn_vk_cbpf: FAILED: %s: range %llx +%llx: the sorted walk says %d, the whole list %d\n", who, (unsigned long long)addr, (unsigned long long)size, found, all);
+}
 static int cb_overlap(uint64_t addr, uint64_t size) {
-    for (int n = 0; n < g_live_n; n++) { CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) return 1; }
+    if (g_cb_pf_mode == 2) {
+        int f = 0;
+        if (g_live_disjoint) {
+            int hi = cb_live_upper(addr);
+            if (hi > 0 && g_live_end[hi - 1] > addr) { CB *c = &g_cb[g_live_idx[hi - 1]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) f = 1; }
+            if (!f && hi < g_live_n && g_live_key[hi] < addr + size) { CB *c = &g_cb[g_live_idx[hi]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) f = 1; }
+        } else {
+            for (int n = cb_live_from(addr > g_live_max ? addr - g_live_max : 0); n < g_live_n && g_live_key[n] < addr + size; n++) { CB *c = &g_cb[g_live_idx[n]]; if (g_live_end[n] > addr && c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) f = 1; }
+        }
+        cb_live_check(addr, size, f, "cb_overlap");
+    }
+    if (cb_pf_skip(addr, size)) return 0;
+    if (g_live_disjoint) {
+        int hi = cb_live_upper(addr);
+        if (hi > 0 && g_live_end[hi - 1] > addr) { CB *c = &g_cb[g_live_idx[hi - 1]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) { cb_pf_hit(addr, size, "cb_overlap"); return 1; } }
+        if (hi < g_live_n && g_live_key[hi] < addr + size) { CB *c = &g_cb[g_live_idx[hi]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) { cb_pf_hit(addr, size, "cb_overlap"); return 1; } }
+        return 0;
+    }
+    for (int n = cb_live_from(addr > g_live_max ? addr - g_live_max : 0); n < g_live_n && g_live_key[n] < addr + size; n++) { if (g_live_end[n] <= addr) continue; CB *c = &g_cb[g_live_idx[n]]; if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) { cb_pf_hit(addr, size, "cb_overlap"); return 1; } }
     return 0;
 }
 /* [witchtime] 1 = the range overlaps a compute buffer of this batch (state 1) or one the GPU may still write from the batch
@@ -3096,8 +3492,8 @@ static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
         R.cb_waits++; g_gpu_writes_seen = g_gpu_writes;
         return (const uint8_t *)c->mem.map + (addr - c->addr);
     }
-    if (!c && g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo)
-        for (int n = 0; n < g_kept_n; n++) {
+    if (!c && g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo && !cb_pf_skip(addr, size))
+        for (int n = cb_kept_from(addr, size); n < g_kept_n && g_kept_key[n] < addr + size; n++) {
             CB *k = &g_cb[g_kept_idx[n]];
             if (k->state != 3 || addr < k->addr || addr + size > k->addr + k->size || !k->mem.map) continue;
             if (k->wchk != g_cb_batch) { k->wchk = g_cb_batch; k->wrote = (uint8_t)(g_cb_ww > 0 && cb_guest_wrote(k)); }
@@ -3118,13 +3514,15 @@ static const uint8_t *indirect_src(uint64_t addr, uint64_t size) {
  * object costs its draw preparation instead of a wait. Records compute wrote stay on the CPU path. HL_VK_GPUCOUNT=0: off. */
 #define GPUCOUNT_DEFAULT 1
 static int g_gpucount = -1;
+static int gce_init(void); static int gce_room(CB *pc, unsigned n); static int gce_add(CB *pc, uint64_t param, uint64_t roff, unsigned n, unsigned sz);
 static LONG64 g_gc_calls, g_gc_draws, g_gc_fallback, g_gr_calls, g_gr_noext;
 static int gpucount_on(void) {
     if (g_gpucount < 0) {
         const char *e = getenv("HL_VK_GPUCOUNT");
         int want = e ? atoi(e) : GPUCOUNT_DEFAULT;
-        g_gpucount = want && vkCmdDrawIndexedIndirectCount_ && vkCmdDrawIndirectCount_ && D.f2.features.drawIndirectFirstInstance;
-        printf("nvn_vk: indirect draws whose count or records compute wrote: %s\n", g_gpucount ? "read by the GPU (vkCmdDraw(Indexed)Indirect(Count))" : !want ? "read on the CPU (HL_VK_GPUCOUNT=0)" : "read on the CPU (the device lacks drawIndirectCount or drawIndirectFirstInstance)");
+        g_gpucount = want == 1 && vkCmdDrawIndexedIndirectCount_ && vkCmdDrawIndirectCount_ && D.f2.features.drawIndirectFirstInstance;
+        if (want && !g_gpucount && D.f2.features.drawIndirectFirstInstance && gce_init()) g_gpucount = 2;      /* no drawIndirectCount (MoltenVK), or HL_VK_GPUCOUNT=2 */
+        printf("nvn_vk: indirect draws whose count or records compute wrote: %s\n", g_gpucount == 2 ? "records read by the GPU (vkCmdDraw(Indexed)Indirect), a count applied by a compute pass before the command buffer (no drawIndirectCount, or HL_VK_GPUCOUNT=2)" : g_gpucount ? "read by the GPU (vkCmdDraw(Indexed)Indirect(Count))" : !want ? "read on the CPU (HL_VK_GPUCOUNT=0)" : "read on the CPU (the device lacks drawIndirectCount and what its stand-in needs: drawIndirectFirstInstance, VK_KHR_push_descriptor)");
     }
     return g_gpucount;
 }
@@ -3179,22 +3577,36 @@ static LONG64 g_cb_evicted;                       /* [witchtime] kept buffers la
 static CB *cb_new(uint64_t addr, uint64_t size) {
     CB *c = NULL, *empty = NULL, *victim = NULL;
     if (cb_keep_mode() && g_cb_nkept) {            /* HL_VK_CBKEEP: the buffer of the last dispatch into this very range, as the GPU left it */
-        for (int i = 0; i < g_cb_hi; i++) {
-            CB *k = &g_cb[i];
-            if ((k->state != 3 && (k->state != 4 || R.in_pass)) || k->addr != addr || k->size != size) continue;
-            if (g_cb_ww && cb_guest_wrote(k)) { if (k->state == 4) cb_land_force(k, 4); else cb_kept_land(k, 4); break; }      /* the game wrote into the range: merged back, then filled again below */
-            if (k->state == 4) {                   /* [lm3] its landing (HL_VK_CBAGE) is still copying: taken back as a kept buffer instead of waiting for
-                                                    * the GPU (the lobby's one dispatch a frame, 4 batches a frame: a 4-14 ms wait at 120 fps, scale 2.0).
-                                                    * The copy's bytes are never merged; what writes the buffer next runs after the copy has read it. */
-                cmd_begin();
-                vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, 0, NULL);
+        CB *found = NULL;
+        if (g_kept_indexed) {
+            int lo = 0, hi = g_kept_n;
+            while (lo < hi) { int m = (lo + hi) / 2; if (g_kept_key[m] < addr) lo = m + 1; else hi = m; }
+            for (int n = lo; n < g_kept_n && g_kept_key[n] == addr; n++) {
+                CB *k = &g_cb[g_kept_idx[n]];
+                if ((k->state == 3 || (k->state == 4 && !R.in_pass)) && k->addr == addr && k->size == size) { found = k; break; }
             }
-            if (g_ngcp) gcp_src_changes(k);        /* [witchtime] the GPU writes it again: copies from it settle first */
-            k->state = 1; k->dirty = 0; g_cb_live++; g_ck_hits++; cb_live_add(k);
-            if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
-            if (addr < g_live_lo) g_live_lo = addr;
-            if (addr + size > g_live_hi) g_live_hi = addr + size;
-            return k;
+        } else {
+            for (int i = 0; i < g_cb_hi; i++) {
+                CB *k = &g_cb[i];
+                if ((k->state == 3 || (k->state == 4 && !R.in_pass)) && k->addr == addr && k->size == size) { found = k; break; }
+            }
+        }
+        if (found) {
+            if (g_cb_ww && cb_guest_wrote(found)) { if (found->state == 4) cb_land_force(found, 4); else cb_kept_land(found, 4); }      /* the game wrote into the range: merged back, then filled again below */
+            else {
+                if (found->state == 4) {                   /* [lm3] its landing (HL_VK_CBAGE) is still copying: taken back as a kept buffer instead of waiting for
+                                                        * the GPU (the lobby's one dispatch a frame, 4 batches a frame: a 4-14 ms wait at 120 fps, scale 2.0).
+                                                        * The copy's bytes are never merged; what writes the buffer next runs after the copy has read it. */
+                    cmd_begin();
+                    vkCmdPipelineBarrier(R.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, 0, NULL);
+                }
+                if (g_ngcp) gcp_src_rewritten(found);      /* [witchtime] the GPU writes it again: copies from it keep their bytes (issue 156: on the GPU, no wait) */
+                found->state = 1; found->dirty = 0; g_cb_live++; g_ck_hits++; cb_live_add(found);
+                if (--g_cb_nkept == 0) { g_kept_lo = ~0ull; g_kept_hi = 0; }
+                if (addr < g_live_lo) g_live_lo = addr;
+                if (addr + size > g_live_hi) g_live_hi = addr + size;
+                return found;
+            }
         }
         cb_kept_range(addr, size, 2);
     }
@@ -3211,13 +3623,14 @@ static CB *cb_new(uint64_t addr, uint64_t size) {
                 if (old->busy > R.done) old->busy = R.done;      /* submitted and finished (the slots above), or never submitted */
             }
         }
-        for (int i = 0; i < CB_N && !c; i++) {
+        for (int i = 0; i < g_cb_hi && !c; i++) {
             CB *k = &g_cb[i];
             if (k->state || k->busy > R.done) continue;
             if (!k->buf) { if (!empty) empty = k; }
             else if (k->cap >= size && k->cap <= size * 2 + 4096) c = k;
             else if (!victim) victim = k;
         }
+        if (!c && !empty && g_cb_hi < CB_N) empty = &g_cb[g_cb_hi];
     }
     if (!c) {
         c = empty ? empty : victim;
@@ -3272,8 +3685,8 @@ typedef struct { uint64_t off, size; int zero; VkBuffer buf; } BufRef;
  * alignment the use needs (storage descriptors), 1 = none. Returns 1 when a CB is bound. */
 static int buf_ref(uint64_t addr, uint64_t size, uint64_t align, BufRef *b) {
     b->zero = 0; b->size = size;
-    static int pf = -1;                            /* HL_VK_CBPF: 0 off, 2 test: every range the filter passes is checked against the walks */
-    if (pf < 0) { const char *e = getenv("HL_VK_CBPF"); pf = e ? atoi(e) : 1; }
+    if (g_cb_pf_mode < 0) cb_pf_skip(addr, size);
+    int pf = g_cb_pf_mode;                         /* HL_VK_CBPF: 0 off, 2 test: every range the filter passes is checked against the walks */
     if (pf && !cb_pf_any(addr, size)) {
         if (pf == 2) {
             static int said;
@@ -3285,10 +3698,27 @@ static int buf_ref(uint64_t addr, uint64_t size, uint64_t align, BufRef *b) {
     }
     if (g_cb_bound < 0) g_cb_bound = !(getenv("HL_VK_CBBOUND") && !atoi(getenv("HL_VK_CBBOUND")));      /* round 16, default 1 (=0: cb_inside / cb_overlap are asked for every range as before): a range outside the bounds of the live buffers cannot be inside or overlap one. Proof of the picture: run p16_h_bf5 (old path + this) = p16_d_bfd (this off), all pixels, three frames. NOTE for picture tests on battle_field: the picture has two forms that alternate with the PRESENTED frame number (17-19 % of the pixels, small differences): compare shots whose "saved at presented frame" numbers have the same parity. */
     if (g_cb_live && (!g_cb_bound || (addr < g_live_hi && addr + size > g_live_lo))) {
-        CB *c = cb_inside(addr, size);
-        if (c && (addr - c->addr) % align == 0) { b->buf = c->buf; b->off = addr - c->addr; return 1; }
-        if (cb_overlap(addr, size)) cb_sync();
+        if (g_live_disjoint && g_cb_pf_mode != 2) {
+            int hi = cb_live_upper(addr);
+            if (hi > 0 && g_live_end[hi - 1] > addr) {
+                CB *c = &g_cb[g_live_idx[hi - 1]];
+                if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) {
+                    if (addr >= c->addr && addr + size <= c->addr + c->size && (addr - c->addr) % align == 0) { b->buf = c->buf; b->off = addr - c->addr; return 1; }
+                    cb_sync();
+                    goto buf_ref_kept;
+                }
+            }
+            if (hi < g_live_n && g_live_key[hi] < addr + size) {
+                CB *c = &g_cb[g_live_idx[hi]];
+                if (c->state == 1 && addr < c->addr + c->size && c->addr < addr + size) cb_sync();
+            }
+        } else {
+            CB *c = cb_inside(addr, size);
+            if (c && (addr - c->addr) % align == 0) { b->buf = c->buf; b->off = addr - c->addr; return 1; }
+            if (cb_overlap(addr, size)) cb_sync();
+        }
     }
+buf_ref_kept:
     if (g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo) {
         /* HL_VK_CBKEEP: guest memory would be read. A kept buffer that CONTAINS the range holds exactly the bytes the old
          * path would have copied back and streamed (unless the game wrote into the range since: asked once per batch):
@@ -3296,7 +3726,7 @@ static int buf_ref(uint64_t addr, uint64_t size, uint64_t align, BufRef *b) {
          * memory, up to 19 ms: runs p16_e_bfe / p16t_bf_d). Any other overlap: the buffer lands first. */
         static int on = -1;
         if (on < 0) on = !(getenv("HL_VK_CBDRAW") && !atoi(getenv("HL_VK_CBDRAW")));
-        if (on) for (int n = 0; n < g_kept_n; n++) {
+        if (on) for (int n = cb_kept_from(addr, size); n < g_kept_n && g_kept_key[n] < addr + size; n++) {
             CB *k = &g_cb[g_kept_idx[n]];
             if (k->state != 3 || addr < k->addr || addr + size > k->addr + k->size || (addr - k->addr) % align) continue;
             if (k->wchk != g_cb_batch) { k->wchk = g_cb_batch; k->wrote = (uint8_t)(g_cb_ww > 0 && cb_guest_wrote(k)); }
@@ -3304,7 +3734,7 @@ static int buf_ref(uint64_t addr, uint64_t size, uint64_t align, BufRef *b) {
             b->buf = k->buf; b->off = addr - k->addr; k->touch = 1; g_ck_drawn++;
             return 1;
         }
-        cb_kept_range(addr, size, 1);
+        cb_kept_range_nopf(addr, size, 1);
     }
     b->off = ring_put(addr, size); b->buf = R.ring;      /* in this order: a ring wrap submits */
     return 0;
@@ -3357,6 +3787,8 @@ static VRes *vrc_find(uint64_t addr, uint64_t size) {      /* inserts a new key 
         if (e->state == VR_FREE) {
             if (g_vrc_n >= VRC_N * 3 / 4) return NULL;
             memset(e, 0, sizeof *e); e->addr = addr; e->size = size; e->state = VR_WATCH; e->seen = g_cur_frame; g_vrc_n++;
+            if (addr < g_vrc_lo) g_vrc_lo = addr;
+            if (addr + size > g_vrc_hi) g_vrc_hi = addr + size;
             return e;
         }
         if (e->addr == addr && e->size == size) return e;
@@ -3382,7 +3814,7 @@ static void vrc_frame(void) {                      /* once a frame: frees; every
     for (int i = 0; i < VRC_N; i++) if (g_vrc[i].state == VR_KEPT && g_cur_frame - g_vrc[i].used > 600) { vrc_drop(&g_vrc[i]); g_vs[14]++; }
     if (g_vrc_n > VRC_N / 2) {                     /* keys not used for 600 frames are forgotten */
         VRes *old = g_vrc;
-        g_vrc = calloc(VRC_N, sizeof *g_vrc); g_vrc_n = 0;
+        g_vrc = calloc(VRC_N, sizeof *g_vrc); g_vrc_n = 0; g_vrc_lo = ~0ull; g_vrc_hi = 0;
         for (int i = 0; i < VRC_N; i++) {
             VRes *o = &old[i], *e;
             if (o->state == VR_FREE || (o->state != VR_KEPT && g_cur_frame - o->used > 600)) continue;
@@ -3404,10 +3836,10 @@ static int vrc_written(VRes *e) {
             if (!g_vreg[i].key) { g_vreg[i].key = r + 1; break; }
         }
         if (probe == 64 || g_vreg[i].each) { pages = 2; break; }
-        if (g_vreg[i].gen != R.gen) {              /* the region's first question in this batch */
+        if (g_vreg[i].gen != R.vrc_gen) {          /* the region's first question in this batch */
             g_vs[8]++;
             if (!nvn_front_mem_region((void *)(uintptr_t)(r << 22), (size_t)4 << 20, 1)) { g_vreg[i].each = 1; pages = 2; break; }
-            g_vreg[i].gen = R.gen;
+            g_vreg[i].gen = R.vrc_gen;
         }
         if (nvn_front_mem_region((void *)(uintptr_t)(r << 22), (size_t)4 << 20, 0) > e->stamp) pages = 1;      /* the table: also what other questions found since */
     }
@@ -3427,6 +3859,79 @@ static VkCommandBuffer up_cmd(void) {              /* the copies of the slot bei
         s->up_rec = 1;
     }
     return s->up;
+}
+/* [witchtime] macOS: MoltenVK has no drawIndirectCount (Metal has no such draw), so every frame of a fight the render thread
+ * read B3's culling counts on the CPU: a submit and a wait for all the GPU had queued in the middle of the replay
+ * (indirect_src; 2.4 ms of a 9 ms frame at frame_rate = 120 on an M5 Pro). The stand-in: the draw's records go into the ring
+ * as for the real call and are drawn with vkCmdDraw(Indexed)Indirect; a request (the record's instance count word in the
+ * ring, the count's word in the compute buffer, the record's number) is kept per command buffer, and one compute dispatch in
+ * the command buffer submitted just before it (up_cmd) zeroes the instance count of every record at or past its count.
+ * What writes a count must therefore be in an earlier command buffer: a count draw after a dispatch or a storing draw of
+ * the same command buffer submits first (as the CPU read did, without its wait). One compute buffer per command buffer;
+ * another one submits. HL_VK_GPUCOUNT=2 takes this path on a device that has the real call (to compare the two). */
+#define GCE_MAX 8192
+static struct { VkPipeline pipe; VkPipelineLayout pl; VkDescriptorSetLayout dl; VkBuffer req[NSLOT], cnt; VMem reqm[NSLOT]; int ok; } GE;
+static LONG64 g_gce_flushes, g_gce_reqs, g_gce_splits;
+static int gce_init(void) {
+    static const char src[] =
+        "#version 450\n"
+        "layout(local_size_x = 64) in;\n"
+        "layout(set = 0, binding = 0) buffer Ring { uint r[]; };\n"
+        "layout(set = 0, binding = 1) readonly buffer Cnt { uint c[]; };\n"
+        "layout(set = 0, binding = 2) readonly buffer Req { uint q[]; };\n"
+        "layout(push_constant) uniform PC { uint n; };\n"
+        "void main() {\n"
+        "    uint i = gl_GlobalInvocationID.x;\n"
+        "    if (i < n && c[q[3u * i + 1u]] <= q[3u * i + 2u]) r[q[3u * i]] = 0u;\n"
+        "}\n";
+    if (GE.ok) return GE.ok > 0;
+    GE.ok = -1;
+    if (!D.has_push) return 0;
+    VkDescriptorSetLayoutBinding lb[3];
+    for (uint32_t i = 0; i < 3; i++) { VkDescriptorSetLayoutBinding b = {i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}; lb[i] = b; }
+    VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    li.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR; li.bindingCount = 3; li.pBindings = lb;
+    VKC(vkCreateDescriptorSetLayout(V.device, &li, NULL, &GE.dl));
+    VkPushConstantRange pr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, 4};
+    VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    pli.setLayoutCount = 1; pli.pSetLayouts = &GE.dl; pli.pushConstantRangeCount = 1; pli.pPushConstantRanges = &pr;
+    VKC(vkCreatePipelineLayout(V.device, &pli, NULL, &GE.pl));
+    uint64_t h;
+    VkShaderModule mod = module_from_glsl(5, src, "the stand-in for drawIndirectCount", &h);
+    if (!mod) return 0;
+    VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT; ci.stage.module = mod; ci.stage.pName = "main"; ci.layout = GE.pl;
+    VkResult r = vkCreateComputePipelines(V.device, g_pcache, 1, &ci, NULL, &GE.pipe);
+    vkDestroyShaderModule(V.device, mod, NULL);
+    if (r != VK_SUCCESS) return 0;
+    for (int i = 0; i < NSLOT; i++) GE.req[i] = vbuf_new((uint64_t)GCE_MAX * 12, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, &GE.reqm[i]);
+    GE.ok = 1;
+    return 1;
+}
+static int gce_room(CB *pc, unsigned n) { return !g_gce_n || (pc && GE.cnt == pc->buf && g_gce_n + (int)n <= GCE_MAX); }
+static int gce_add(CB *pc, uint64_t param, uint64_t roff, unsigned n, unsigned sz) {      /* the draw of n records at roff in the ring takes its count from param; 0: it does not fit this command buffer */
+    if (!R.recording || (g_gce_n && GE.cnt != pc->buf) || g_gce_n + (int)n > GCE_MAX || (roff & 3) || ((param - pc->addr) & 3)) { g_gce_splits++; return 0; }
+    uint32_t *q = (uint32_t *)GE.reqm[R.cur].map + (size_t)g_gce_n * 3;
+    for (unsigned k = 0; k < n; k++) { *q++ = (uint32_t)((roff + (uint64_t)k * sz + 4) >> 2); *q++ = (uint32_t)((param - pc->addr) >> 2); *q++ = k; }
+    GE.cnt = pc->buf; g_gce_n += (int)n;
+    return 1;
+}
+static void gce_flush(void) {                       /* cmd_submit: the requests of the command buffer that ends */
+    VkCommandBuffer up = up_cmd();
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    VkDescriptorBufferInfo bi[3] = {{R.ring, 0, VK_WHOLE_SIZE}, {GE.cnt, 0, VK_WHOLE_SIZE}, {GE.req[R.cur], 0, VK_WHOLE_SIZE}};
+    VkWriteDescriptorSet w[3];
+    for (uint32_t i = 0; i < 3; i++) { VkWriteDescriptorSet x = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}; x.dstBinding = i; x.descriptorCount = 1; x.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; x.pBufferInfo = &bi[i]; w[i] = x; }
+    uint32_t n = (uint32_t)g_gce_n;
+    vkCmdBindPipeline(up, VK_PIPELINE_BIND_POINT_COMPUTE, GE.pipe);
+    vkCmdPushDescriptorSetKHR(up, VK_PIPELINE_BIND_POINT_COMPUTE, GE.pl, 0, 3, w);
+    vkCmdPushConstants(up, GE.pl, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &n);
+    vkCmdDispatch(up, (n + 63) / 64, 1, 1);
+    mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT; mb.dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_MEMORY_READ_BIT;
+    vkCmdPipelineBarrier(up, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
+    g_gce_flushes++; g_gce_reqs += n; g_gce_n = 0;
 }
 static void vrc_fill(VRes *e) {
     if (g_vrc_bytes + e->size > g_vrc_cap) { g_vs[15]++; return; }
@@ -3467,11 +3972,16 @@ static int vrc_use(void) {
  * went through the ring then, about 64 MB a frame in Tokyo). */
 static int vrc_cb_touch(uint64_t addr, uint64_t size) {
     for (int i = 0; i < g_ngcp; i++) if (gcp_hits(i, addr, size)) return 1;      /* [witchtime] a GPU copy goes there: the ring, patched */
+    if (cb_pf_skip(addr, size)) return 0;
     if (g_cb_live && addr < g_live_hi && addr + size > g_live_lo && cb_overlap(addr, size)) return 1;
     if (g_cb_nkept && addr < g_kept_hi && addr + size > g_kept_lo)
-        for (int n = 0; n < g_kept_n; n++) {
+        for (int n = cb_kept_from(addr, size); n < g_kept_n && g_kept_key[n] < addr + size; n++) {
             CB *k = &g_cb[g_kept_idx[n]];
-            if (k->state >= 3 && addr < k->addr + k->size && k->addr < addr + size) return 1;
+            if (k->state >= 3 && addr < k->addr + k->size && k->addr < addr + size) { cb_pf_hit(addr, size, "vrc_cb_touch"); return 1; }
+        }
+        if (g_cb_pf_mode == 2) for (int n = 0; n < g_kept_n; n++) {      /* test: the whole list finds nothing either */
+            CB *k = &g_cb[g_kept_idx[n]]; static int said;
+            if (k->state >= 3 && addr < k->addr + k->size && k->addr < addr + size && !said++) printf("nvn_vk_cbpf: FAILED: vrc_cb_touch: range %llx +%llx is in a kept buffer the sorted walk missed\n", (unsigned long long)addr, (unsigned long long)size);
         }
     return 0;
 }
@@ -3486,10 +3996,10 @@ static VRes *vrc_ref(uint64_t addr, uint64_t size, BufRef *b) {
     else if (e->state == VR_RING) { e->used = g_cur_frame; e = NULL; g_vs[6]++; g_vs[7] += (LONG64)size; }
     else {
         e->used = g_cur_frame;
-        first = e->gen != R.gen;
+        first = e->gen != R.vrc_gen;
         if (first) {                               /* its first use in this batch, where the ring would copy it again */
             int w = vrc_written(e);
-            e->gen = R.gen;
+            e->gen = R.vrc_gen;
             if (w) e->rwrap = 0;                    /* [lm3] written (or not watchable): its ring copy is old */
             if (w < 0) { if (e->state == VR_KEPT) vrc_drop(e); e->state = VR_RING; }
             else if (w) {
@@ -3544,6 +4054,10 @@ static int resolve_image(int s, VStage *v, int k) {
     if (vt && vt->rs && g_rs_nkeep < 256) {        /* [witchtime] a storage image stays at the game's size (g_rs_keep) */
         rs_demote(t);
         vt = vt_get(t);
+    }
+    if (s == 1 && R.ncol == 1 && R.col[0].tex && rs_keep_has(t)) {      /* [witchtime] issue 126: this draw's colour target is the same picture at twice the size (#5548: the depth of every pixel) */
+        Tex *c = R.col[0].tex;
+        if (c->b.format != t->b.format && c->b.width == 2 * t->b.width && c->b.height == 2 * t->b.height) { g_rs_fine_kept = t; g_rs_fine_full = c; }
     }
     int dim = v->img_type[k] < 6 ? dimof[v->img_type[k]] : -1, qb = 0;
     if (!vt || !vt->storage || dim < 0) { nvn_vk_missing("a storage image of a format, kind or sample count that cannot be a Vulkan storage image (or a buffer image)"); return 0; }
@@ -3724,9 +4238,9 @@ static int g_c2k_on = -1;
 static LONG64 g_c2k_n[2];                          /* HL_VK_PREPTIME: copies, copies left out */
 static uint64_t c2_ref(int s) {
     if (g_c2k_on < 0) g_c2k_on = !(getenv("HL_VK_C2KEEP") && !atoi(getenv("HL_VK_C2KEEP")));
-    if (g_c2k_on && g_c2k[s].ok && g_c2k[s].gen == R.gen && g_c2k[s].ver == g_c2_ver[s] && nvn_vk_cutc_live()) { g_c2k_n[1]++; return g_c2k[s].off; }
-    uint64_t off = ring_raw(R.c2[s], sizeof R.c2[s]);      /* a ring wrap moves R.gen on: read after */
-    g_c2k[s].off = off; g_c2k[s].gen = R.gen; g_c2k[s].ver = g_c2_ver[s]; g_c2k[s].ok = 1; g_c2k_n[0]++;
+    if (g_c2k_on && g_c2k[s].ok && g_c2k[s].gen == R.ring_gen && g_c2k[s].ver == g_c2_ver[s] && nvn_vk_cutc_live()) { g_c2k_n[1]++; return g_c2k[s].off; }
+    uint64_t off = ring_raw(R.c2[s], sizeof R.c2[s]);      /* a ring wrap moves R.ring_gen on: read after */
+    g_c2k[s].off = off; g_c2k[s].gen = R.ring_gen; g_c2k[s].ver = g_c2_ver[s]; g_c2k[s].ok = 1; g_c2k_n[0]++;
     return off;
 }
 /* a draw's vkCmdDraw / vkCmdDrawIndexed; quads (NVN primitive 7) as one triangle fan per four vertices */
@@ -3739,7 +4253,19 @@ static void quad_draw_indexed(unsigned prim, uint32_t count, uint32_t inst, int3
     for (uint32_t q = 0; q + 4 <= count; q += 4) vkCmdDrawIndexed(R.cmd, 4, inst, q, base_vertex, first_inst);
 }
 static LONG64 g_tess_draws, g_tess_pipes;          /* [witchtime] */
+/* [witchtime] motion vectors (nvn_vk_fsr.c, the velocity pass): a pre-pass draw noted for a second draw into FSR's motion vectors */
+typedef struct { void *pipe; uint32_t prev, n14, n3; uint64_t p14, p3; } MvPrep;
+static int fsr_mv_prepare(VStage *vs, int tess, MvPrep *o);
+static void fsr_mv_record(const MvPrep *q, VStage *vs, const BufRef *bufs, uint32_t vnb, const VkVertexInputBindingDescription2EXT *vbd, uint32_t vna, const VkVertexInputAttributeDescription2EXT *vad,
+                          const VkBuffer *vb, const VkDeviceSize *vo, VRes **vkept, int from_cb);
+static void fsr_mv_commit(int indexed, VkBuffer ib, VkDeviceSize iboff, VkIndexType it, uint32_t count, uint32_t inst, uint32_t first, int32_t base, uint32_t first_inst);
+/* [witchtime] The compute buffers a storing draw writes. Their wserial was the batch's last submission (cb_batch_end), so the
+ * landing of such a buffer in the next frame (the game wrote into its range: B3's light lists, two of 130 KB a frame in
+ * Shibuya) waited for the whole previous frame on the GPU. The draw is in the command buffer being recorded once its
+ * preparation has ended (nothing between that and the draw call submits): that one is named. */
+static CB *g_dw_cb[32]; static int g_dw_n;
 static int draw_prepare(unsigned prim) {
+    g_dw_n = 0;
     g_dp_fs_stores = 0;
     if (g_ptm_on < 0) g_ptm_on = getenv("HL_VK_PREPTIME") && atoi(getenv("HL_VK_PREPTIME"));
     if (g_ptm_on > 0) { g_ptm_t = tk(); g_ptm_n++; }
@@ -3763,20 +4289,31 @@ static int draw_prepare(unsigned prim) {
     int tess_mark = tess && g_tess_alt == 2 && (nvn_front_frame_next() & 1);
     if (tess && g_tess_alt == 1 && (nvn_front_frame_next() & 1)) return 0;
     if (!R.prog[0]) { if (drawlog_on()) printf("DLS f%lld skipped: no vertex program (fragment #%d)\n", nvn_front_frame_next(), R.prog[1] ? R.prog[1]->serial : -1); return 0; }      /* [witchtime] TEST ONLY log */
-    uint32_t ints = 0, sints = 0;
-    for (int i = 0; i < 16 && i < R.nattr; i++) {
-        int nf = (int)(R.vattr[i] & 0xff), k = nf >= 0x6D ? nf - 0x6D : (nf - 1) % 12;
-        if (((nf >= 1 && nf <= 0x30) || (nf >= 0x6D && nf <= 0x78)) && (k == 2 || k == 3 || k == 7 || k == 8 || k == 10 || k == 11)) { ints |= 1u << i; if (k == 3 || k == 8 || k == 11) sints |= 1u << i; }
-        if (nf == 0x3E) ints |= 1u << i;
-        if (nf == 0x6A) { ints |= 1u << i; sints |= 1u << i; }
+    if (R.vi_attr_ver != R.vi_ver) {
+        uint32_t ints = 0, sints = 0, streams = 0;
+        for (int i = 0; i < 16 && i < R.nattr; i++) {
+            uint32_t a = R.vattr[i];
+            int nf = (int)(a & 0xff), k = nf >= 0x6D ? nf - 0x6D : (nf - 1) % 12;
+            if (nf) streams |= 1u << ((a >> 8) & 31);
+            if (((nf >= 1 && nf <= 0x30) || (nf >= 0x6D && nf <= 0x78)) && (k == 2 || k == 3 || k == 7 || k == 8 || k == 10 || k == 11)) { ints |= 1u << i; if (k == 3 || k == 8 || k == 11) sints |= 1u << i; }
+            if (nf == 0x3E) ints |= 1u << i;
+            if (nf == 0x6A) { ints |= 1u << i; sints |= 1u << i; }
+        }
+        R.vi_ints = ints; R.vi_sints = sints; R.vi_streams = streams; R.vi_attr_ver = R.vi_ver;
     }
+    uint32_t ints = R.vi_ints, sints = R.vi_sints;
     uint32_t key0[4] = {ints, sints, R.tex_int[0], R.tex_sint[0]}, key1[4] = {0, 0, R.tex_int[1], R.tex_sint[1]};
     int depth_only = !R.prog[1];
     /* fragment inputs the vertex code never writes are declared by a vertex variant of their own, left at (0, 0, 0, 1). Session 4:
      * the variant the program used last is asked for first (session 3 asked for the plain one at every draw of such a pair,
      * which hashed the machine code each time). */
-    VStage *cur = R.prog[0]->st[0].vk;
-    VStage *fs = depth_only ? NULL : vstage_get(R.prog[1], 1, key1, 0), *vs = vstage_get(R.prog[0], 0, key0, cur ? cur->fo : 0);
+    VStage *cur = R.prog[0]->st[0].vk, *cur1 = depth_only ? NULL : R.prog[1]->st[1].vk;
+    int no_early = (R.alpha_func > 0 && R.alpha_func < 8) || R.ms[1] != 0;
+    VStage *fs = depth_only ? NULL : vstage_get(R.prog[1], 1, key1, no_early && cur1 && cur1->fo == MX_FO_NO_EARLY ? MX_FO_NO_EARLY : 0);
+    VStage *vs = vstage_get(R.prog[0], 0, key0, cur ? cur->fo : 0);
+    /* mx_translate: early fragment tests with frag0 / alpha test are right only while neither the alpha function (0 off, 8 always,
+     * mx_alpha_ok) nor alpha-to-coverage (R.ms[1]) can discard: a draw where either can discard takes the variant translated without them */
+    if (fs && fs->early == 2 && no_early) fs = vstage_get(R.prog[1], 1, key1, MX_FO_NO_EARLY);
     VStage *tcs = NULL, *tes = NULL;
     if (tess_mark && fs) {                         /* TEST ONLY (HL_VK_TESS_ALT=2) */
         static VStage *mag;
@@ -3838,7 +4375,7 @@ static int draw_prepare(unsigned prim) {
         if (m != g_hud_mid_draw) { g_hud_mid_draw = m; R.dyn_dirty = 1; } }
     watch_fs(fs);                                  /* [witchtime] TEST ONLY: HL_VK_WATCHFS */
     int stores = 0;                                /* [witchtime] storage images, after the samplers in g_dtex */
-    for (int j = 0; j < nsv; j++) { int s = sx[j]; VStage *v = sv[j]; for (int k = 0; k < 8; k++) if (v->images >> k & 1) { if (!resolve_image(s, v, k)) return 0; stores = 1; } }
+    for (int j = 0; j < nsv; j++) { uint32_t im = sv[j]->images; while (im) { int k = __builtin_ctz(im); im &= im - 1; if (!resolve_image(sx[j], sv[j], k)) return 0; stores = 1; } }
     PT(1);
     /* 2. buffers: every range the draw reads, into the ring (may wrap the ring = submit) */
     static BufRef bufs[160];                       /* [witchtime] up to four stages (tessellation) */
@@ -3848,8 +4385,8 @@ static int draw_prepare(unsigned prim) {
         int s = sx[j];
         VStage *v = sv[j];
         Stage *st = &R.prog[s]->st[s];
-        for (unsigned n = 1; n < 18; n++) {
-            if (!(v->cbufs >> n & 1)) continue;
+        for (uint32_t cm = v->cbufs & 0x3fffeu; cm; cm &= cm - 1) {
+            unsigned n = (unsigned)__builtin_ctz(cm);
             BufRef *b = &bufs[nbuf++];
             b->zero = 0; b->buf = R.ring;
             if (n == 2) { b->off = c2_ref(s); b->size = sizeof R.c2[s]; }
@@ -3857,8 +4394,8 @@ static int draw_prepare(unsigned prim) {
             else if (n >= 3 && R.ubo[s][n - 3].addr && R.ubo[s][n - 3].size) buf_ref(R.ubo[s][n - 3].addr, R.ubo[s][n - 3].size, sal, b);
             else b->zero = 1;
         }
-        for (unsigned k = 0; k < 16; k++) {
-            if (!(v->ssbos >> k & 1)) continue;
+        for (uint32_t sm = v->ssbos & 0xffffu; sm; sm &= sm - 1) {
+            unsigned k = (unsigned)__builtin_ctz(sm);
             BufRef *b = &bufs[nbuf++];
             b->zero = !(R.ssbo[s][k].addr && R.ssbo[s][k].size); b->buf = R.ring;
             if (!b->zero && (v->ssbo_w >> k & 1)) {   /* [witchtime] the draw stores to it: a compute buffer (CB) of this batch, copied back like a dispatch's */
@@ -3866,36 +4403,47 @@ static int draw_prepare(unsigned prim) {
                 CB *c = g_cb_live ? cb_inside(r.addr, r.size) : NULL;
                 if (c && (r.addr - c->addr) % sal) c = NULL;
                 if (!c) { if (g_cb_live && cb_overlap(r.addr, r.size)) cb_sync(); c = cb_new(r.addr, r.size); }
-                b->buf = c->buf; b->off = r.addr - c->addr; b->size = r.size; c->dirty = 1; stores = 1; c->wserial = ~0ull;      /* the draw may land in a later submission (a ring wrap in its preparation): cb_batch_end clamps it */
+                b->buf = c->buf; b->off = r.addr - c->addr; b->size = r.size; c->dirty = 1; stores = 1; c->wserial = ~0ull; if (g_dw_n < 32) g_dw_cb[g_dw_n++] = c;      /* the draw may land in a later submission (a ring wrap in its preparation): draw_prepare names it at its end, else cb_batch_end clamps it */
             } else if (!b->zero) buf_ref(R.ssbo[s][k].addr, R.ssbo[s][k].size, sal, b);
         }
     }
+    MvPrep mvq;                                    /* [witchtime] motion vectors: the pre-pass's object constants kept; last frame's into the ring for the velocity pass */
+    int mv = fsr_mv_prepare(vs, tess, &mvq);
     PT(2);
     /* vertex streams: only the ones an attribute names (a stale binding of another mesh is not read, and is not copied) */
     uint64_t voff[16];
     VkBuffer vbufs[16];
     VRes *vkept[16];                               /* finding 140: the streams read from kept buffers */
-    uint32_t streams = 0;
+    uint32_t streams = R.vi_streams & 0xffffu, present = 0, vkept_mask = 0;
     int from_cb = 0, vrc = vrc_use();
-    for (int i = 0; i < 16 && i < R.nattr; i++) if (R.vattr[i] & 0xff) streams |= 1u << ((R.vattr[i] >> 8) & 31);
-    for (int i = 0; i < 16; i++) {
+    for (uint32_t sm = streams; sm; sm &= sm - 1) {
+        int i = __builtin_ctz(sm);
+        if (!R.vbuf[i].addr || !R.vbuf[i].size) continue;
         BufRef b;
-        voff[i] = ~0ull; vbufs[i] = R.ring; vkept[i] = NULL;
-        if (!(streams >> i & 1) || !R.vbuf[i].addr || !R.vbuf[i].size) continue;
-        if (vrc && !vrc_cb_touch(R.vbuf[i].addr, R.vbuf[i].size)) vkept[i] = vrc_ref(R.vbuf[i].addr, R.vbuf[i].size, &b);
+        VRes *vk = NULL;
+        if (vrc && !vrc_cb_touch(R.vbuf[i].addr, R.vbuf[i].size)) vk = vrc_ref(R.vbuf[i].addr, R.vbuf[i].size, &b);
         else from_cb |= buf_ref(R.vbuf[i].addr, R.vbuf[i].size, 1, &b);
-        voff[i] = b.off; vbufs[i] = b.buf;
+        voff[i] = b.off; vbufs[i] = b.buf; vkept[i] = vk;
+        if (vk) vkept_mask |= 1u << i;
+        present |= 1u << i;
     }
-    if (nvn_front_draw_tag()) { memcpy(g_dt_voff, voff, sizeof g_dt_voff); memcpy(g_dt_vb, vbufs, sizeof g_dt_vb); }      /* round 17, test (HL_DRAWTAG) */
+    if (nvn_front_draw_tag()) { for (int i = 0; i < 16; i++) { g_dt_voff[i] = (present >> i & 1) ? voff[i] : ~0ull; g_dt_vb[i] = (present >> i & 1) ? vbufs[i] : R.ring; } }      /* round 17, test (HL_DRAWTAG) */
     R.cb_draws += from_cb;
+    fsr_mv_streams(from_cb, vs);                   /* [witchtime] TEST ONLY (HL_FSR_MVLOG) */
     PT(3);
     /* the vertex input, described before the pipeline: without VK_EXT_vertex_input_dynamic_state its layout is part of the key */
-    VkVertexInputBindingDescription2EXT vbd[17];
-    VkVertexInputAttributeDescription2EXT vad[16];
-    uint32_t vnb, vna, present = 0;
-    int vbs[17], badfmt;
-    for (int i = 0; i < 16; i++) if (voff[i] != ~0ull) present |= 1u << i;
-    vin_describe(R.nattr, R.vattr, (const uint32_t *)R.vstream, present, ints, sints, vbd, &vnb, vad, &vna, vbs, &badfmt);
+    static VkVertexInputBindingDescription2EXT g_vin_bd[17];
+    static VkVertexInputAttributeDescription2EXT g_vin_ad[16];
+    static uint32_t g_vin_nb, g_vin_na, g_vin_ver, g_vin_pres;
+    static int g_vin_bs[17], g_vin_bad;
+    if (!dsh_on() || g_vin_ver != R.vi_ver || g_vin_pres != present) {
+        vin_describe(R.nattr, R.vattr, (const uint32_t *)R.vstream, present, ints, sints, g_vin_bd, &g_vin_nb, g_vin_ad, &g_vin_na, g_vin_bs, &g_vin_bad);
+        g_vin_ver = R.vi_ver; g_vin_pres = present;
+    }
+    VkVertexInputBindingDescription2EXT *vbd = g_vin_bd;
+    VkVertexInputAttributeDescription2EXT *vad = g_vin_ad;
+    uint32_t vnb = g_vin_nb, vna = g_vin_na;
+    int *vbs = g_vin_bs, badfmt = g_vin_bad;
     if (badfmt) { static char msg[64]; snprintf(msg, sizeof msg, "vertex attribute format 0x%x", badfmt); nvn_vk_missing(msg); }
     /* 3. pass and pipeline */
     if (!pass_begin()) return 0;
@@ -3951,9 +4499,20 @@ static int draw_prepare(unsigned prim) {
         VkBuffer vb[17];
         VkDeviceSize vo[17];
         for (uint32_t b = 0; b < vnb; b++) { if (vbs[b] < 0) { vb[b] = R.zero; vo[b] = 65536; } else { vb[b] = vbufs[vbs[b]]; vo[b] = voff[vbs[b]]; } }
-        if (D.has_vids) vkCmdSetVertexInputEXT(R.cmd, vnb, vbd, vna, vad);
-        if (vnb) vkCmdBindVertexBuffers(R.cmd, 0, vnb, vb, vo);
-        for (int i = 0; i < 16; i++) if (vkept[i]) vkept[i]->busy = R.serial + 1;      /* finding 140: freed only after this command buffer */
+        if (D.has_vids) {
+            if (!dsh_on() || !g_dsh_vi_ok || g_dsh_vi_ver != R.vi_ver || g_dsh_vi_pres != present) {
+                vkCmdSetVertexInputEXT(R.cmd, vnb, vbd, vna, vad);
+                g_dsh_vi_ver = R.vi_ver; g_dsh_vi_pres = present; g_dsh_vi_ok = 1; g_dsh_sent++;
+            } else g_dsh_kept++;
+        }
+        if (vnb) {
+            if (!dsh_on() || !g_dsh_vb_ok || g_dsh_vnb != vnb || memcmp(g_dsh_vb, vb, sizeof vb[0] * vnb) || memcmp(g_dsh_vo, vo, sizeof vo[0] * vnb)) {
+                vkCmdBindVertexBuffers(R.cmd, 0, vnb, vb, vo);
+                g_dsh_vnb = vnb; memcpy(g_dsh_vb, vb, sizeof vb[0] * vnb); memcpy(g_dsh_vo, vo, sizeof vo[0] * vnb); g_dsh_vb_ok = 1; g_dsh_sent++;
+            } else g_dsh_kept++;
+        }
+        for (uint32_t km = vkept_mask; km; km &= km - 1) vkept[__builtin_ctz(km)]->busy = R.serial + 1;      /* finding 140: freed only after this command buffer */
+        if (mv) { for (int i = 0; i < 16; i++) if (!(vkept_mask >> i & 1)) vkept[i] = NULL; fsr_mv_record(&mvq, vs, bufs, vnb, vbd, vna, vad, vb, vo, vkept, from_cb); }
     }
     PT(7);
     /* 5. descriptors */
@@ -3972,28 +4531,48 @@ static int draw_prepare(unsigned prim) {
         for (int j = 0; j < nsv; j++) {
             int s = sx[j];
             VStage *v = sv[j];
-            for (unsigned n = 1; n < 34; n++) {
-                unsigned bit = n < 18 ? v->cbufs >> n & 1 : v->ssbos >> (n - 18) & 1;
-                if (!bit) continue;
+            for (uint32_t cm = v->cbufs & 0x3fffeu; cm; cm &= cm - 1) {
+                unsigned n = (unsigned)__builtin_ctz(cm);
                 BufRef *b = &bufs[ib];
                 bi[ib].buffer = b->zero ? R.zero : b->buf; bi[ib].offset = b->zero ? 0 : b->off; bi[ib].range = b->zero ? 65536 : b->size;
-                if (!ut) w[nw] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, sets[0], 40u * (unsigned)s + (n < 18 ? n : 20 + n - 18), 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL, &bi[ib], NULL};
+                if (!ut) w[nw] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, sets[0], 40u * (unsigned)s + n, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL, &bi[ib], NULL};
+                nw++; ib++;
+            }
+            for (uint32_t sm = v->ssbos & 0xffffu; sm; sm &= sm - 1) {
+                unsigned k = (unsigned)__builtin_ctz(sm);
+                BufRef *b = &bufs[ib];
+                bi[ib].buffer = b->zero ? R.zero : b->buf; bi[ib].offset = b->zero ? 0 : b->off; bi[ib].range = b->zero ? 65536 : b->size;
+                if (!ut) w[nw] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, NULL, sets[0], 40u * (unsigned)s + 20 + k, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, NULL, &bi[ib], NULL};
                 nw++; ib++;
             }
         }
-        if (p->push0) { if (nw) vkCmdPushDescriptorSetKHR(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, 0, (uint32_t)nw, w); }
+        if (p->push0) { if (nw) { if (p->layout != g_dsh_tset_lay) g_dsh_tset = VK_NULL_HANDLE; vkCmdPushDescriptorSetKHR(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, 0, (uint32_t)nw, w); } }
         else if (sets[0]) {
             LONG64 u0 = g_ptm_on > 0 ? tk() : 0;
             if (ut) vkUpdateDescriptorSetWithTemplate(V.device, sets[0], ut, bi); else vkUpdateDescriptorSets(V.device, (uint32_t)nw, w, 0, NULL);
             if (g_ptm_on > 0) g_set0_upd += tk() - u0;
+            if (p->layout != g_dsh_tset_lay) g_dsh_tset = VK_NULL_HANDLE;
             vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, 0, 1, &sets[0], 0, NULL);
         }
         PT(8);
         if (p->nb[1]) {
-            uint64_t key = fnv(0xcbf29ce484222325ULL, &p->dl[1], sizeof p->dl[1]);
+            /* #257: a word at a time (TSK): the key lives as long as its command buffer and a hit is confirmed below, so only its speed counts (a byte at a time was 6 % of the render thread's own time in a ride) */
+#define TSK(v) (key = (key ^ (uint64_t)(v)) * 0x9E3779B97F4A7C15ull, key ^= key >> 29)
+            uint64_t key = 0xcbf29ce484222325ULL;
             unsigned slot;
-            if (p->dl[1] == g_udl[1]) for (int j = 0; j < nsv; j++) { VStage *v = sv[j]; for (int i = 0; i < v->nsmp; i++) key = fnv(key, &v->smp[i].binding, sizeof v->smp[i].binding); key = fnv(key, &v->images, sizeof v->images); }      /* session 9: one layout for every pipeline: the binding numbers tell the lists apart */
-            for (int i = 0; i < g_ndtex; i++) { key = fnv(key, &g_dtex[i].view, sizeof g_dtex[i].view); key = fnv(key, &g_dtex[i].smp, sizeof g_dtex[i].smp); key = fnv(key, &g_dtex[i].layout, sizeof g_dtex[i].layout); }
+            TSK((uintptr_t)p->dl[1]);
+            if (p->dl[1] == g_udl[1]) for (int j = 0; j < nsv; j++) {
+                VStage *v = sv[j];
+                if (!v->tbind_ok) {
+                    uint64_t bh = 0xcbf29ce484222325ULL;
+                    for (int i = 0; i < v->nsmp; i++) { bh = (bh ^ (uint64_t)v->smp[i].binding) * 0x9E3779B97F4A7C15ull; bh ^= bh >> 29; }
+                    bh = (bh ^ (uint64_t)v->images) * 0x9E3779B97F4A7C15ull; bh ^= bh >> 29;
+                    v->tbind_hash = bh; v->tbind_ok = 1;
+                }
+                TSK(v->tbind_hash);
+            }      /* session 9: one layout for every pipeline: the binding numbers tell the lists apart */
+            for (int i = 0; i < g_ndtex; i++) { TSK((uintptr_t)g_dtex[i].view); TSK((uintptr_t)g_dtex[i].smp); TSK(g_dtex[i].layout); }
+#undef TSK
             if (!key) key = 1;
             for (slot = (unsigned)key & 4095; g_tset[slot].gen == g_tset_gen && g_tset[slot].key != key; slot = (slot + 1) & 4095) {}
             /* session 4: a hash hit is confirmed by comparing the whole list (layout, views, samplers, image layouts); a
@@ -4031,7 +4610,10 @@ static int draw_prepare(unsigned prim) {
                     g_tset_list_used += g_ndtex; g_tset_used++;
                 }
             }
-            vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, 1, 1, &sets[1], 0, NULL);
+            if (!dsh_on() || sets[1] != g_dsh_tset || p->layout != g_dsh_tset_lay) {
+                vkCmdBindDescriptorSets(R.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, p->layout, 1, 1, &sets[1], 0, NULL);
+                g_dsh_tset = sets[1]; g_dsh_tset_lay = p->layout; g_dsh_sent++;
+            } else g_dsh_kept++;
         }
         PT(9);
     }
@@ -4042,7 +4624,10 @@ static int draw_prepare(unsigned prim) {
             float fcs = R.pass_rs && !own ? 1.0f / R.pass_sx : 1.0f, fcy = R.pass_rs && !own ? 1.0f / R.pass_sy : 1.0f, ps = R.pass_rs ? R.point_size * R.pass_sx : R.point_size;
             memcpy(&pc[3], &fcs, 4); memcpy(&pc[4], &fcy, 4); memcpy(&pc[2], &ps, 4);
         }
-        vkCmdPushConstants(R.cmd, p->layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 20, pc);
+        if (!dsh_on() || !g_dsh_pc_ok || g_dsh_pc_lay != p->layout || memcmp(g_dsh_pc, pc, 20)) {
+            vkCmdPushConstants(R.cmd, p->layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 20, pc);
+            memcpy(g_dsh_pc, pc, 20); g_dsh_pc_lay = p->layout; g_dsh_pc_ok = 1; g_dsh_sent++;
+        } else g_dsh_kept++;
     }
     PT(10);
     if (drawlog_on()) {                            /* TEST ONLY: HL_VK_DRAWLOG */
@@ -4067,6 +4652,7 @@ static int draw_prepare(unsigned prim) {
     if (stores) { R.pass_stores = 1; g_gpu_writes++; }      /* [witchtime] pass_end makes the writes visible; indirect_src waits again */
     g_dp_fs_stores = fs && fs->images && !fs->ssbo_w;      /* [witchtime] issue 147 (rs_store_low): a stage that also writes buffers would write them twice */
     ckpt(0, vs, fs, tes);                          /* [issue 26] */
+    for (int i = 0; i < g_dw_n; i++) if (g_dw_cb[i]->state == 1 && R.recording) g_dw_cb[i]->wserial = R.serial + 1;
     return 1;
 }
 
@@ -4390,7 +4976,7 @@ static void lr_record(Tex *d) {
     if (vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT || vt->decode || vt->expand || vt->samples > 1 || vt->bw != 1 || vt->bh != 1 || vt->layers != 1 || stride % bpb ||
         (vt->rs && !fmt_supported(vt->fmt, VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT))) { if (g_lr_skipped++ < 4) printf("nvn_vk: pitch-linear copy target %dx%d format 0x%x not read back (kind of image)\n", w, h, d->b.format); return; }
     if (said++ < 4) printf("nvn_vk: pitch-linear copy target %dx%d format 0x%x stride %lld%s: read back into the game's memory\n", w, h, d->b.format, (long long)stride, vt->rs ? " (scaled image, reduced to the game's size)" : "");
-    if (mode == 2) { int r[6] = {0, 0, 0, w, h, 1}; read_region(d, NULL, r, d->mem, stride, 0); g_lr_recorded++; g_lr_landed++; R.gen++; return; }
+    if (mode == 2) { int r[6] = {0, 0, 0, w, h, 1}; read_region(d, NULL, r, d->mem, stride, 0); g_lr_recorded++; g_lr_landed++; ring_inval_all(); return; }
     pass_end(); cmd_begin();
     if (g_lr_nev[R.cur] == LR_MAX) { g_lr_full++; return; }
     uint64_t size = (uint64_t)stride * (uint64_t)(h - 1) + (uint64_t)w * (uint64_t)bpb;
@@ -4444,15 +5030,28 @@ static void slot_poll(void) {
         if (!o || vkGetFenceStatus(V.device, o->fence) != VK_SUCCESS) break;
         slot_wait(o); g_sp_landed++;
     }
+    if (g_ngcp) { int n0 = g_ngcp; gcp_settle_done(); if (g_ngcp != n0) nvn_front_done_moved(); }      /* [witchtime] a fence waited for on the game's thread (nvn_vk_sync_done) */
     g_sp_tk += tk() - t0;
 }
+static volatile LONG64 g_sd_n[2];                 /* fences answered as finished here; of those, with buffers live or kept or GPU copies in flight */
 int nvn_vk_sync_done(const SyncObj *o) {          /* any thread: the fence's submission and all before it have finished and landed */
     uint64_t want = (uint64_t)(uintptr_t)*(void *volatile *)&o->s;
     if (!want) return 0;
-    /* compute copy-back buffers in flight or kept (B2 dispatches none): they land in cb_poll / cb_sync, which the job runs
-     * around its wait; the game's thread does not answer then (the job does) */
-    if (*(volatile int *)&g_cb_live || *(volatile int *)&g_cb_pending || *(volatile int *)&g_cb_nkept || *(volatile int *)&g_ngcp) return 0;
+    /* [witchtime] Any buffer in flight or kept used to send the wait to the job, which runs after the batch being replayed:
+     * with compute in every frame the game stood at its fence until the NEXT frame's replay had ended, and only then
+     * finished and sent the frame after it (an Adreno 740, a Shibuya street: 12.5 ms of replay + 6 ms of the game, in
+     * turns: 54 fps; like this 59). What the fence's own frame left behind still does:
+     *   - pending buffers are the batch before's, written at or before this fence: not in guest memory yet;
+     *   - a GPU copy whose writer is at or before this fence has not settled (slot_poll settles them during a replay).
+     * Live buffers belong to the batch being replayed, which was submitted after a fence that has run; kept ones are
+     * landed when they are needed, by no fence (the job did not land them either when the fence had finished). */
+    static int job = -1; if (job < 0) job = getenv("HL_VK_SYNCJOB") != NULL;      /* TEST: as before, anything live, kept or in flight sends the wait to the job */
+    int busy = *(volatile int *)&g_cb_live || *(volatile int *)&g_cb_nkept || *(volatile int *)&g_ngcp;
+    if (job && busy) return 0;
+    if (*(volatile int *)&g_cb_pending) return 0;
+    if (*(volatile int *)&g_ngcp && *(volatile uint64_t *)&g_gcp_min <= want - 1) return 0;
     int done = want - 1 <= *(volatile uint64_t *)&R.done;
+    if (done) { InterlockedIncrement64(&g_sd_n[0]); if (busy) InterlockedIncrement64(&g_sd_n[1]); }
     MemoryBarrier();                               /* what the game reads next was landed before R.done moved */
     return done;
 }
@@ -4465,19 +5064,25 @@ int nvn_vk_sync_done(const SyncObj *o) {          /* any thread: the fence's sub
 static TargetRef g_sf_col[8], g_sf_dep;
 static int g_sf_ncol, g_sf_have, g_sf_oq, g_sf_on = -1;
 static LONG64 g_sf_draws;
+static void attach_mark_targets(void) {
+    g_attach_gen++;
+    if (!g_attach_gen) g_attach_gen = 1;
+    for (int i = 0; i < R.ncol; i++) if (R.col[i].tex && R.col[i].tex->vk) ((VTex *)R.col[i].tex->vk)->attach_gen = g_attach_gen;
+    if (R.depth.tex && R.depth.tex->vk) ((VTex *)R.depth.tex->vk)->attach_gen = g_attach_gen;
+}
 static int rs_store_low(void) {
     if (!g_dp_fs_stores || !RS_ON || !R.in_pass || !R.pass_rs || (R.pass_sx >= 1.0f && R.pass_sy >= 1.0f)) return 0;
     if (g_sf_on < 0) g_sf_on = !(getenv("HL_VK_STOREFULL") && !atoi(getenv("HL_VK_STOREFULL")));
     if (!g_sf_on) return 0;
     pass_end();
     memcpy(g_sf_col, R.col, sizeof g_sf_col); g_sf_dep = R.depth; g_sf_ncol = R.ncol; g_sf_have = R.have_targets;
-    memset(R.col, 0, sizeof R.col); memset(&R.depth, 0, sizeof R.depth); R.ncol = 0; R.have_targets = 0; R.dyn_dirty = 1;
+    memset(R.col, 0, sizeof R.col); memset(&R.depth, 0, sizeof R.depth); R.ncol = 0; R.have_targets = 0; R.dyn_dirty = 1; attach_mark_targets();
     g_sf_oq = g_oq_on; g_oq_on = 0;
     return 1;
 }
 static void rs_store_done(int drawn) {             /* the targets of the game's pass again; its next draw begins it anew */
     pass_end();
-    memcpy(R.col, g_sf_col, sizeof R.col); R.depth = g_sf_dep; R.ncol = g_sf_ncol; R.have_targets = g_sf_have; R.dyn_dirty = 1;
+    memcpy(R.col, g_sf_col, sizeof R.col); R.depth = g_sf_dep; R.ncol = g_sf_ncol; R.have_targets = g_sf_have; R.dyn_dirty = 1; attach_mark_targets();
     g_oq_on = g_sf_oq;
     g_sf_draws += drawn;
 }
@@ -4504,24 +5109,30 @@ static void exec(const Cmd *m, int depth) {
     }
     case OP_TEXTURES: {
         int stage = (int)a[0] % 6, first = (int)a[1], count = (int)a[2];
+        if (g_texmemo_on < 0) { const char *e = getenv("HL_VK_TEXMEMO"); g_texmemo_on = e ? atoi(e) : 1; }
+        LONG64 gen1 = nvn_front_pool_gen() + 1;
         for (int i = 0; i < count && first + i < 32; i++) {
             uint64_t h;
             unsigned u = (unsigned)(first + i);
             uint32_t dims[4] = {0, 0, 0, 0};
             int isint = 0;
-            Tex *t;
-            View v;
-            SamplerParams sp;
             memcpy(&h, blob + i * 8, 8);
             R.nvn_tex[stage][u] = h;
-            if (nvn_front_handle(R.tpool, R.spool, h, &t, &v, &sp) & 1) {      /* what TXQ reports, and whether the shader must use an integer sampler (resolve_handle's rules) */
-                int glevels = nvn_front_tex_levels(t), l0 = (v.set & 0x81) == 0x81 ? v.lvl0 : 0, nl = (v.set & 0x81) == 0x81 && v.nlvl > 0 ? v.nlvl : glevels - l0, is3d = t->b.target == 2;
-                int layers = (v.set & 0x82) == 0x82 && v.nlay > 0 ? v.nlay : nvn_front_tex_layers(t), nf = (v.set & 0x84) == 0x84 && v.format ? v.format : t->b.format, k = nf >= 0x6D ? nf - 0x6D : (nf - 1) % 12;
-                dims[0] = (uint32_t)lvl_(t->b.width, l0); dims[1] = (uint32_t)lvl_(t->b.height, l0);
-                dims[2] = is3d ? (uint32_t)lvl_(t->b.depth, l0) : (uint32_t)(t->b.target == 9 ? layers / 6 : layers);
-                dims[3] = (uint32_t)(nl > 0 ? nl : 1) | ((uint32_t)is3d << 16);
-                if (((nf >= 1 && nf <= 0x30) || (nf >= 0x6D && nf <= 0x78)) && (k == 2 || k == 3 || k == 7 || k == 8 || k == 10 || k == 11)) isint = k == 3 || k == 8 || k == 11 ? 2 : 1;
-                if (nf == 0x3E) isint = 1;
+            TexMemo *tm = tex_hc_slot(h);
+            if (g_texmemo_on == 1 && tm->c2_ok && tm->gen1 == gen1 && tm->tp == R.tpool && tm->sp == R.spool && tm->nh == h && (!(tm->r & 1) || !tm->t->dead)) {
+                memcpy(dims, tm->dims, 16); isint = tm->isint;
+            } else {
+                Tex *t; View v; SamplerParams sp;
+                if (tex_lookup_h(h, &t, &v, &sp, &tm) & 1) {      /* what TXQ reports, and whether the shader must use an integer sampler (resolve_handle's rules) */
+                    int glevels = nvn_front_tex_levels(t), l0 = (v.set & 0x81) == 0x81 ? v.lvl0 : 0, nl = (v.set & 0x81) == 0x81 && v.nlvl > 0 ? v.nlvl : glevels - l0, is3d = t->b.target == 2;
+                    int layers = (v.set & 0x82) == 0x82 && v.nlay > 0 ? v.nlay : nvn_front_tex_layers(t), nf = (v.set & 0x84) == 0x84 && v.format ? v.format : t->b.format, k = nf >= 0x6D ? nf - 0x6D : (nf - 1) % 12;
+                    dims[0] = (uint32_t)lvl_(t->b.width, l0); dims[1] = (uint32_t)lvl_(t->b.height, l0);
+                    dims[2] = is3d ? (uint32_t)lvl_(t->b.depth, l0) : (uint32_t)(t->b.target == 9 ? layers / 6 : layers);
+                    dims[3] = (uint32_t)(nl > 0 ? nl : 1) | ((uint32_t)is3d << 16);
+                    if (((nf >= 1 && nf <= 0x30) || (nf >= 0x6D && nf <= 0x78)) && (k == 2 || k == 3 || k == 7 || k == 8 || k == 10 || k == 11)) isint = k == 3 || k == 8 || k == 11 ? 2 : 1;
+                    if (nf == 0x3E) isint = 1;
+                }
+                memcpy(tm->dims, dims, 16); tm->isint = (uint8_t)isint; tm->c2_ok = 1;
             }
             if (memcmp(&R.c2[stage][48 + 2 * u], dims, 16)) { memcpy(&R.c2[stage][48 + 2 * u], dims, 16); g_c2_ver[stage]++; }      /* finding 145: c2_ref copies it again */
             R.tex_int[stage] = (R.tex_int[stage] & ~(1u << u)) | ((uint32_t)(isint != 0) << u);
@@ -4530,8 +5141,16 @@ static void exec(const Cmd *m, int depth) {
         break;
     }
     case OP_VBUF: for (int i = 0; i < (int)a[1] && (int)a[0] + i < 32; i++) memcpy(&R.vbuf[a[0] + i], blob + i * 16, 16); break;
-    case OP_VATTR: R.nattr = (int)a[0] < 32 ? (int)a[0] : 32; memcpy(R.vattr, blob, (size_t)R.nattr * 4); break;
-    case OP_VSTREAM: for (int i = 0; i < (int)a[0] && i < 32; i++) memcpy(&R.vstream[i], blob + i * 8, 8); break;
+    case OP_VATTR: {
+        int n = (int)a[0] < 32 ? (int)a[0] : 32;
+        if (n != R.nattr || (n && memcmp(R.vattr, blob, (size_t)n * 4))) { R.nattr = n; if (n) memcpy(R.vattr, blob, (size_t)n * 4); R.vi_ver++; }
+        break;
+    }
+    case OP_VSTREAM: {
+        int n = (int)a[0] < 32 ? (int)a[0] : 32;
+        if (n && memcmp(R.vstream, blob, (size_t)n * 8)) { memcpy(R.vstream, blob, (size_t)n * 8); R.vi_ver++; }
+        break;
+    }
     case OP_BLEND: {
         const uint8_t *b = (const uint8_t *)&a[0];
         uint8_t *t = R.blend[b[0] & 7];
@@ -4559,7 +5178,7 @@ static void exec(const Cmd *m, int depth) {
         R.ncol = 0; R.have_targets = 0;
         for (int i = 0; i < n; i++) if (col[i].tex && !col[i].tex->dead) { R.col[i] = col[i]; R.ncol = i + 1; R.have_targets = 1; }
         if (dep->tex && !dep->tex->dead) { R.depth = *dep; R.have_targets = 1; }
-        R.dyn_dirty = 1;                           /* default viewport / scissor follow the target size */
+        R.dyn_dirty = 1; attach_mark_targets();     /* default viewport / scissor follow the target size */
         break;
     }
     case OP_STENCIL_REF: case OP_STENCIL_VMASK: case OP_STENCIL_MASK: {
@@ -4604,11 +5223,11 @@ static void exec(const Cmd *m, int depth) {
             if (in_pass) oq_begin();                                            /* counting goes on in this pass */
             break;
         }
-        if (m->op == OP_COUNTER_REPORT && a[1]) { uint64_t d[2] = {0, vk_now_ns()}; cb_sync(); if (g_ngcp) gcp_overwritten(a[1], 16); memcpy(P(a[1]), d, 16); R.gen++; }
+        if (m->op == OP_COUNTER_REPORT && a[1]) { uint64_t d[2] = {0, vk_now_ns()}; cb_sync(); if (g_ngcp) gcp_overwritten(a[1], 16); memcpy(P(a[1]), d, 16); ring_inval_range(a[1], 16); }
         break;
     }
     case OP_REPORT_VALUE: if (drawlog_on()) printf("DLW f%lld report %llx\n", nvn_front_frame_next(), (unsigned long long)a[1]);      /* [witchtime] TEST ONLY */
-        if (a[1]) { uint64_t d[2] = {(uint32_t)a[0], vk_now_ns()}; cb_sync(); if (g_ngcp) gcp_overwritten(a[1], 16); memcpy(P(a[1]), d, 16); R.gen++; } break;
+        if (a[1]) { uint64_t d[2] = {(uint32_t)a[0], vk_now_ns()}; cb_sync(); if (g_ngcp) gcp_overwritten(a[1], 16); memcpy(P(a[1]), d, 16); ring_inval_range(a[1], 16); } break;
     case OP_CONSRASTER: if (a[0] & 1) nvn_vk_missing("conservative rasterisation (nvnCommandBufferSetConservativeRasterEnable)"); break;
     case OP_DEPTHBOUNDS: {                         /* [witchtime] a0 bit 0 enable, a1 = near, far (two floats): fragments pass where the stored depth is inside */
         float v[2]; memcpy(v, &a[1], 8);
@@ -4623,7 +5242,7 @@ static void exec(const Cmd *m, int depth) {
     case OP_RENDER_ENABLE: if (!a[1]) R.render_off = !(a[0] & 1); else R.render_off = 0; break;
     case OP_ROWSTRIDE: R.row_stride = (int64_t)a[0]; break;      /* PR #14 (xtlg511): no longer read by the copies (they carry their own strides); kept as state */
     case OP_IMAGESTRIDE: R.image_stride = (int64_t)a[0]; break;
-    case OP_BARRIER: if (a[0] & 0x10) nvn_front_barrier_texmem(); break;      /* ordering bits: every draw is recorded in order; feedback is handled at the draw */
+    case OP_BARRIER: if (a[0] & 0x10) { nvn_front_barrier_texmem(); g_tex_batch_gen++; } break;      /* ordering bits: every draw is recorded in order; feedback is handled at the draw */
     case OP_DISPATCH: { LONG64 t0 = tk(); compute_dispatch((uint32_t)a[0], (uint32_t)a[1], (uint32_t)a[2]); g_tm[2] += tk() - t0; break; }
     case OP_DISPATCH_INDIRECT: {               /* [witchtime] a0 = address of three group counts, read once compute output there has landed (cpu_read_sync) */
         uint32_t g[3] = {0, 0, 0};
@@ -4636,15 +5255,15 @@ static void exec(const Cmd *m, int depth) {
         if (a[0] && a[1] && gcp_add(a[0], a[1], a[2])) break;      /* [witchtime] issues 132, 133: from a buffer the GPU has not finished: a GPU copy */
         if (g_ngcp) gcp_overwritten(a[1], a[2]);
         if (cb_sync_needed(a[0], a[2]) || cb_sync_needed(a[1], a[2])) cb_sync();      /* guest memory is read / written: what compute wrote there must be there (as OpenGL's compute_flush) */
-        if (g_cb_nkept) { cb_kept_range(a[0], a[2], 3); if (a[0] && a[1]) cb_kept_discard(a[1], a[2]); cb_kept_range(a[1], a[2], 3); } if (a[0] && a[1]) memmove(P(a[1]), P(a[0]), (size_t)a[2]); R.gen++; break;
+        if (g_cb_nkept) { cb_kept_range(a[0], a[2], 3); if (a[0] && a[1]) cb_kept_discard(a[1], a[2]); cb_kept_range(a[1], a[2], 3); } if (a[0] && a[1]) { memmove(P(a[1]), P(a[0]), (size_t)a[2]); ring_inval_range(a[1], a[2]); } break;
     case OP_UPDATE_UBO: if (drawlog_on()) printf("DLW f%lld update %llx +%llx\n", nvn_front_frame_next(), (unsigned long long)(a[0] + a[2]), (unsigned long long)a[3]);      /* [witchtime] TEST ONLY */
         if (g_ngcp && a[0]) gcp_overwritten(a[0] + a[2], a[3]);
         if (cb_sync_needed(a[0] + a[2], a[3])) cb_sync();
-        if (g_cb_nkept) { if (a[0]) cb_kept_discard(a[0] + a[2], a[3]); cb_kept_range(a[0] + a[2], a[3], 3); } if (a[0]) memcpy((uint8_t *)P(a[0]) + a[2], blob, (size_t)a[3]); R.gen++; break;
+        if (g_cb_nkept) { if (a[0]) cb_kept_discard(a[0] + a[2], a[3]); cb_kept_range(a[0] + a[2], a[3], 3); } if (a[0]) { memcpy((uint8_t *)P(a[0]) + a[2], blob, (size_t)a[3]); ring_inval_range(a[0] + a[2], a[3]); } break;
     case OP_CLEAR_BUF: if (drawlog_on()) printf("DLW f%lld clear %llx +%llx = %08x\n", nvn_front_frame_next(), (unsigned long long)a[0], (unsigned long long)a[1], (unsigned)a[2]);      /* [witchtime] TEST ONLY */
         if (g_ngcp && a[0]) gcp_overwritten(a[0], a[1] & ~(uint64_t)3);      /* the loop below writes whole words */
         if (cb_sync_needed(a[0], a[1])) cb_sync();
-        if (g_cb_nkept) { if (a[0]) cb_kept_discard(a[0], a[1] & ~(uint64_t)3); cb_kept_range(a[0], a[1], 3); } if (a[0]) { uint32_t v = (uint32_t)a[2]; for (uint64_t i = 0; i + 4 <= a[1]; i += 4) memcpy((uint8_t *)P(a[0]) + i, &v, 4); } R.gen++; break;
+        if (g_cb_nkept) { if (a[0]) cb_kept_discard(a[0], a[1] & ~(uint64_t)3); cb_kept_range(a[0], a[1], 3); } if (a[0]) { uint32_t v = (uint32_t)a[2]; for (uint64_t i = 0; i + 4 <= a[1]; i += 4) memcpy((uint8_t *)P(a[0]) + i, &v, 4); ring_inval_range(a[0], a[1]); } break;
     case OP_CLEARCOLOR: {
         unsigned i = (unsigned)a[0] & 7, mask = (unsigned)a[2] & 15;
         if (!R.have_targets || R.render_off || (int)i >= R.ncol || !R.col[i].tex) break;
@@ -4697,28 +5316,41 @@ static void exec(const Cmd *m, int depth) {
     case OP_DRAW_ARRAYS:
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 0, NULL); } shlog_draw(ok, m, 0); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
         quad_draw((unsigned)a[0], (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], (uint32_t)a[3]);
+        fsr_mv_commit(0, NULL, 0, VK_INDEX_TYPE_UINT16, (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], 0, (uint32_t)a[3]);
         ckpt(2, NULL, NULL, NULL);
         primlog_add(0, a[2] * (a[4] ? a[4] : 1));
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         if (rs_store_low()) { int ok = draw_prepare((unsigned)a[0]); if (ok) quad_draw((unsigned)a[0], (uint32_t)a[2], (uint32_t)a[4], (uint32_t)a[1], (uint32_t)a[3]); rs_store_done(ok); }      /* [witchtime] issue 147 */
         break;
     case OP_DRAW_ELEMENTS: {
+        static int vrc_ib = -1;
+        if (vrc_ib < 0) { const char *e = getenv("HL_VK_VRC_IB"); vrc_ib = e ? atoi(e) : 1; }
         unsigned t = (unsigned)a[1] < 3 ? (unsigned)a[1] : 1;
         int count = (int)a[2];
         if (count <= 0 || !a[3]) { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), 0, m, 0, NULL); R.frame_skipped++; nvn_front_count(1, 1); break; }
         if (t == 0 && !D.has_iu8) { nvn_vk_missing("8-bit indices on a GPU without VK_EXT_index_type_uint8"); break; }
         BufRef ib;
-        buf_ref(a[3], (uint64_t)count << t, (uint64_t)1 << t, &ib);    /* before the draw is prepared: a ring wrap submits */
+        VRes *ikept = NULL;
+        uint64_t ib_bytes = (uint64_t)count << t;
+        if (vrc_ib && vrc_use() && !vrc_cb_touch(a[3], ib_bytes)) ikept = vrc_ref(a[3], ib_bytes, &ib);
+        else buf_ref(a[3], ib_bytes, (uint64_t)1 << t, &ib);    /* before the draw is prepared: a ring wrap submits */
+        if (ikept) ikept->busy = R.serial + 2;
         { LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0; { int dtag = nvn_front_draw_tag(); if (dtag) dt_vk(dtag, nvn_front_draw_tag_next(), ok, m, 1, &ib); } shlog_draw(ok, m, 1); if (!ok) { R.frame_skipped++; nvn_front_count(1, 1); break; } }
-        vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+        if (ikept) ikept->busy = R.serial + 1;
+        VkIndexType it = t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
+        if (!dsh_on() || !g_dsh_ib_ok || g_dsh_ib != ib.buf || g_dsh_iboff != ib.off || g_dsh_it != it) {
+            vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, it);
+            g_dsh_ib = ib.buf; g_dsh_iboff = ib.off; g_dsh_it = it; g_dsh_ib_ok = 1; g_dsh_sent++;
+        } else g_dsh_kept++;
         quad_draw_indexed((unsigned)a[0], (uint32_t)count, (uint32_t)a[6], (int32_t)a[4], (uint32_t)a[5]);
+        fsr_mv_commit(1, ib.buf, ib.off, it, (uint32_t)count, (uint32_t)a[6], 0, (int32_t)a[4], (uint32_t)a[5]);
         ckpt(2, NULL, NULL, NULL);
         primlog_add(1, (uint64_t)count * (a[6] ? a[6] : 1));
         R.frame_draws++; g_cmd_draws++; nvn_front_count(0, 1);
         if (rs_store_low()) {                      /* [witchtime] issue 147; the indices again: the draw's preparation may have wrapped the ring */
-            buf_ref(a[3], (uint64_t)count << t, (uint64_t)1 << t, &ib);
+            buf_ref(a[3], ib_bytes, (uint64_t)1 << t, &ib);
             int ok = draw_prepare((unsigned)a[0]);
-            if (ok) { vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32); quad_draw_indexed((unsigned)a[0], (uint32_t)count, (uint32_t)a[6], (int32_t)a[4], (uint32_t)a[5]); }
+            if (ok) { vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, it); g_dsh_ib = ib.buf; g_dsh_iboff = ib.off; g_dsh_it = it; g_dsh_ib_ok = 1; quad_draw_indexed((unsigned)a[0], (uint32_t)count, (uint32_t)a[6], (int32_t)a[4], (uint32_t)a[5]); }
             rs_store_done(ok);
         }
         break;
@@ -4736,8 +5368,11 @@ static void exec(const Cmd *m, int depth) {
         uint64_t span = (uint64_t)(n - 1) * stride + sz, ext = 0;
         int gcount = (a[6] & 2) && param && gpu_written(param, 4);       /* the count compute (or a storing draw) wrote: the GPU reads it */
         int grecs = gpu_written(a[3], span) && (n == 1 || (D.f2.features.multiDrawIndirect && !(stride & 3) && stride >= sz)) && (!elements || index_extent(a[2], &ext));      /* the records compute wrote: the GPU reads them, the whole index buffer bound */
+        if (g_gpucount == 2 && grecs && gcount) grecs = 0;      /* the stand-in changes the records in the ring: records compute wrote with a count compute wrote stay on the CPU (the line after next) */
         if (gpu_written(a[3], span) && !grecs) g_gr_noext++;
         if (gcount && !grecs && (cb_overlap(a[3], span) || (n != 1 && !recs_bounded(a[3], n, stride, sz, elements, a[2], t)))) gcount = 0;      /* compute wrote the records and the CPU reads them (it waits): the count with them; or a record past the count names indices outside the buffer */
+        if (gcount && g_gpucount == 2 && n > GCE_MAX) gcount = 0;
+        if (gcount && g_gpucount == 2 && R.recording && (g_gpu_writes != g_gpu_writes_cmd || !gce_room(cb_inside(param, 4), n))) cmd_submit(NULL, NULL);      /* the stand-in reads the counts before this command buffer: what wrote them goes in one before it (no wait) */
         if ((a[6] & 2) && !gcount) { uint32_t cnt = 0; if (param) memcpy(&cnt, indirect_src(param, 4), 4); if (cnt < n) n = cnt; if (!n) break; span = (uint64_t)(n - 1) * stride + sz; }
         const uint8_t *rec = grecs ? NULL : indirect_src(a[3], span);
         uint64_t lo = ~0ull, hi = 0;
@@ -4750,7 +5385,15 @@ static void exec(const Cmd *m, int depth) {
         if (elements && hi <= lo) break;
         if (!elements && !grecs) { int any = 0; for (unsigned k = 0; k < n && !any; k++) { uint32_t d[4]; memcpy(d, rec + (uint64_t)k * stride, 16); any = d[0] && d[1]; } if (!any && gcount) break; }
         BufRef ib;
-        if (elements) buf_ref(a[2] + (lo << t), (hi - lo) << t, (uint64_t)1 << t, &ib);      /* before the draw is prepared: a ring wrap submits */
+        VRes *ikept = NULL;
+        if (elements) {
+            static int vrc_ib = -1;
+            if (vrc_ib < 0) { const char *e = getenv("HL_VK_VRC_IB"); vrc_ib = e ? atoi(e) : 1; }
+            uint64_t ib_addr = a[2] + (lo << t), ib_bytes = (hi - lo) << t;
+            if (vrc_ib && vrc_use() && !vrc_cb_touch(ib_addr, ib_bytes)) ikept = vrc_ref(ib_addr, ib_bytes, &ib);
+            else buf_ref(ib_addr, ib_bytes, (uint64_t)1 << t, &ib);      /* before the draw is prepared: a ring wrap submits */
+            if (ikept) ikept->busy = R.serial + 2;
+        }
         uint64_t roff = 0;
         if (gcount && !grecs) {                    /* the records as Vulkan reads them, first index relative to the bound range, empty ones zeroed */
             roff = ring_raw(NULL, (uint64_t)n * sz);
@@ -4767,8 +5410,22 @@ static void exec(const Cmd *m, int depth) {
         LONG64 t0 = tk(); int ok = draw_prepare((unsigned)a[0]); g_tm[8] += tk() - t0;
         g_dp_potential = 0;
         if (!ok) { R.frame_skipped += n; nvn_front_count(1, n); break; }
-        if (elements) vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
+        if (ikept) ikept->busy = R.serial + 1;
+        if (elements) {
+            VkIndexType it = t == 0 ? VK_INDEX_TYPE_UINT8_EXT : t == 1 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
+            if (!dsh_on() || !g_dsh_ib_ok || g_dsh_ib != ib.buf || g_dsh_iboff != ib.off || g_dsh_it != it) {
+                vkCmdBindIndexBuffer(R.cmd, ib.buf, ib.off, it);
+                g_dsh_ib = ib.buf; g_dsh_iboff = ib.off; g_dsh_it = it; g_dsh_ib_ok = 1; g_dsh_sent++;
+            } else g_dsh_kept++;
+        }
         CB *pc = gcount && g_cb_live ? cb_inside(param, 4) : NULL, *rc = grecs && g_cb_live ? cb_inside(a[3], span) : NULL;      /* still live: draw_prepare may have landed them (cb_sync); then guest memory has the bytes */
+        if (g_gpucount == 2 && gcount && pc) {     /* a store of this very draw (draw_prepare) comes after its count is read */
+            if (!gce_add(pc, param, roff, n, sz)) { R.frame_skipped += n; nvn_front_count(1, n); break; }      /* cannot happen: there was room before draw_prepare */
+            if (elements) vkCmdDrawIndexedIndirect(R.cmd, R.ring, roff, n, sz); else vkCmdDrawIndirect(R.cmd, R.ring, roff, n, sz);
+            g_gc_calls++; g_gc_draws += n; R.frame_draws += n; g_cmd_draws += n; nvn_front_count(0, n);
+            ckpt(2, NULL, NULL, NULL);
+            break;
+        }
         if ((!gcount || pc) && (!grecs || rc) && (gcount || grecs)) {
             VkBuffer rb = grecs ? rc->buf : R.ring;
             uint64_t ro = grecs ? a[3] - rc->addr : roff, rs = grecs ? stride : sz;
@@ -4808,7 +5465,7 @@ static void exec(const Cmd *m, int depth) {
         if (g_cb_nkept) cb_kept_all(3);
         if (g_ngcp) gcp_settle_upto(g_ngcp - 1, 1);      /* [witchtime] writes guest memory: every GPU copy there first */
         read_region(t, &v, r, P(a[3]), (int64_t)a[5], (int64_t)a[6]);     /* PR #14 (xtlg511): the strides of its own command buffer */
-        R.gen++;                                  /* guest memory changed: ranges are streamed again */
+        ring_inval_all();                         /* guest memory changed: ranges are streamed again */
         break;
     }
     case OP_COPY_TEX_TEX: {
@@ -4889,7 +5546,8 @@ static void vk_submit(void *arg) {
     LONG64 t1 = tk();
     if (g_in_fight) { g_tl_t0 = t0; g_tl_first = g_tl_last = 0; } else g_tl_t0 = 0;
     nvn_front_batch_begin();
-    R.gen++;                                       /* guest memory may have changed since the last batch */
+    g_tex_batch_gen++;
+    ring_inval_all();                              /* guest memory may have changed since the last batch */
     if (g_scan_on) { LONG64 ts = tk(); Scan s; scan_begin(&s); for (int i = 0; i < j->count; i++) scan_list(j->handles[i], 0, &s); g_tm[9] += tk() - ts; }      /* session 4: what this batch will need goes to the workers before it is replayed */
     { void nvn_front_racechk(const uint64_t *handles, int count, int phase); nvn_front_racechk(j->handles, j->count, 1);      /* round 18, TEST (HL_RACECHK) */
       for (int i = 0; i < j->count; i++) replay(j->handles[i], 0);
@@ -5291,14 +5949,16 @@ static DWORD WINAPI hdr_watch(LPVOID arg) { (void)arg; for (;;) { Sleep(1000); h
 static void hdr_query(void) {                      /* [witchtime] Linux, the render thread at every present: SDL's window properties */
     SDL_PropertiesID p = SDL_GetWindowProperties((SDL_Window *)V.hwnd);
     LONG on = SDL_GetBooleanProperty(p, SDL_PROP_WINDOW_HDR_ENABLED_BOOLEAN, false);
-    /* 1.0 = 80 nits (scRGB). With the desktop's HDR off (hdr = on) nothing is said: 203 nits, the white the desktop gives an HDR picture (BT.2408) */
-    LONG white = on ? (LONG)(SDL_GetFloatProperty(p, SDL_PROP_WINDOW_SDR_WHITE_LEVEL_FLOAT, 1.0f) * 80000.0f) : 203000;
+    /* [#180] The desktop shows 203 nits of a PQ or scRGB picture (their reference white, color-management-v1) at its own
+     * brightness of SDR programs, so that is the white, and the monitor's peak in the picture's nits is 203 x the headroom.
+     * SDL's SDR white is the reference of the desktop's preferred description (80 on KDE), not of ours: white at 80 was
+     * 0.39 of the desktop's white. */
+    LONG white = 203000;
     LONG peak = on ? (LONG)((float)white * SDL_GetFloatProperty(p, SDL_PROP_WINDOW_HDR_HEADROOM_FLOAT, 1.0f)) : 0;
-    if (white < 40000 || white > 2000000) white = 203000;
-    LONG was = InterlockedExchange(&g_hdr_on, on), was_w = InterlockedExchange(&g_hdr_white_mn, white);
-    InterlockedExchange(&g_hdr_peak_mn, peak);
-    if (was != on || (on && (was_w - white > 500 || white - was_w > 500))) {
-        if (on) printf("nvn_vk_hdr: the desktop's HDR is on for the window: white %.0f nits, peak %.0f nits\n", (double)white / 1000.0, (double)peak / 1000.0);
+    LONG was = InterlockedExchange(&g_hdr_on, on), was_p = InterlockedExchange(&g_hdr_peak_mn, peak);
+    InterlockedExchange(&g_hdr_white_mn, white);
+    if (was != on || (on && (was_p - peak > 500 || peak - was_p > 500))) {
+        if (on) printf("nvn_vk_hdr: the desktop's HDR is on for the window: the monitor's peak is %.2f times the desktop's white (white 203 nits in the picture, peak %.0f)\n", (double)peak / (double)white, (double)peak / 1000.0);
         else printf("nvn_vk_hdr: the desktop's HDR is off for the window (or the session is not Wayland)\n");
         fflush(stdout);
     }
@@ -5952,13 +6612,18 @@ swap: ;
                    g_cb_keep, (long long)g_cg_reads, (long long)g_cg_writes, (long long)g_cg_render, (long long)g_ck_guard_fail);
             lh = g_ck_hits; lf = g_ck_fills; lfb = g_ck_fill_bytes; memcpy(ll, g_ck_land, sizeof ll); llb = g_ck_land_bytes;
         }
+        { static LONG64 l0, l1; LONG64 n0 = g_sd_n[0], n1 = g_sd_n[1];
+          if (n1 != l1) printf("nvn_vk_sync: frames %lld..%lld per frame: %.2f fence reads answered as finished without the job, %.2f of them with compute buffers live or kept or GPU copies in flight (HL_VK_SYNCJOB=1: those wait for the job, as before)\n",
+                               (long long)frame - 300, (long long)frame, (double)(n0 - l0) / 300.0, (double)(n1 - l1) / 300.0);
+          l0 = n0; l1 = n1; }
+        if (g_rc_on > 0) { static LONG64 r0, r1, r2; printf("nvn_vk_rec: TEST: frames %lld..%lld per frame: %.0f commands through the queue, %.0f waits for it to empty before another call (%.0f of them found it not empty)\n", (long long)frame - 300, (long long)frame, (double)(g_rc_n - r0) / 300.0, (double)(g_rc_flushes - r1) / 300.0, (double)(g_rc_waits - r2) / 300.0); r0 = g_rc_n; r1 = g_rc_flushes; r2 = g_rc_waits; }
         if (g_gpucount > 0) {                      /* [witchtime] issues 132, 133 */
             static LONG64 lc, ld, lf;
-            static LONG64 lz, lr, lx, lom, lop, low, lod;
+            static LONG64 lz, lr, lx, lom, lop, low, lod, los;
             static LONG64 lg, ln;
-            printf("nvn_vk_overlap: frames %lld..%lld per frame: %.1f indirect draws read by the GPU (%.1f commands with a count compute wrote, %.2f with records compute wrote; %.2f such records read on the CPU, no index bound), %.2f fell back to the CPU | %.2f batch starts without a wait for the GPU, %.2f reads of a kept buffer that waited for its writer, %.2f kept buffers dropped as overwritten | GPU copies: %.2f made, %.2f ring patches, %.2f settled with a wait, %.2f overwritten\n", (long long)frame - 300, (long long)frame, (double)(g_gc_draws - ld) / 300.0, (double)(g_gc_calls - lc) / 300.0, (double)(g_gr_calls - lg) / 300.0, (double)(g_gr_noext - ln) / 300.0, (double)(g_gc_fallback - lf) / 300.0,
-                   (double)(g_cb_lazy_n - lz) / 300.0, (double)(g_cb_ready_waits - lr) / 300.0, (double)(g_ck_discarded - lx) / 300.0, (double)(g_gcp_made - lom) / 300.0, (double)(g_gcp_patches - lop) / 300.0, (double)(g_gcp_waits - low) / 300.0, (double)(g_gcp_dropped - lod) / 300.0);
-            lc = g_gc_calls; ld = g_gc_draws; lf = g_gc_fallback; lg = g_gr_calls; ln = g_gr_noext; lz = g_cb_lazy_n; lr = g_cb_ready_waits; lx = g_ck_discarded; lom = g_gcp_made; lop = g_gcp_patches; low = g_gcp_waits; lod = g_gcp_dropped;
+            printf("nvn_vk_overlap: frames %lld..%lld per frame: %.1f indirect draws read by the GPU (%.1f commands with a count compute wrote, %.2f with records compute wrote; %.2f such records read on the CPU, no index bound), %.2f fell back to the CPU | %.2f batch starts without a wait for the GPU, %.2f reads of a kept buffer that waited for its writer, %.2f kept buffers dropped as overwritten | GPU copies: %.2f made, %.2f ring patches, %.2f settled with a wait, %.2f overwritten, %.2f moved to a side slot\n", (long long)frame - 300, (long long)frame, (double)(g_gc_draws - ld) / 300.0, (double)(g_gc_calls - lc) / 300.0, (double)(g_gr_calls - lg) / 300.0, (double)(g_gr_noext - ln) / 300.0, (double)(g_gc_fallback - lf) / 300.0,
+                   (double)(g_cb_lazy_n - lz) / 300.0, (double)(g_cb_ready_waits - lr) / 300.0, (double)(g_ck_discarded - lx) / 300.0, (double)(g_gcp_made - lom) / 300.0, (double)(g_gcp_patches - lop) / 300.0, (double)(g_gcp_waits - low) / 300.0, (double)(g_gcp_dropped - lod) / 300.0, (double)(g_gcp_sides - los) / 300.0);
+            lc = g_gc_calls; ld = g_gc_draws; lf = g_gc_fallback; lg = g_gr_calls; ln = g_gr_noext; lz = g_cb_lazy_n; lr = g_cb_ready_waits; lx = g_ck_discarded; lom = g_gcp_made; lop = g_gcp_patches; low = g_gcp_waits; lod = g_gcp_dropped; los = g_gcp_sides;
         }
         {   /* Round 16: the long report every 3000 frames cost the present job 17.5-18.4 ms (runs p16t_bf_g, p16t_zt_g,
              * and the owner's logged sessions: frame 3001 late each time): it now waits for a frame without fighters.
@@ -6177,6 +6842,7 @@ static void vkd_init(void) {
     { float f1 = 1.0f; uint32_t i1 = 1; memcpy((uint8_t *)R.zero_mem.map + 65536 + 12, &f1, 4); memcpy((uint8_t *)R.zero_mem.map + 65536 + 28, &i1, 4); }
     R.gen = 1; R.point_size = 1.0f; R.line_width = 1.0f; R.drange[1] = 1.0f; R.sample_mask = 0xffffffffu; R.chanmask = 0xffffffffu; R.logic = 3; R.poly[2] = 2; R.poly[1] = 1;
     R.svmask[0] = R.svmask[1] = R.swmask[0] = R.swmask[1] = 0xff; R.ds = 0x10 * 2;
+    R.vi_ver = 1; R.ring_gen = 1; R.tex_mem_gen = 1; R.vrc_gen = 1; R.acache_lo = ~0ull;
     for (int i = 0; i < 8; i++) { R.blend[i][0] = 2; R.blend[i][1] = 1; R.blend[i][2] = 2; R.blend[i][3] = 1; R.blend[i][4] = 1; R.blend[i][5] = 1; }
     if (nvn_front_clip_modes() != (1 | 1 << 8)) nvn_vk_missing("a window origin other than upper left or a depth range other than 0..1 (nvnDeviceSetWindowOriginMode / SetDepthMode)");
     cmd_begin();
@@ -6264,6 +6930,7 @@ static void vkd_shutdown(void) {
     if (g_rs_twoscale) printf("nvn_vk_scale: %lld passes had attachments of both scales (the scene's %.3f, the picture's %.3f): each drawn in the area all of them hold\n", (long long)g_rs_twoscale, (double)rs_render_scale(), (double)rs_scale());
     if (RS_ON && rs_ui_native()) printf("nvn_vk_scale: HL_VK_UI_NATIVE=1: the window's textures are kept at the game's size; passes with such a colour target and a SCALED depth target (drawn without depth): %lld\n", (long long)g_rs_mixed);
     if (RS_ON && g_rs_demoted) printf("nvn_vk_scale: %lld textures kept at the game's size: storage images and the depth levels made from them (g_rs_keep)\n", (long long)g_rs_demoted);      /* [witchtime] */
+    if (RS_ON && g_rs_fine_draws) printf("nvn_vk_scale: %lld texture reads of the mist's draws given the scaled depth instead of the half-size one kept at the game's size (issue 126; HL_VK_MISTDEPTH=0 off)\n", (long long)g_rs_fine_draws);      /* [witchtime] */
     if (RS_ON && g_sf_draws) printf("nvn_vk_scale: %lld draws below 1.0 that store into kept images drawn again at the game's size (issue 147; HL_VK_STOREFULL=0 off)\n", (long long)g_sf_draws);      /* [witchtime] */
     if (RS_ON) printf("nvn_vk_scale: resolution scale %.3f: %lld images made scaled, %lld fragment stages translated in this run for it (%lld of them read the pixel position, %lld fetch texels by integer position), %lld uploads into and %lld read-backs from a scaled image, %lld copies / blits touching one\n",
                       (double)rs_scale(), (long long)g_rs_images, (long long)g_rs_stages, (long long)g_rs_fcs, (long long)g_rs_tf, (long long)g_rs_up, (long long)g_rs_down, (long long)g_rs_blits);
@@ -6274,7 +6941,8 @@ static void vkd_shutdown(void) {
     m4_stop();
     pcache_save();
     if (g_pcache) { vkDestroyPipelineCache(V.device, g_pcache, NULL); g_pcache = NULL; }
-    for (int i = 0; i < NSLOT; i++) slot_wait(&R.slot[i]);
+    cmd_wait_all();                                /* [witchtime] what is recorded and not submitted yet goes out while its images exist: MoltenVK encodes at
+                                                    * the submit and read a destroyed image when the panel's shutdown submitted it later (a stop while loading) */
     R.done = ~0ull; nvn_front_done_moved(); garbage_collect();
     while (g_vtex_all) { VTex *vt = g_vtex_all; if (vt->t) vt->t->vk = NULL; vt_destroy(vt); }
     for (int i = 0; i < 1024; i++) for (Pipe *p = g_pipes[i], *n; p; p = n) { n = p->next; vkDestroyPipeline(V.device, p->p, NULL); if (p->p_fast) vkDestroyPipeline(V.device, p->p_fast, NULL); if (!p->libbed) { vkDestroyPipelineLayout(V.device, p->layout, NULL); vkDestroyDescriptorSetLayout(V.device, p->dl[0], NULL); vkDestroyDescriptorSetLayout(V.device, p->dl[1], NULL); } free(p); }
@@ -6295,10 +6963,12 @@ static void vkd_shutdown(void) {
     for (int i = 0; i < CB_N; i++) if (g_cb[i].stg) { vkDestroyBuffer(V.device, g_cb[i].stg, NULL); g_cb[i].stg = NULL; g_cb[i].stg_cap = 0; }
     for (int i = 0; i < g_lr_nfree; i++) vkDestroyBuffer(V.device, g_lr_free[i].buf, NULL);
     g_lr_nfree = 0;
-    for (int i = 0; i < VRC_N; i++) if (g_vrc[i].state == VR_KEPT) vrc_drop(&g_vrc[i]);
+    for (int i = 0; g_vrc && i < VRC_N; i++) if (g_vrc[i].state == VR_KEPT) vrc_drop(&g_vrc[i]);      /* (no table before the first stream: a stop while loading) */
     vrc_collect();
     if (g_oq_pool) { vkDestroyQueryPool(V.device, g_oq_pool, NULL); g_oq_pool = NULL; }
     g_cb_live = g_cb_pending = g_ncdisp = 0;
+    for (int i = 0; i < g_warm_nvs; i++) { vkDestroyShaderModule(V.device, g_warm_vs[i]->mod, NULL); free(g_warm_vs[i]); }      /* [witchtime] warm_main's vertex stages */
+    g_warm_nvs = 0;
     for (int i = 0; i < 4096; i++) for (VStage *v = g_vstage[i], *n; v; v = n) {
         n = v->next;
         if (v->cp) { vkDestroyPipeline(V.device, v->cp, NULL); vkDestroyPipelineLayout(V.device, v->cl, NULL); vkDestroyDescriptorSetLayout(V.device, v->cdl[0], NULL); vkDestroyDescriptorSetLayout(V.device, v->cdl[1], NULL); }
@@ -6313,6 +6983,8 @@ static void vkd_shutdown(void) {
     if (g_ts_pool) { vkDestroyQueryPool(V.device, g_ts_pool, NULL); g_ts_pool = NULL; g_ts_on = 0; }
     for (int i = 0; i < NSLOT; i++) { for (int k = 0; k < R.slot[i].npool; k++) vkDestroyDescriptorPool(V.device, R.slot[i].pool[k], NULL); vkDestroyFence(V.device, R.slot[i].fence, NULL); }
     vkDestroyBuffer(V.device, R.ring, NULL); vkDestroyBuffer(V.device, R.zero, NULL);
+    if (GE.ok > 0) { for (int i = 0; i < NSLOT; i++) vkDestroyBuffer(V.device, GE.req[i], NULL); vkDestroyPipeline(V.device, GE.pipe, NULL); vkDestroyPipelineLayout(V.device, GE.pl, NULL); vkDestroyDescriptorSetLayout(V.device, GE.dl, NULL); printf("nvn_vk: the stand-in for drawIndirectCount: %lld compute passes for %lld records, %lld draws it could not take\n", (long long)g_gce_flushes, (long long)g_gce_reqs, (long long)g_gce_splits); memset(&GE, 0, sizeof GE); }
+    if (g_gcp_sbuf) { vkDestroyBuffer(V.device, g_gcp_sbuf, NULL); g_gcp_sbuf = NULL; }
     for (int b = 0; b < g_nblk; b++) if (g_blk[b]) { vkFreeMemory(V.device, g_blk[b]->mem, NULL); free(g_blk[b]); g_blk[b] = NULL; }
     R.ring = NULL;
     printf("nvn_vk: tessellated draws: %lld, with %lld pipelines\n", (long long)g_tess_draws, (long long)g_tess_pipes);

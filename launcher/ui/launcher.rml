@@ -28,7 +28,7 @@
 	</div>
 	<div class="foot">
 		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
+		<div class="hint" key="ok"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
 	</div>
 </div>
 
@@ -71,8 +71,8 @@
 		<div class="fl">About 15 minutes on 16 threads  ·  About 9 GB of free space  ·  Close the window any time; it resumes</div>
 	</div>
 	<div class="foot">
-		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
+		<div class="hint" key="back"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
+		<div class="hint" key="ok"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
 	</div>
 </div>
 
@@ -125,8 +125,8 @@
 		</div>
 	</div>
 	<div class="foot">
-		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
+		<div class="hint" key="back"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
+		<div class="hint" key="ok"><img class="gl" data-attr-src="glyph_ok"/><span>OK</span></div>
 	</div>
 </div>
 
@@ -161,8 +161,8 @@
 		<div class="line l2">{{ mods_summary }}</div>
 	</div>
 	<div class="foot">
-		<div class="hint"><img class="gl" data-attr-src="glyph_ok"/><span>Turn on or off</span></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
+		<div class="hint" key="ok"><img class="gl" data-attr-src="glyph_ok"/><span>Turn on or off</span></div>
+		<div class="hint" key="back"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 
@@ -203,9 +203,9 @@
 		<div class="line l2">The game's PC Settings panel (F1, or Start + Select) has these settings too, and more.</div>
 	</div>
 	<div class="foot">
-		<div class="hint"><img class="gl" data-attr-src="glyph_tab_l"/><img class="gl" data-attr-src="glyph_tab_r"/><span>Section</span></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_change"/><span>Change</span></div>
-		<div class="hint"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
+		<div class="hint" key="e"><img class="gl" key="q" data-attr-src="glyph_tab_l"/><img class="gl" data-attr-src="glyph_tab_r"/><span>Section</span></div>
+		<div class="hint" key="change"><img class="gl" data-attr-src="glyph_change"/><span>Change</span></div>
+		<div class="hint" key="back"><img class="gl" data-attr-src="glyph_back"/><span>Back</span></div>
 	</div>
 </div>
 

@@ -74,6 +74,16 @@ typedef struct {
     /* [issue 26] graphics stages: jumps back allowed before the stage is ended (0 = MX_LOOP_MAX of mx_translate.c); a fragment
      * stage ended that way writes magenta, so a picture shows the pixels whose loop ran away. */
     unsigned loopdebug;
+    /* Motion vectors (vertex stage, target 1): constant buffers (bit n = buffer n, 3 and up) that also get a block "uint mxpN[]"
+     * at set 0, binding prev_base + n, for last frame's contents. The code then runs twice: once reading those blocks, its
+     * gl_Position kept in the output "vec4 mx_prev" (location MxOut.prev_loc), then as always. 0 = the text exactly as before. */
+    uint32_t prev_cbufs;
+    unsigned prev_base;
+    /* [witchtime] target 1, a stage other than fragment and compute, on a GPU without subgroup operations in that stage
+     * (Metal has them in fragment, compute and tessellation control stages only: MoltenVK refuses a tessellation
+     * evaluation stage with a shuffle, and its draws were left out). The stage is then a warp of one lane, lane 0: a
+     * shuffle gives the lane's own value, a vote its own predicate. 0 = the text exactly as before. */
+    int lone_lane;
 } MxIn;
 
 typedef struct {
@@ -92,7 +102,14 @@ typedef struct {
     /* target 1: the samplers the text declares in set 1 (the back end binds a view of that type, or a dummy of that type) */
     struct { uint8_t unit, shadow; uint16_t binding; char type[24]; } smp[64];
     int nsmp;
+    uint32_t prev_cbufs;             /* the buffers of MxIn.prev_cbufs the code reads; 0: no previous position (none read, the code stores, or no free location) */
+    int prev_loc;                    /* location of mx_prev when prev_cbufs is not 0 */
+    int early_tests;                 /* fragment: 0 none; 1 early fragment tests asked for (HL_VK_EARLYZ); 2 asked for, and the code writes
+                                     * frag0 / has the alpha test's discard: right only while neither alpha test nor alpha-to-coverage can discard */
 } MxOut;
+/* MxIn.force_out of a FRAGMENT stage (not used there otherwise): the variant for draws whose alpha test or alpha-to-coverage
+ * can discard, translated without early fragment tests (nvn_vk_draw.c draw_prepare) */
+#define MX_FO_NO_EARLY 0x80000000u
 
 /* Returns 1 on success. out->glsl must be freed by the caller. */
 int mx_translate(const MxIn *in, MxOut *out);

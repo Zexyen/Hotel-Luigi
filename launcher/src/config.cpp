@@ -15,6 +15,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 namespace {
 
@@ -101,13 +104,23 @@ Paths Paths::find(const char* argv0)
 	DWORD n = GetModuleFileNameW(nullptr, buf.data(), DWORD(buf.size()));
 	p.self = n > 0 ? narrow(buf.substr(0, n)) : std::string(argv0);
 	std::replace(p.self.begin(), p.self.end(), '\\', '/');    // '/' throughout, which Windows takes too
+#elif defined(__APPLE__)
+	char raw[PATH_MAX], buf[PATH_MAX];
+	uint32_t cap = sizeof raw;
+	p.self = !_NSGetExecutablePath(raw, &cap) && realpath(raw, buf) ? std::string(buf) : std::string(argv0);
 #else
 	char buf[PATH_MAX];
 	ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
 	p.self = n > 0 ? std::string(buf, size_t(n)) : std::string(argv0);
 #endif
 	const char* env = std::getenv("LAUNCHER_REPO");
-	p.repo = env && env[0] ? env : dirname(dirname(p.self));
+	std::string place = p.self;
+#ifdef __APPLE__
+	// in build/<name>.app/Contents/MacOS: the bundle stands where the program does
+	if (size_t at = place.rfind(".app/Contents/MacOS/"); at != std::string::npos)
+		place = place.substr(0, at + 4);
+#endif
+	p.repo = env && env[0] ? env : dirname(dirname(place));
 	p.build = p.repo + "/build";
 	p.ui = p.repo + "/launcher/ui";
 	p.config = p.repo + "/config";
@@ -164,6 +177,8 @@ bool ini_set(const std::string& file, const std::string& section, const std::str
 		lines.insert(lines.begin() + insert_at, key + " = " + value);
 	}
 	std::string tmp = file + ".tmp";
+	std::error_code ec;
+	std::filesystem::create_directories(std::filesystem::path(file).parent_path(), ec);   // issue 199: a release ships no settings files, and config/ may be gone
 	{
 		std::ofstream f(tmp, std::ios::binary);
 		for (const std::string& l : lines)
@@ -171,8 +186,7 @@ bool ini_set(const std::string& file, const std::string& section, const std::str
 		if (!f)
 			return false;
 	}
-	std::error_code ec;   // std::rename will not replace an existing file on Windows
-	std::filesystem::rename(tmp, file, ec);
+	std::filesystem::rename(tmp, file, ec);   // std::rename will not replace an existing file on Windows
 	return !ec;
 }
 

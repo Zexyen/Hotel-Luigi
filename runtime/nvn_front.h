@@ -135,6 +135,7 @@ int nvn_front_tex_levels(const Tex *t);                                     /* l
  * caller uploads now (the texture's hash and stamps are then updated). gen: the back end's count of its own writes into
  * guest memory (finding 145: the texture's 4 MB regions are asked about again once it changes). */
 int nvn_front_tex_changed(Tex *t, uint32_t gen);
+int nvn_front_tex_cluster_hit(uint64_t addr, uint64_t size);
 /* Calls put() once per (level, layer) with tightly packed texels de-swizzled from the texture's memory; decode != 0 turns
  * every level into RGBA8 with tex_decode_rgba8 (rgba8 = 1 in the call); decode == 2 into BC3 blocks after that (tex_encode_bc3,
  * rgba8 = 0); decode == 3 into BC7 blocks from the pack (tex_pack.c), by tex_encode_bc7 where the pack lacks those bytes. Returns 0 when the memory is not readable. */
@@ -146,6 +147,7 @@ void nvn_front_tex_prep_drop(Tex *t);
 void nvn_front_tex_prep_report(void);
 /* Texture pool / sampler pool lookup of an NVN texture handle: returns bit 0 = live texture (*t, *v), bit 1 = sampler (*p). */
 int nvn_front_handle(TexPool *tp, SamplerPool *sp, uint64_t nh, Tex **t, View *v, SamplerParams *p);
+LONG64 nvn_front_pool_gen(void);
 /* Present bookkeeping shared by the back ends: counts the frame, prints the frame-rate line, feeds the scripted input,
  * collects old command lists. Returns the number of the frame just presented. */
 long long nvn_front_frame_end(long long draws, long long skipped, long long clears);
