@@ -60,6 +60,24 @@ pub fn patches(im: &mut Image) -> Result<(), String> {
     if !im.game {
         return Ok(());
     }
+    const PATCHES: &[(i64, u32, u32, &str)] = &[
+        // dynamic resolution scaling: skip the per-frame scale update in f_710045d420 so the scale float at
+        // 0x71017cec88 stays at its initial 1.0 (b.hi 0x710045df58 -> b 0x710045df58)
+        (0x710045daac, 0x54002568, 0x1400012b, "dynamic resolution branch"),
+    ];
+    for &(addr, want, repl, desc) in PATCHES {
+        let got = (addr >= im.base && addr + 4 <= im.text_end()).then(|| im.raw_word(addr));
+        if got != Some(want) {
+            return Err(format!(
+                "main: patch {} at {:#x}: expected {:08x}, got {}",
+                desc,
+                addr,
+                want,
+                got.map_or_else(|| "out of range".to_string(), |w| format!("{:08x}", w))
+            ));
+        }
+        im.patches.insert(addr, repl);
+    }
     im.fps_counters = counters();
     Ok(())
 }
@@ -72,4 +90,51 @@ pub fn counters() -> std::collections::HashSet<i64> {
         .filter(|w| !w.starts_with('#'))
         .map(|w| i64::from_str_radix(w, 16).expect("fps_counters.txt: a hex store address"))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::{HashMap, HashSet};
+
+    fn fake_image(game: bool, word_at_drs: u32) -> Image {
+        let base = 0x7100000000i64;
+        let off = (0x710045daac - base) as usize;
+        let mut img = vec![0u8; 0x1000 + off + 4];
+        img[0x1000 + off..0x1000 + off + 4].copy_from_slice(&word_at_drs.to_le_bytes());
+        Image {
+            img,
+            base,
+            file_off: 0x1000,
+            text_size: (off + 4) as i64,
+            rela: 0,
+            relasz: 0,
+            jmprel: 0,
+            pltrelsz: 0,
+            symtab: 0,
+            strtab: 0,
+            patches: HashMap::new(),
+            fps_counters: HashSet::new(),
+            game,
+        }
+    }
+
+    #[test]
+    fn drs_patch_applies_and_lifts_to_unconditional_branch() {
+        let (orig, _) = crate::lifter::lift_word(0x54002568, 0x710045daac, 0x710045d420, 0x7100460000);
+        assert_eq!(orig, "if (cond(c, 8)) goto L_710045df58;");
+        let (patched, _) = crate::lifter::lift_word(0x1400012b, 0x710045daac, 0x710045d420, 0x7100460000);
+        assert_eq!(patched, "goto L_710045df58;");
+
+        let mut im = fake_image(true, 0x54002568);
+        patches(&mut im).unwrap();
+        assert_eq!(im.patches.get(&0x710045daac), Some(&0x1400012b));
+
+        let mut bad = fake_image(true, 0xd503201f);
+        assert!(patches(&mut bad).is_err());
+
+        let mut other = fake_image(false, 0xd503201f);
+        patches(&mut other).unwrap();
+        assert!(other.patches.is_empty());
+    }
 }
