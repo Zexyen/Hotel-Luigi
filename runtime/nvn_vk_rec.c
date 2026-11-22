@@ -1,4 +1,4 @@
-/* [witchtime] issue 257 (WT_VK_REC=1; off by default: a test until it has run on other drivers): a second thread records
+/* [witchtime] issue 257 (HL_VK_REC=1; off by default: a test until it has run on other drivers): a second thread records
  * the per-draw Vulkan commands. A quarter of the render thread's time in a ride is the driver's, most of it in the draw
  * calls and the binds before them. With this on, those calls (the "hot" ones below) are written into a queue and a
  * recording thread makes them, in order, while the render thread prepares the next draw. Every other command-buffer call
@@ -85,9 +85,9 @@ static DWORD WINAPI rc_thread(LPVOID arg) {
 }
 static int rc_on(void) {
     if (g_rc_on < 0) {
-        const char *e = getenv("WT_VK_REC");
+        const char *e = getenv("HL_VK_REC");
         int on = e && atoi(e);
-        if (on) { g_rc_buf = malloc(RC_BYTES); g_rc_wake = CreateEventA(NULL, FALSE, FALSE, NULL); CloseHandle(CreateThread(NULL, 0, rc_thread, NULL, 0, NULL)); printf("nvn_vk_rec: WT_VK_REC=1 (test): the per-draw Vulkan commands are recorded by a second thread\n"); }
+        if (on) { g_rc_buf = malloc(RC_BYTES); g_rc_wake = CreateEventA(NULL, FALSE, FALSE, NULL); CloseHandle(CreateThread(NULL, 0, rc_thread, NULL, 0, NULL)); printf("nvn_vk_rec: HL_VK_REC=1 (test): the per-draw Vulkan commands are recorded by a second thread\n"); }
         g_rc_on = on;
     }
     return g_rc_on;

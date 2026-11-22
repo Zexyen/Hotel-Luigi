@@ -4,7 +4,7 @@
  * discard comes after the loop; a stage without a dispatcher discards at the KIL. Hand-made stages:
  * NOP, @P0 BRA back to the NOP, EXIT; a fragment stage with @P1 KIL in that loop; and one with @P1 KIL, NOP, EXIT.
  * [issue 257] A fragment stage with a step back and no shuffle runs its blocks in order, each looped stretch in a for (;;);
- * vertex and compute stages keep the dispatcher. "old" as the first argument sets WT_MX_LOOPS=0 and checks the dispatcher
+ * vertex and compute stages keep the dispatcher. "old" as the first argument sets HL_MX_LOOPS=0 and checks the dispatcher
  * text those fragment stages had before.
  *   clang -O2 -Wall -I runtime tests/mx_loop_guard_test.c runtime/mx_translate.c -o build/mx_loop_guard_test
  *   build/mx_loop_guard_test && build/mx_loop_guard_test old */
@@ -24,7 +24,7 @@ static char *translate(int stage, const uint8_t *code, int len, unsigned loopdeb
 
 int main(int argc, char **argv) {
     int old = argc > 1 && !strcmp(argv[1], "old");
-    if (old) putenv("WT_MX_LOOPS=0");
+    if (old) putenv("HL_MX_LOOPS=0");
     uint8_t code[0x50 + 32];                       /* a zeroed program header, then one group of three instructions */
     uint64_t w[4] = {0,
         0x50b0000000000f00ull | 7ull << 16,                            /* NOP */
