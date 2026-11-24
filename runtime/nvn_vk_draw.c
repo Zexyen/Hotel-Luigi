@@ -1485,24 +1485,25 @@ static void tex_ahead(LONG64 frame) {
     if (!on) return;
     Tex *head = nvn_front_tex_first();
     if (head == done_head) return;
-    int fr = fight_recent();
-    LONG64 t0 = tk(), budget = fq * (fr ? 1 : 4) / 1000;
+    int loading = !g_in_fight && R.frame_draws <= 60;
+    int fr = !loading && fight_recent();
+    LONG64 t0 = tk(), budget = fq * (loading ? 12 : fr ? 1 : 4) / 1000;
     int pending = 0, taken = 0;
     g_ta_inside = 1;
     for (Tex *t = head; t && t != done_head; t = t->all_next) {
         Fmt f;
         if (t->ahead_seen < 0) continue;
         if (t->vk || t->dead) { t->ahead_seen = -1; nvn_front_tex_prep_drop(t); continue; }
-        if (!t->ahead_seen) { t->ahead_seen = frame + 1; pending++; continue; }
-        if (frame + 1 - t->ahead_seen < 2) { pending++; continue; }
-        if (t->gpu_written || (!t->mem && !t->b.packaged) || t->b.samples > 1 || t->b.width <= 0 || t->b.height <= 0 || !nvn_front_fmt(t->b.format, &f) || f.kind != 4) { t->ahead_seen = -1; continue; }
+        if (t->gpu_written || (!t->mem && !t->b.packaged) || t->b.samples > 1 || t->b.width <= 0 || t->b.height <= 0 || !nvn_front_fmt(t->b.format, &f) || f.kind != 4) { t->ahead_seen = -1; nvn_front_tex_prep_drop(t); continue; }
         VTex probe;
         VkFormat vf = tex_vkfmt(t->b.format, &probe.expand, &probe.decode);
         size_t prep = 0;
-        if (probe.decode && (vf == VK_FORMAT_BC3_UNORM_BLOCK || vf == VK_FORMAT_BC3_SRGB_BLOCK)) {      /* #45: decoded on threads of its own; made here when that is done */
+        if (probe.decode && (vf == VK_FORMAT_BC3_UNORM_BLOCK || vf == VK_FORMAT_BC3_SRGB_BLOCK)) {      /* #45: kick off background ASTC decode immediately on first sighting */
             int r = nvn_front_tex_prep(t, &prep);
-            if (!r) { pending++; continue; }
+            if (!r) { if (!t->ahead_seen) t->ahead_seen = frame + 1; pending++; continue; }
         }
+        if (!t->ahead_seen) { t->ahead_seen = frame + 1; pending++; continue; }
+        if (frame + 1 - t->ahead_seen < (loading ? 1 : 2)) { pending++; continue; }
         if (taken && tk() - t0 > budget) { pending++; continue; }
         if (fr) {
             /* in and around a fight (a frame of the last 600 had fighters) only what is certainly cheap: at most 512 KB, no
