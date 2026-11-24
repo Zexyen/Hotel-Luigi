@@ -691,6 +691,7 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
 
 static void hid_InitializeNpad(Ctx *c) { (void)c; hid_setup(); }
 static void hid_SetSupportedNpadStyleSet(Ctx *c) { g_supported_styles = (uint32_t)A0; }             /* (NpadStyleSet by value) */
+static void hid_GetSupportedNpadStyleSet(Ctx *c) { RET(g_supported_styles); }                       /* [sdk 0x246d20] -> u32 in w0 */
 static void hid_SetSupportedNpadIdType(Ctx *c) {            /* (const NpadIdType *ids, size_t count) */
     int n = A1 > 16 ? 16 : (int)A1;
     for (int i = 0; i < n; i++) g_supported_ids[i] = rd32(A0 + (uint64_t)i * 4);
@@ -799,9 +800,13 @@ static void att_step(float d[9], const float gyro[3], const float accel[3], floa
         }
     }
     float *x = d, *y = d + 3, *z = d + 6;                    /* rows orthonormal again: rounding adds up over hours */
-    n = sqrtf(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]); for (int i = 0; i < 3; i++) x[i] /= n;
+    n = sqrtf(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+    if (!(n > 1e-6f)) { memset(d, 0, 36); d[0] = d[4] = d[8] = 1.0f; return; }
+    for (int i = 0; i < 3; i++) x[i] /= n;
     z[0] = x[1] * y[2] - x[2] * y[1]; z[1] = x[2] * y[0] - x[0] * y[2]; z[2] = x[0] * y[1] - x[1] * y[0];
-    n = sqrtf(z[0] * z[0] + z[1] * z[1] + z[2] * z[2]); for (int i = 0; i < 3; i++) z[i] /= n;
+    n = sqrtf(z[0] * z[0] + z[1] * z[1] + z[2] * z[2]);
+    if (!(n > 1e-6f)) { memset(d, 0, 36); d[0] = d[4] = d[8] = 1.0f; return; }
+    for (int i = 0; i < 3; i++) z[i] /= n;
     y[0] = z[1] * x[2] - z[2] * x[1]; y[1] = z[2] * x[0] - z[0] * x[2]; y[2] = z[0] * x[1] - z[1] * x[0];
 }
 static struct { float d[9], angle[3]; LONGLONG t; } g_att[8];
@@ -816,7 +821,7 @@ static void hid_GetSixAxisSensorState(Ctx *c) {             /* (SixAxisSensorSta
         if (!g_six[id].connected) { g_six[id].connected = 1; g_six[id].since = now; g_six[id].base = g_six[id].last; }
         g_six[id].last = g_six[id].base + 1 + (int64_t)((now - g_six[id].since) / 5);
         g_six[id].ever = 1;
-    } else g_six[id].connected = 0;
+    } else { g_six[id].connected = 0; memset(&g_att[id], 0, sizeof g_att[id]); }
     if (!g_six[id].ever) return;                             /* empty ring: nothing is copied */
     memset((void *)(uintptr_t)o, 0, 0x60);
     wr64(o, 5000000);                                        /* delta time, ns */
@@ -837,6 +842,7 @@ static void hid_GetSixAxisSensorState(Ctx *c) {             /* (SixAxisSensorSta
             wr32(o + 0x58, 1);                               /* attribute: connected */
             return;
         }
+        memset(&g_att[id], 0, sizeof g_att[id]);             /* disconnected or no live IMU: start fresh on next attach */
     }
     f = -1.0f; memcpy((void *)(uintptr_t)(o + 0x18), &f, 4);                       /* acceleration z at rest */
     f = 1.0f;
@@ -1221,6 +1227,16 @@ int nnhid_pad_selftest(void) {
     for (int i = 0; i < 2000; i++) att_step(d, still, side, 0.01f);        /* gravity along the pad's -x: its x axis ends up pointing up */
     ok = ok && fabsf(d[2] - 1.0f) < 0.01f;
     printf("  hid: six-axis attitude: the gyro turns the direction matrix, the accelerometer rights it: %s\n", ok ? "ok" : "FAILED");
+    {   /* GetSupportedNpadStyleSet round-trip (ScreamPark 2-4P ShowControllerSupport cancel restores what it saved) */
+        Ctx tc; uint32_t save = g_supported_styles;
+        memset(&tc, 0, sizeof tc);
+        tc.x[0] = 0x1b; hid_SetSupportedNpadStyleSet(&tc);
+        tc.x[0] = 0; hid_GetSupportedNpadStyleSet(&tc);
+        int style_ok = tc.x[0] == 0x1b;
+        g_supported_styles = save;
+        printf("  hid: GetSupportedNpadStyleSet returns last SetSupportedNpadStyleSet value: %s\n", style_ok ? "ok" : "FAILED");
+        ok = ok && style_ok;
+    }
     return !ok + nnpad_selftest(&h);
 }
 
@@ -1239,7 +1255,9 @@ static void hid_ShowControllerSupport(Ctx *c) {
 #define H(n) "_ZN2nn3hid" n
 static const ImportDef hid_imports[] = {
     {H("18InitializeKeyboardEv"), hid_InitializeKeyboard}, {H("16GetKeyboardStateEPNS0_13KeyboardStateE"), hid_GetKeyboardState},  /* [Recomps#1] */
-    {H("14InitializeNpadEv"), hid_InitializeNpad}, {H("24SetSupportedNpadStyleSetENS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE"), hid_SetSupportedNpadStyleSet},
+    {H("14InitializeNpadEv"), hid_InitializeNpad},
+    {H("24SetSupportedNpadStyleSetENS_4util10BitFlagSetILi32ENS0_12NpadStyleTagEEE"), hid_SetSupportedNpadStyleSet},
+    {H("24GetSupportedNpadStyleSetEv"), hid_GetSupportedNpadStyleSet},
     {H("22SetSupportedNpadIdTypeEPKjm"), hid_SetSupportedNpadIdType}, {H("18SetNpadJoyHoldTypeENS0_15NpadJoyHoldTypeE"), hid_joycon_only},
     {H("15GetNpadStyleSetERKj"), hid_GetNpadStyleSet},
     {H("12GetNpadStateEPNS0_16NpadFullKeyStateERKj"), hid_GetNpadState_FullKey},

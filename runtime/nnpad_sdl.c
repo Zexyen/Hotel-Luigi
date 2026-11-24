@@ -45,6 +45,8 @@ typedef struct {
     int used, ignored;
     SDL_JoystickID id; SDL_Gamepad *gp; SDL_Joystick *js;
     int slot, wireless, dropped, nbtn, naxes, nhats, gtype, has_accel, has_gyro, virt;
+    int motion_live, sensor_retries;
+    ULONGLONG added_ms, sensor_retry_ms;
     char guid[40], name[80];
     Uint16 rl, rh; ULONGLONG rsent;
     int armed;                          /* [witchtime] stick axes (bit i = LX LY RX RY) of an unmapped joystick seen near the centre */
@@ -467,12 +469,30 @@ static const char *type_name(int t) {
     static const char *const n[] = {"unknown", "standard", "Xbox 360", "Xbox One", "PS3", "PS4", "PS5", "Switch Pro", "Joy-Con left", "Joy-Con right", "Joy-Con pair", "GameCube"};
     return t >= 0 && t < (int)(sizeof n / sizeof n[0]) ? n[t] : "other";
 }
+static void enable_sensors(Dev *d, int cycle) {
+    if (!d->gp) return;
+    d->has_accel = SDL_GamepadHasSensor(d->gp, SDL_SENSOR_ACCEL);
+    d->has_gyro = SDL_GamepadHasSensor(d->gp, SDL_SENSOR_GYRO);
+    if (cycle) {
+        if (d->has_accel) SDL_SetGamepadSensorEnabled(d->gp, SDL_SENSOR_ACCEL, false);
+        if (d->has_gyro) SDL_SetGamepadSensorEnabled(d->gp, SDL_SENSOR_GYRO, false);
+    }
+    if (d->has_accel && !SDL_SetGamepadSensorEnabled(d->gp, SDL_SENSOR_ACCEL, true))
+        say("nn::pad: \"%s\": enabling accel failed: %s\n", d->name, SDL_GetError());
+    if (d->has_gyro && !SDL_SetGamepadSensorEnabled(d->gp, SDL_SENSOR_GYRO, true))
+        say("nn::pad: \"%s\": enabling gyro failed: %s\n", d->name, SDL_GetError());
+}
+static int is_switch_pad(int gtype) {
+    return gtype == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO || gtype == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT ||
+           gtype == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT || gtype == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR;
+}
 static void dev_add(SDL_JoystickID id) {
     Dev *d = NULL;
     for (int i = 0; i < MAXDEV && !d; i++) if (!g_dev[i].used) d = &g_dev[i];
     if (!d) return;
     memset(d, 0, sizeof *d);
     d->used = 1; d->id = id; d->slot = -1;
+    d->added_ms = GetTickCount64();
     d->virt = SDL_IsJoystickVirtual(id);
     SDL_GUIDToString(SDL_GetJoystickGUIDForID(id), d->guid, sizeof d->guid);
     snprintf(d->name, sizeof d->name, "%s", SDL_GetJoystickNameForID(id) ? SDL_GetJoystickNameForID(id) : "?");
@@ -485,9 +505,7 @@ static void dev_add(SDL_JoystickID id) {
     if (!d->gp && (!strncmp(d->name, "0x", 2) || d->naxes < 2 || d->nbtn < 4)) {       /* "0xVID/0xPID" is SDL's name for a HID device without a product string: not a pad */ d->ignored = 1; say("nn::pad: ignored \"%s\" %s: no mapping and only %d axes / %d buttons\n", d->name, d->guid, d->naxes, d->nbtn); SDL_CloseJoystick(d->js); d->js = NULL; return; }
     if (d->gp) {
         d->gtype = SDL_GetGamepadType(d->gp);
-        d->has_accel = SDL_GamepadHasSensor(d->gp, SDL_SENSOR_ACCEL); d->has_gyro = SDL_GamepadHasSensor(d->gp, SDL_SENSOR_GYRO);
-        if (d->has_accel) SDL_SetGamepadSensorEnabled(d->gp, SDL_SENSOR_ACCEL, true);
-        if (d->has_gyro) SDL_SetGamepadSensorEnabled(d->gp, SDL_SENSOR_GYRO, true);
+        enable_sensors(d, 0);
     }
     d->wireless = SDL_GetJoystickConnectionState(d->js) == SDL_JOYSTICK_CONNECTION_WIRELESS;
     d->slot = assign_slot(d);
@@ -498,7 +516,7 @@ static void dev_add(SDL_JoystickID id) {
 }
 static void dev_remove(Dev *d) {
     if (d->used && !d->ignored) {
-        if (d->gp) { SDL_RumbleGamepad(d->gp, 0, 0, 0); SDL_CloseGamepad(d->gp); } else if (d->js) SDL_CloseJoystick(d->js);
+        if (d->gp) { SDL_RumbleGamepad(d->gp, 0, 0, 0); SDL_CloseGamepad(d->gp); } else if (d->js) { SDL_RumbleJoystick(d->js, 0, 0, 0); SDL_CloseJoystick(d->js); }
         say("nn::pad: disconnected \"%s\" (player %d)\n", d->name, d->slot + 1);
     }
     memset(d, 0, sizeof *d);
@@ -532,6 +550,25 @@ static void poll_devices(void) {                  /* lock held */
         g_dev[i].slot = assign_slot(&g_dev[i]);
         if (g_dev[i].slot >= 0) { remember(g_dev[i].guid, g_dev[i].slot); apply_player_index(&g_dev[i]); say("nn::pad: \"%s\" -> player %d\n", g_dev[i].name, g_dev[i].slot + 1); }
     }
+    /* Switch Pro / Joy-Con hot-plug: if the initial EnableIMU subcommand dropped during Bluetooth/USB handshake, SDL
+     * considers the sensor enabled while GetGamepadSensorData keeps returning {0,0,0}. Toggling false->true forces
+     * SDL's Switch driver to resend UpdateInputMode + SetIMUEnabled. */
+    ULONGLONG now = GetTickCount64();
+    for (int i = 0; i < MAXDEV; i++) {
+        Dev *d = &g_dev[i];
+        if (!d->used || d->ignored || !d->gp || d->virt || d->motion_live || d->sensor_retries >= 8) continue;
+        if (!d->has_accel && !d->has_gyro && !is_switch_pad(d->gtype)) continue;
+        if (now - d->added_ms < 500 || (d->sensor_retry_ms && now - d->sensor_retry_ms < 500)) continue;
+        float a[3] = {0, 0, 0};
+        if (d->has_accel && SDL_GetGamepadSensorData(d->gp, SDL_SENSOR_ACCEL, a, 3) && a[0] * a[0] + a[1] * a[1] + a[2] * a[2] > 0.01f) {
+            d->motion_live = 1;
+            continue;
+        }
+        d->sensor_retries++;
+        d->sensor_retry_ms = now;
+        say("nn::pad: \"%s\": no IMU data yet, re-enabling sensors (attempt %d)\n", d->name, d->sensor_retries);
+        enable_sensors(d, 1);
+    }
 }
 static void check_config(int force) {             /* lock held */
     ULONGLONG now = GetTickCount64();
@@ -562,6 +599,15 @@ int nnpad_init(void) {
     say("nn::pad: SDL %d.%d.%d ready (no video); %s\n", SDL_GetVersion() / 1000000, SDL_GetVersion() / 1000 % 1000, SDL_GetVersion() % 1000, g_cfg.path);
     unlock();
     return 1;
+}
+void nnpad_shutdown(void) {
+    if (!g_cs_ready) return;
+    lock();
+    if (g_sdl_ok) {
+        g_sdl_ok = 0;
+        for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used) dev_remove(&g_dev[i]);
+    }
+    unlock();
 }
 void nnpad_poll(int force) {
     LARGE_INTEGER t;
@@ -634,16 +680,23 @@ static int stick_src(const Dev *d, int i, Src *s) {
     if (!d->gp && i >= 2 && d->naxes >= 6) *s = mk(SK_AXF, i == 2 ? 2 : 3, 1);
     return d->gp || d->naxes > i;
 }
-static void sensors(const Dev *d, NnPadState *o) {
-    float a[3], g[3];
+static void sensors(Dev *d, NnPadState *o) {
+    float a[3] = {0, 0, 0}, g[3] = {0, 0, 0};
     o->accel[2] = -1.0f;
     if (!d->gp || !d->has_accel || !d->has_gyro) return;
     if (!SDL_GetGamepadSensorData(d->gp, SDL_SENSOR_ACCEL, a, 3) || !SDL_GetGamepadSensorData(d->gp, SDL_SENSOR_GYRO, g, 3)) return;
-    /* SDL: x right, y up, z towards the viewer, gravity reads +z when the pad lies face up. The record at rest of nnhid.c is (0, 0, -1)
-     * for a pad lying face up, so the Nintendo frame is taken as SDL's turned 180 degrees about y: (x, y, z) -> (-x, y, -z). */
+    float a2 = a[0] * a[0] + a[1] * a[1] + a[2] * a[2];
+    float g2 = g[0] * g[0] + g[1] * g[1] + g[2] * g[2];
+    if (a2 > 0.01f) d->motion_live = 1;
+    if (a2 == 0.0f && g2 == 0.0f) return;                    /* no IMU sample received yet */
+    /* SDL3 gamepad frame (SDL_sensor.h, SDL_hidapi_switch.c): +x right, +y up out of face buttons (gravity reads +y at rest),
+     * +z back toward the player; gyro is right-handed rad/s (pitch +x, yaw +y, roll +z).
+     * Nintendo SixAxisSensorState (sdk 0x249510 GetQuaternion, LM3 0xb628f0): +x right, +y forward toward triggers,
+     * +z up out of face buttons; accel is gravity in G ((0, 0, -1) at rest), gyro is right-handed revolutions/s.
+     * Frame map SDL -> Switch: (x, y, z) -> (x, -z, y); accel also negates proper acceleration into gravity. */
     o->has_motion = 1;
-    o->accel[0] = -a[0] / SDL_STANDARD_GRAVITY; o->accel[1] = a[1] / SDL_STANDARD_GRAVITY; o->accel[2] = -a[2] / SDL_STANDARD_GRAVITY;
-    o->gyro[0] = -g[0] / 6.2831853f; o->gyro[1] = g[1] / 6.2831853f; o->gyro[2] = -g[2] / 6.2831853f;
+    o->accel[0] = -a[0] / SDL_STANDARD_GRAVITY; o->accel[1] = a[2] / SDL_STANDARD_GRAVITY; o->accel[2] = -a[1] / SDL_STANDARD_GRAVITY;
+    o->gyro[0] = g[0] / 6.2831853f; o->gyro[1] = -g[2] / 6.2831853f; o->gyro[2] = g[1] / 6.2831853f;
 }
 static void dev_state(Dev *d, NnPadState *o) {            /* lock held */
     float dz = EFF(d, dz), outer = EFF(d, outer), trig = EFF(d, trig);
@@ -1189,17 +1242,21 @@ int nnpad_selftest(const NnHidHooks *h) {
         h->vibrate(0, 0, 0);
         check(g_vj[0].lo == 0 && g_vj[0].hi == 0, "rumble stop reaches the pad");
         float a[3] = {9, 9, 9}, g[3] = {9, 9, 9}; int rest = 0;
-        float acc[3] = {0, 0, SDL_STANDARD_GRAVITY}, gy[3] = {0, 0, 0};
+        float acc[3] = {0, SDL_STANDARD_GRAVITY, 0}, gy[3] = {0, 0, 0};
         SDL_SendJoystickVirtualSensorData(js[0], SDL_SENSOR_ACCEL, SDL_GetTicksNS(), acc, 3);
         SDL_SendJoystickVirtualSensorData(js[0], SDL_SENSOR_GYRO, SDL_GetTicksNS(), gy, 3);
         settle();
         h->six(0, a, g, &rest);
-        check(fabsf(a[0]) < 0.01f && fabsf(a[1]) < 0.01f && fabsf(a[2] + 1.0f) < 0.01f && fabsf(g[0]) + fabsf(g[1]) + fabsf(g[2]) < 0.01f && rest, "six-axis from a pad with sensors, lying still: accel (0,0,-1) G, gyro 0, at rest");
-        gy[2] = 6.2831853f;
+        check(fabsf(a[0]) < 0.01f && fabsf(a[1]) < 0.01f && fabsf(a[2] + 1.0f) < 0.01f && fabsf(g[0]) + fabsf(g[1]) + fabsf(g[2]) < 0.01f && rest, "six-axis from a pad with sensors, lying still: SDL accel (0,+g,0) -> Switch (0,0,-1) G, gyro 0, at rest");
+        acc[1] = SDL_STANDARD_GRAVITY * 0.8660254f; acc[2] = -SDL_STANDARD_GRAVITY * 0.5f;   /* pitched nose up 30 deg */
+        gy[0] = 6.2831853f; gy[1] = 6.2831853f; gy[2] = -6.2831853f;                         /* pitch up +1, yaw left +1, roll right-down +1 rev/s */
+        SDL_SendJoystickVirtualSensorData(js[0], SDL_SENSOR_ACCEL, SDL_GetTicksNS(), acc, 3);
         SDL_SendJoystickVirtualSensorData(js[0], SDL_SENSOR_GYRO, SDL_GetTicksNS(), gy, 3);
         settle();
         h->six(0, a, g, &rest);
-        check(fabsf(fabsf(g[2]) - 1.0f) < 0.01f && !rest, "six-axis: a turn of 2*pi rad/s arrives as 1 revolution/s, not at rest");
+        check(fabsf(a[0]) < 0.01f && fabsf(a[1] + 0.5f) < 0.01f && fabsf(a[2] + 0.8660254f) < 0.01f &&
+              fabsf(g[0] - 1.0f) < 0.01f && fabsf(g[1] - 1.0f) < 0.01f && fabsf(g[2] - 1.0f) < 0.01f && !rest,
+              "six-axis axes & signs: pitch (+x), roll (-z -> +y), yaw (+y -> +z) and tilted gravity match Nintendo frame");
     }
     h->vibrate(0, 0, 0);
 
