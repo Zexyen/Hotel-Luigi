@@ -895,7 +895,7 @@ static LONG64 g_hdr_tm_frame;
 typedef struct VView { EView e; int vtype, attach; VkImageView view; struct VView *next; } VView;
 struct VTex {
     uint32_t magic; Tex *t; VkImage img; VMem mem; VkFormat fmt; VkImageLayout layout; VkFlags aspect;
-    int w, h, d, levels, layers, samples, expand, decode, bc7, is3d, feedback, bpb, bw, bh;
+    int w, h, d, levels, layers, samples, expand, decode, bc7, is3d, feedback, fb_dirty, bpb, bw, bh;
     int storage;                                   /* [witchtime] made with VK_IMAGE_USAGE_STORAGE_BIT */
     int drawn;                                     /* has been the colour target of a pass */
     uint32_t touch_gen, attach_gen;                /* bumped on layout change / upload / write; matches g_attach_gen while bound as target */
@@ -1061,6 +1061,7 @@ static void vt_layout(VTex *vt, VkImageLayout to) {
     cmd_begin();
     image_barrier(vt->img, vt->aspect, vt->layout, to);
     vt->layout = to;
+    vt->fb_dirty = 0;
     vt->touch_gen++;
 }
 static void vt_check(VTex *vt) { if (vt->magic != 0x56544558) vkd_fail("an image is used after it was destroyed (texture record %p)", (void *)vt); }
@@ -2458,15 +2459,27 @@ static void resolve_sampler(int s, VStage *v, int i) {
         int fs_sml = (!fs_scr && t->b.width <= 64 && t->b.height <= 64) ? 1 : 0;
         if (s == 1) { g_fs_screen |= fs_scr; g_fs_small |= fs_sml; }      /* [witchtime] the dither */
         EView e;
-        int attached = R.depth.tex == t;
-        for (int k = 0; k < R.ncol; k++) attached |= R.col[k].tex == t;
+        /* [lm3] issue 46: several NVNtextures over the same pool memory share one VTex (vt_get2 / nvn_front_tex_same):
+         * compare the underlying VTex so sampling a bound depth or colour target through an alias enters feedback layout
+         * (VK_IMAGE_LAYOUT_GENERAL) instead of leaving the image in DEPTH_STENCIL_ATTACHMENT_OPTIMAL with a SHADER_READ_ONLY descriptor. */
+        int attached = R.depth.tex && !R.depth.tex->dead && (R.depth.tex == t || (R.depth.tex->vk ? R.depth.tex->vk == vt : vt_get(R.depth.tex) == vt));
+        for (int k = 0; k < R.ncol; k++)
+            attached |= R.col[k].tex && !R.col[k].tex->dead && (R.col[k].tex == t || (R.col[k].tex->vk ? R.col[k].tex->vk == vt : vt_get(R.col[k].tex) == vt));
         eview_of(t, vt, &view, &e);
         int have = target_dim(e.target);
         int ok = have == dim || (dim == DIM_2D && (have == DIM_2DA || have == DIM_CUBE || have == DIM_CUBEA)) || (dim == DIM_2DA && (have == DIM_2D || have == DIM_CUBE || have == DIM_CUBEA)) ||
                  (dim == DIM_CUBE && have == DIM_CUBEA) || (dim == DIM_CUBEA && have == DIM_CUBE) || (dim == DIM_1D && have == DIM_1DA) || (dim == DIM_1DA && have == DIM_1D) ||
                  ((dim == DIM_CUBE || dim == DIM_CUBEA) && (have == DIM_2DA) && e.nlay >= 6 && vt->w == vt->h);
         if (ok && vt->samples == 1) {
-            if (attached && have_targets_live()) { if (!vt->feedback) { vt->feedback = 1; R.feedback++; pass_end(); } vt_layout(vt, VK_IMAGE_LAYOUT_GENERAL); }
+            if (attached && have_targets_live()) {
+                if (!vt->feedback) { vt->feedback = 1; R.feedback++; pass_end(); }
+                else if (vt->fb_dirty && vt->layout == VK_IMAGE_LAYOUT_GENERAL) {
+                    pass_end(); cmd_begin();
+                    image_barrier(vt->img, vt->aspect, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
+                    vt->fb_dirty = 0;
+                }
+                vt_layout(vt, VK_IMAGE_LAYOUT_GENERAL);
+            }
             else vt_layout(vt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             g_dtex[g_ndtex].view = vt_view(vt, &e, dim, 0); g_dtex[g_ndtex].layout = vt->layout;
             if (dither && dim == DIM_2D) { g_dtex[g_ndtex].view = dither; g_dtex[g_ndtex].layout = VK_IMAGE_LAYOUT_GENERAL; }
@@ -4652,6 +4665,17 @@ static int draw_prepare(unsigned prim) {
     if (stores) { R.pass_stores = 1; g_gpu_writes++; }      /* [witchtime] pass_end makes the writes visible; indirect_src waits again */
     g_dp_fs_stores = fs && fs->images && !fs->ssbo_w;      /* [witchtime] issue 147 (rs_store_low): a stage that also writes buffers would write them twice */
     ckpt(0, vs, fs, tes);                          /* [issue 26] */
+    if (!R.rast_discard) {
+        if (fs) for (int i = 0; i < R.ncol; i++) if (R.col[i].tex && R.col[i].tex->vk && ((R.chanmask >> (4 * i)) & 15)) ((VTex *)R.col[i].tex->vk)->fb_dirty = 1;
+        if (R.depth.tex && R.depth.tex->vk) {
+            int dw = (int)((R.ds >> 1) & 1);
+            if (!dw && (R.ds & 4)) {
+                for (int face = 0; face < 2 && !dw; face++) if (R.swmask[face])
+                    for (int k = 0; k < 3; k++) { unsigned op = (unsigned)((R.ds >> (16 + face * 12 + k * 4)) & 15); if (op >= 2 && op <= 8) { dw = 1; break; } }
+            }
+            if (dw) ((VTex *)R.depth.tex->vk)->fb_dirty = 1;
+        }
+    }
     for (int i = 0; i < g_dw_n; i++) if (g_dw_cb[i]->state == 1 && R.recording) g_dw_cb[i]->wserial = R.serial + 1;
     return 1;
 }
@@ -5067,8 +5091,17 @@ static LONG64 g_sf_draws;
 static void attach_mark_targets(void) {
     g_attach_gen++;
     if (!g_attach_gen) g_attach_gen = 1;
-    for (int i = 0; i < R.ncol; i++) if (R.col[i].tex && R.col[i].tex->vk) ((VTex *)R.col[i].tex->vk)->attach_gen = g_attach_gen;
-    if (R.depth.tex && R.depth.tex->vk) ((VTex *)R.depth.tex->vk)->attach_gen = g_attach_gen;
+    for (int i = 0; i < R.ncol; i++) if (R.col[i].tex) {
+        Tex *t = R.col[i].tex;
+        VTex *vt = t->vk;
+        if (!vt) { Tex *s = nvn_front_tex_same(t); if (s) vt = s->vk; }
+        if (vt) vt->attach_gen = g_attach_gen;
+    }
+    if (R.depth.tex) {
+        VTex *vt = R.depth.tex->vk;
+        if (!vt) { Tex *s = nvn_front_tex_same(R.depth.tex); if (s) vt = s->vk; }
+        if (vt) vt->attach_gen = g_attach_gen;
+    }
 }
 static int rs_store_low(void) {
     if (!g_dp_fs_stores || !RS_ON || !R.in_pass || !R.pass_rs || (R.pass_sx >= 1.0f && R.pass_sy >= 1.0f)) return 0;
@@ -5172,8 +5205,8 @@ static void exec(const Cmd *m, int depth) {
         const TargetRef *col = (const TargetRef *)blob, *dep = col + 8;
         int n = (int)a[0] < 8 ? (int)a[0] : 8;
         pass_end();
-        for (int i = 0; i < R.ncol; i++) if (R.col[i].tex && R.col[i].tex->vk) ((VTex *)R.col[i].tex->vk)->feedback = 0;
-        if (R.depth.tex && R.depth.tex->vk) ((VTex *)R.depth.tex->vk)->feedback = 0;
+        for (int i = 0; i < R.ncol; i++) if (R.col[i].tex && R.col[i].tex->vk) { VTex *vt = R.col[i].tex->vk; vt->feedback = 0; vt->fb_dirty = 0; }
+        if (R.depth.tex && R.depth.tex->vk) { VTex *vt = R.depth.tex->vk; vt->feedback = 0; vt->fb_dirty = 0; }
         memset(R.col, 0, sizeof R.col); memset(&R.depth, 0, sizeof R.depth);
         R.ncol = 0; R.have_targets = 0;
         for (int i = 0; i < n; i++) if (col[i].tex && !col[i].tex->dead) { R.col[i] = col[i]; R.ncol = i + 1; R.have_targets = 1; }
@@ -5285,6 +5318,7 @@ static void exec(const Cmd *m, int depth) {
         ca.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; ca.colorAttachment = i; memcpy(&ca.clearValue.color, blob, 16);
         cr.rect.offset.x = sx; cr.rect.offset.y = sy; cr.rect.extent.width = (uint32_t)sw; cr.rect.extent.height = (uint32_t)sh; cr.layerCount = 1;
         vkCmdClearAttachments(R.cmd, 1, &ca, 1, &cr);
+        if (R.col[i].tex->vk) ((VTex *)R.col[i].tex->vk)->fb_dirty = 1;
         R.frame_clears++; nvn_front_count(2, 1);
         break;
     }
@@ -5303,6 +5337,7 @@ static void exec(const Cmd *m, int depth) {
         ca.aspectMask = ((a[0] & 1) ? VK_IMAGE_ASPECT_DEPTH_BIT : 0) | ((uint32_t)a[2] ? VK_IMAGE_ASPECT_STENCIL_BIT : 0);
         if ((ca.aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT) && (vt->aspect & VK_IMAGE_ASPECT_STENCIL_BIT) && ((uint32_t)a[2] & 0xff) != 0xff) {
             stencil_clear_masked((uint32_t)a[2] & 0xff, (uint32_t)a[1], sx, sy, sw, sh);
+            vt->fb_dirty = 1;
             ca.aspectMask &= ~(VkFlags)VK_IMAGE_ASPECT_STENCIL_BIT;
         }
         ca.aspectMask &= vt->aspect;
@@ -5310,6 +5345,7 @@ static void exec(const Cmd *m, int depth) {
         memcpy(&ca.clearValue.depthStencil.depth, &a[3], 4); ca.clearValue.depthStencil.stencil = (uint32_t)a[1];
         cr.rect.offset.x = sx; cr.rect.offset.y = sy; cr.rect.extent.width = (uint32_t)sw; cr.rect.extent.height = (uint32_t)sh; cr.layerCount = 1;
         vkCmdClearAttachments(R.cmd, 1, &ca, 1, &cr);
+        vt->fb_dirty = 1;
         R.frame_clears++; nvn_front_count(2, 1);
         break;
     }
