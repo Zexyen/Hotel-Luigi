@@ -2307,3 +2307,194 @@ done:
     free(e);
     return res != NULL;
 }
+
+/* Single-pass static scan of Maxwell SASS to infer which texture units are sampled as integer textures.
+ * Used at program handover so integer-sampler variants (and their GPL stage libraries) are pre-compiled on
+ * workers before the first draw binds an integer texture to those units. */
+uint32_t mx_infer_int_tex(const MxIn *in, uint32_t *sint_tex) {
+    if (sint_tex) *sint_tex = 0;
+    if (!in || !in->code) return 0;
+    int hdr = in->stage == MX_COMPUTE ? 0 : 0x50;
+    if (in->code_len < hdr + 8) return 0;
+    int n = (in->code_len - hdr) / 8;
+    uint32_t reg_u[256];
+    int int_v[32], flt_v[32], sint_v[32], uint_v[32];
+    memset(reg_u, 0, sizeof reg_u);
+    memset(int_v, 0, sizeof int_v);
+    memset(flt_v, 0, sizeof flt_v);
+    memset(sint_v, 0, sizeof sint_v);
+    memset(uint_v, 0, sizeof uint_v);
+#define MXI_VOTE(arr, r) do { unsigned r_ = (r); if (r_ < 255 && reg_u[r_]) { uint32_t m_ = reg_u[r_]; while (m_) { int u_ = __builtin_ctz(m_); m_ &= m_ - 1; (arr)[u_]++; } } } while (0)
+#define MXI_INT(r) MXI_VOTE(int_v, r)
+#define MXI_FLT(r) MXI_VOTE(flt_v, r)
+#define MXI_SGN(r, sgn) do { if (sgn) MXI_VOTE(sint_v, r); else MXI_VOTE(uint_v, r); } while (0)
+#define MXI_CLR(r) do { unsigned r_ = (r); if (r_ < 255) reg_u[r_] = 0; } while (0)
+    for (int i = 0; i < n; i++) {
+        if ((i & 3) == 0) continue;                /* scheduling word */
+        uint64_t ins;
+        memcpy(&ins, in->code + hdr + (size_t)i * 8, 8);
+        int op = decode(ins);
+        unsigned rd = (unsigned)MXB(ins, 0, 8), ra = (unsigned)MXB(ins, 8, 8);
+        unsigned rb = (unsigned)MXB(ins, 20, 8), rc = (unsigned)MXB(ins, 39, 8);
+        if (op == MXOP_TEX || op == MXOP_TLD || op == MXOP_TLD4 || op == MXOP_TXD) {
+            unsigned off = (unsigned)MXB(ins, 36, 13), wmask = (unsigned)MXB(ins, 31, 4);
+            int unit = off >= 8 && ((off - 8) & 1) == 0 && (off - 8) / 2 < 32 ? (int)((off - 8) / 2) : -1;
+            int shadow = (op == MXOP_TEX || op == MXOP_TLD4) && MXB(ins, 50, 1);
+            if (shadow && unit >= 0) flt_v[unit]++;
+            uint32_t m = (!shadow && unit >= 0) ? (1u << unit) : 0;
+            unsigned r = rd;
+            for (unsigned c = 0; c < 4; c++) if (wmask >> c & 1) {
+                if (r < 255) reg_u[r] = m;
+                if (r < 255) r++;
+            }
+            continue;
+        }
+        if (op == MXOP_TEXS || op == MXOP_TLDS || op == MXOP_TLD4S) {
+            static const uint8_t rg[8] = {1, 2, 4, 8, 3, 9, 10, 12}, rgba[5] = {7, 11, 13, 14, 15};
+            unsigned off = (unsigned)MXB(ins, 36, 13), rd1 = (unsigned)MXB(ins, 28, 8), sw = (unsigned)MXB(ins, 50, 3);
+            unsigned enc = (unsigned)MXB(ins, 53, 4);
+            int unit = off >= 8 && ((off - 8) & 1) == 0 && (off - 8) / 2 < 32 ? (int)((off - 8) / 2) : -1;
+            int shadow = (op == MXOP_TEXS && (enc == 4 || enc == 5 || enc == 6 || enc == 9)) || (op == MXOP_TLD4S && MXB(ins, 50, 1));
+            int f16 = !MXB(ins, 59, 1);
+            unsigned mask = op == MXOP_TLD4S ? 0xfu : (rd1 == 255 ? rg[sw] : (sw < 5 ? rgba[sw] : 0u));
+            if ((shadow || f16) && unit >= 0) flt_v[unit]++;
+            uint32_t m = (!shadow && !f16 && unit >= 0) ? (1u << unit) : 0;
+            if (f16) {
+                MXI_CLR(rd); MXI_CLR(rd1);
+            } else {
+                unsigned idx = 0;
+                for (unsigned c = 0; c < 4; c++) if (mask >> c & 1) {
+                    unsigned r = idx == 0 ? rd : idx == 1 ? (rd == 255 ? 255 : rd + 1) : idx == 2 ? rd1 : (rd1 == 255 ? 255 : rd1 + 1);
+                    if (r < 255) reg_u[r] = m;
+                    idx++;
+                }
+            }
+            continue;
+        }
+        switch (op) {
+        case MXOP_MOV_reg: if (rd < 255) reg_u[rd] = rb < 255 ? reg_u[rb] : 0; break;
+        case MXOP_MOV_cbuf: case MXOP_MOV_imm: case MXOP_MOV32I: MXI_CLR(rd); break;
+        case MXOP_SEL_reg: if (rd < 255) reg_u[rd] = (ra < 255 ? reg_u[ra] : 0) | (rb < 255 ? reg_u[rb] : 0); break;
+        case MXOP_SEL_cbuf: case MXOP_SEL_imm: case MXOP_SHFL: if (rd < 255) reg_u[rd] = ra < 255 ? reg_u[ra] : 0; break;
+
+        /* Float consumers */
+        case MXOP_FADD_reg: case MXOP_FMUL_reg: case MXOP_FMNMX_reg: case MXOP_FSET_reg: case MXOP_FSWZADD:
+        case MXOP_HADD2_reg: case MXOP_HMUL2_reg: case MXOP_HSET2_reg:
+        case MXOP_DADD_reg: case MXOP_DMUL_reg: case MXOP_DMNMX_reg: case MXOP_DSET_reg:
+            MXI_FLT(ra); MXI_FLT(rb); MXI_CLR(rd); break;
+        case MXOP_FSETP_reg: case MXOP_HSETP2_reg: case MXOP_DSETP_reg:
+            MXI_FLT(ra); MXI_FLT(rb); break;
+        case MXOP_FFMA_reg: case MXOP_FCMP_reg: case MXOP_HFMA2_reg: case MXOP_DFMA_reg:
+            MXI_FLT(ra); MXI_FLT(rb); MXI_FLT(rc); MXI_CLR(rd); break;
+        case MXOP_FFMA_cr: case MXOP_FFMA_rc: case MXOP_FFMA_imm:
+        case MXOP_FCMP_cr: case MXOP_FCMP_rc: case MXOP_FCMP_imm:
+        case MXOP_HFMA2_cr: case MXOP_HFMA2_rc: case MXOP_HFMA2_imm:
+        case MXOP_DFMA_cr: case MXOP_DFMA_rc: case MXOP_DFMA_imm:
+            MXI_FLT(ra); MXI_FLT(rc); MXI_CLR(rd); break;
+        case MXOP_FFMA32I: case MXOP_HFMA2_32I:
+            MXI_FLT(ra); MXI_FLT(rd); MXI_CLR(rd); break;
+        case MXOP_FADD_cbuf: case MXOP_FADD_imm: case MXOP_FADD32I:
+        case MXOP_FMUL_cbuf: case MXOP_FMUL_imm: case MXOP_FMUL32I:
+        case MXOP_FMNMX_cbuf: case MXOP_FMNMX_imm:
+        case MXOP_FSET_cbuf: case MXOP_FSET_imm:
+        case MXOP_FCHK_reg: case MXOP_FCHK_cbuf: case MXOP_FCHK_imm:
+        case MXOP_MUFU:
+        case MXOP_HADD2_cbuf: case MXOP_HADD2_imm: case MXOP_HADD2_32I:
+        case MXOP_HMUL2_cbuf: case MXOP_HMUL2_imm: case MXOP_HMUL2_32I:
+        case MXOP_HSET2_cbuf: case MXOP_HSET2_imm:
+        case MXOP_DADD_cbuf: case MXOP_DADD_imm: case MXOP_DMUL_cbuf: case MXOP_DMUL_imm:
+        case MXOP_DMNMX_cbuf: case MXOP_DMNMX_imm: case MXOP_DSET_cbuf: case MXOP_DSET_imm:
+            MXI_FLT(ra); if (op == MXOP_FCHK_reg) MXI_FLT(rb); MXI_CLR(rd); break;
+        case MXOP_FSETP_cbuf: case MXOP_FSETP_imm: case MXOP_HSETP2_cbuf: case MXOP_HSETP2_imm: case MXOP_DSETP_cbuf: case MXOP_DSETP_imm:
+            MXI_FLT(ra); break;
+        case MXOP_F2I_reg: case MXOP_F2F_reg: case MXOP_RRO_reg:
+            MXI_FLT(rb); MXI_CLR(rd); break;
+        case MXOP_F2I_cbuf: case MXOP_F2I_imm: case MXOP_F2F_cbuf: case MXOP_F2F_imm: case MXOP_RRO_cbuf: case MXOP_RRO_imm:
+            MXI_CLR(rd); break;
+
+        /* Integer consumers */
+        case MXOP_I2F_reg: case MXOP_I2I_reg:
+            MXI_INT(rb); MXI_SGN(rb, (int)MXB(ins, 13, 1)); MXI_CLR(rd); break;
+        case MXOP_FLO_reg: case MXOP_POPC_reg:
+            MXI_INT(rb); MXI_CLR(rd); break;
+        case MXOP_IADD_reg: case MXOP_IMNMX_reg: case MXOP_ISET_reg: case MXOP_IMUL_reg:
+        case MXOP_ISCADD_reg: case MXOP_VADD: case MXOP_VSHL: case MXOP_VSHR:
+        case MXOP_VMNMX: case MXOP_VSET: case MXOP_VABSDIFF: case MXOP_VABSDIFF4: case MXOP_IDP_reg:
+            MXI_INT(ra); MXI_INT(rb);
+            if (op == MXOP_ISET_reg || op == MXOP_IMNMX_reg) { int sg = (int)MXB(ins, 48, 1); MXI_SGN(ra, sg); MXI_SGN(rb, sg); }
+            MXI_CLR(rd); break;
+        case MXOP_ISETP_reg: case MXOP_VSETP:
+            MXI_INT(ra); MXI_INT(rb);
+            if (op == MXOP_ISETP_reg) { int sg = (int)MXB(ins, 48, 1); MXI_SGN(ra, sg); MXI_SGN(rb, sg); }
+            break;
+        case MXOP_SHR_reg: case MXOP_SHL_reg: case MXOP_BFE_reg: case MXOP_LOP_reg:
+            MXI_INT(ra); MXI_INT(rb);
+            if (op == MXOP_SHR_reg || op == MXOP_BFE_reg) MXI_SGN(ra, (int)MXB(ins, 48, 1));
+            if (rd < 255) reg_u[rd] = ra < 255 ? reg_u[ra] : 0;
+            break;
+        case MXOP_IADD3_reg: case MXOP_BFI_reg: case MXOP_XMAD_reg: case MXOP_IMAD_reg: case MXOP_IMADSP_reg:
+        case MXOP_ICMP_reg: case MXOP_LOP3_reg: case MXOP_PRMT_reg:
+        case MXOP_SHF_l_reg: case MXOP_SHF_r_reg: case MXOP_LEA_lo_reg: case MXOP_LEA_hi_reg: case MXOP_VMAD:
+            MXI_INT(ra); MXI_INT(rb); MXI_INT(rc); MXI_CLR(rd); break;
+        case MXOP_IADD3_cbuf: case MXOP_IADD3_imm: case MXOP_BFI_cr: case MXOP_BFI_rc: case MXOP_BFI_imm:
+        case MXOP_XMAD_cr: case MXOP_XMAD_rc: case MXOP_XMAD_imm:
+        case MXOP_IMAD_cr: case MXOP_IMAD_rc: case MXOP_IMAD_imm:
+        case MXOP_IMADSP_cr: case MXOP_IMADSP_rc: case MXOP_IMADSP_imm:
+        case MXOP_ICMP_cr: case MXOP_ICMP_rc: case MXOP_ICMP_imm:
+        case MXOP_LOP3_cbuf: case MXOP_LOP3_imm: case MXOP_PRMT_cr: case MXOP_PRMT_rc: case MXOP_PRMT_imm:
+            MXI_INT(ra); MXI_INT(rc); MXI_CLR(rd); break;
+        case MXOP_IMAD32I:
+            MXI_INT(ra); MXI_INT(rd); MXI_CLR(rd); break;
+        case MXOP_IADD_cbuf: case MXOP_IADD_imm: case MXOP_IADD32I:
+        case MXOP_IMNMX_cbuf: case MXOP_IMNMX_imm:
+        case MXOP_ISET_cbuf: case MXOP_ISET_imm:
+        case MXOP_IMUL_cbuf: case MXOP_IMUL_imm: case MXOP_IMUL32I:
+        case MXOP_ISCADD_cbuf: case MXOP_ISCADD_imm: case MXOP_ISCADD32I:
+        case MXOP_SHF_l_imm: case MXOP_SHF_r_imm:
+        case MXOP_LEA_lo_cbuf: case MXOP_LEA_lo_imm: case MXOP_LEA_hi_cbuf: case MXOP_IDP_imm:
+            MXI_INT(ra);
+            if (op == MXOP_ISET_cbuf || op == MXOP_ISET_imm || op == MXOP_IMNMX_cbuf || op == MXOP_IMNMX_imm) MXI_SGN(ra, (int)MXB(ins, 48, 1));
+            MXI_CLR(rd); break;
+        case MXOP_ISETP_cbuf: case MXOP_ISETP_imm:
+            MXI_INT(ra); MXI_SGN(ra, (int)MXB(ins, 48, 1)); break;
+        case MXOP_SHR_cbuf: case MXOP_SHR_imm: case MXOP_SHL_cbuf: case MXOP_SHL_imm:
+        case MXOP_BFE_cbuf: case MXOP_BFE_imm: case MXOP_LOP_cbuf: case MXOP_LOP_imm: case MXOP_LOP32I:
+            if (op == MXOP_LOP32I) {
+                uint32_t imm = (uint32_t)MXB(ins, 20, 32);
+                if (imm == 0x7fffffffu || imm == 0x80000000u) { MXI_CLR(rd); break; }
+            }
+            MXI_INT(ra);
+            if (op == MXOP_SHR_cbuf || op == MXOP_SHR_imm || op == MXOP_BFE_cbuf || op == MXOP_BFE_imm) MXI_SGN(ra, (int)MXB(ins, 48, 1));
+            if (rd < 255) reg_u[rd] = ra < 255 ? reg_u[ra] : 0;
+            break;
+
+        /* Non-GPR-writing ops */
+        case MXOP_BRA: case MXOP_SYNC: case MXOP_BRK: case MXOP_CONT: case MXOP_BRX:
+        case MXOP_EXIT: case MXOP_KIL: case MXOP_NOP: case MXOP_DEPBAR: case MXOP_MEMBAR:
+        case MXOP_SSY: case MXOP_PBK: case MXOP_PCNT: case MXOP_PEXIT: case MXOP_BAR:
+        case MXOP_AST: case MXOP_STG: case MXOP_STL: case MXOP_STS: case MXOP_STP: case MXOP_ST:
+        case MXOP_SUST: case MXOP_RED: case MXOP_OUT_reg: case MXOP_OUT_cbuf: case MXOP_OUT_imm:
+        case MXOP_PSETP: case MXOP_CSETP: case MXOP_R2P_reg: case MXOP_R2P_cbuf: case MXOP_R2P_imm:
+        case MXOP_CCTL: case MXOP_CCTLL: case MXOP_CCTLT: case MXOP_JMP: case MXOP_JMX:
+        case MXOP_CAL: case MXOP_JCAL: case MXOP_RET: case MXOP_PRET: case MXOP_LONGJMP: case MXOP_PLONGJMP:
+            break;
+        default:
+            MXI_CLR(rd);
+            break;
+        }
+    }
+#undef MXI_VOTE
+#undef MXI_INT
+#undef MXI_FLT
+#undef MXI_SGN
+#undef MXI_CLR
+    uint32_t mask = 0, smask = 0;
+    for (int u = 0; u < 32; u++) {
+        if (int_v[u] > flt_v[u]) {
+            mask |= 1u << u;
+            if (sint_v[u] > uint_v[u]) smask |= 1u << u;
+        }
+    }
+    if (sint_tex) *sint_tex = smask;
+    return mask;
+}

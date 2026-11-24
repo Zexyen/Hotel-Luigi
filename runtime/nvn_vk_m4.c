@@ -1712,9 +1712,27 @@ static void variants_known(const SSrc *src, uint64_t hb) {
     fclose(fp);
     for (int i = 0; i < n; i++) {
         if (e[i].magic != STAGEREC_MAGIC || !(e[i].key[0] | e[i].key[1] | e[i].key[2] | e[i].key[3] | e[i].fo)) continue;
-        stage_ensure(src, hb, e[i].key, e[i].fo, &how);
+        VStage *v = stage_ensure(src, hb, e[i].key, e[i].fo, &how);
         if (how == 1) { InterlockedIncrement64(&g_w_stages); InterlockedIncrement64(&g_var_known); }
+        if (v && v->ok && D.has_gpl && gpl_sep() && !g_offline && v->stage <= 1 && stage_fits_universal(v)) { int lh; stagelib_ensure(v, 0, &lh); }
     }
+}
+/* Pre-compile the integer-sampler variant of a fragment stage when static SASS analysis sees integer consumers on its
+ * texture loads, so draws that bind UINT/SINT textures (G-buffer, clustered light grids) find the stage and its library
+ * ready instead of translating + compiling synchronously on the render thread. */
+static void stage_precompile_int_tex(const SSrc *src, uint64_t hb, const VStage *base, int fo_mark) {
+    if (!base || !base->ok || src->stage != 1 || !base->tex_units) return;
+    MxIn mi;
+    memset(&mi, 0, sizeof mi);
+    mi.stage = 1; mi.code = src->code; mi.code_len = src->code_len;
+    uint32_t itex = mx_infer_int_tex(&mi, NULL) & base->tex_units;
+    if (!itex) return;
+    uint32_t ikey[4] = {0, 0, itex, 0};
+    int how;
+    VStage *iv = stage_ensure(src, hb, ikey, 0, &how);
+    if (how == 1) InterlockedIncrement64(&g_w_stages);
+    if (iv && iv->ok && D.has_gpl && gpl_sep() && !g_offline && stage_fits_universal(iv)) { int lh; stagelib_ensure(iv, 0, &lh); }
+    else if (fo_mark && iv && iv->ok) gpl_fo_made(iv);
 }
 static int g_pix_ready;
 static LONG64 g_pix_ambiguous;
@@ -1748,7 +1766,7 @@ static void job_prog(Job *j) {
     if (j->has[1]) { fs = stage_ensure(&j->src[1], ssrc_hb(&j->src[1]), zero, 0, &how); if (how == 1) InterlockedIncrement64(&g_w_stages); }
     if (!vs->ok || (fs && !fs->ok)) return;
     variants_known(&j->src[0], hv);                /* session 7: what earlier runs needed of this code at a draw */
-    if (fs) variants_known(&j->src[1], fs->hb);
+    if (fs) { variants_known(&j->src[1], fs->hb); stage_precompile_int_tex(&j->src[1], fs->hb, fs, 0); }
     if (fs && (fs->in_attr & ~vs->out_attr)) {    /* fragment inputs the vertex code never writes: the variant that declares them */
         vs = stage_ensure(&j->src[0], hv, zero, fs->in_attr & ~vs->out_attr, &how);
         if (how == 1) InterlockedIncrement64(&g_w_stages);
@@ -1934,10 +1952,29 @@ static void job_prep(Job *j) {
         VStage *c = stage_ensure(&j->src[2], ssrc_hb(&j->src[2]), zero, 0, &how);
         if (c->ok && !c->images && c->nsmp <= 32) compute_pipe_ensure(c);
     }
-    if (!j->has[0]) { if (j->has[1]) prep_stage(&j->src[1], zero, 0, 0); return; }      /* [witchtime] a stage of B3's shader archives, queued alone (dat_walk) */
+    if (!j->has[0]) {
+        if (j->has[1]) {
+            prep_stage(&j->src[1], zero, 0, 0);
+            if (j->src[1].stage == 1) {
+                MxIn mi; memset(&mi, 0, sizeof mi);
+                mi.stage = 1; mi.code = j->src[1].code; mi.code_len = j->src[1].code_len;
+                uint32_t itex = mx_infer_int_tex(&mi, NULL);
+                if (itex) { uint32_t ikey[4] = {0, 0, itex, 0}; prep_stage(&j->src[1], ikey, 0, 0); }
+            }
+        }
+        return;
+    }      /* [witchtime] a stage of B3's shader archives, queued alone (dat_walk) */
     PrepSt vs = prep_stage(&j->src[0], zero, 0, !j->has[1]), fs;
     memset(&fs, 0, sizeof fs);
-    if (j->has[1]) fs = prep_stage(&j->src[1], zero, 0, 0);
+    if (j->has[1]) {
+        fs = prep_stage(&j->src[1], zero, 0, 0);
+        if (j->src[1].stage == 1) {
+            MxIn mi; memset(&mi, 0, sizeof mi);
+            mi.stage = 1; mi.code = j->src[1].code; mi.code_len = j->src[1].code_len;
+            uint32_t itex = mx_infer_int_tex(&mi, NULL);
+            if (itex) { uint32_t ikey[4] = {0, 0, itex, 0}; prep_stage(&j->src[1], ikey, 0, 0); }
+        }
+    }
     uint32_t need = vs.ok && fs.ok ? fs.in_attr & ~vs.out_attr : 0;
     if (need) prep_stage(&j->src[0], zero, need, 0);      /* fragment inputs the vertex code never writes: the variant that declares them */
     /* [issue 54] Attribute 2 as integers: skinned draws, whose variant was first compiled at the draw: a frame of 8-9 s in a cutscene.
@@ -2002,7 +2039,18 @@ static DWORD WINAPI pw_main(void *arg) {
         }
         if (j->kind == 0) { if (j->prep == 2) job_prep(j); else job_prog(j); }
         else if (j->kind == 2) job_draw(j);
-        else if (j->kind == 3) { int how; VStage *v = stage_ensure(&j->src[1], ssrc_hb(&j->src[1]), j->key1, 0, &how); if (how == 1) InterlockedIncrement64(&g_w_stages); if (v && v->ok && D.has_gpl && gpl_sep() && !g_offline && stage_fits_universal(v)) { int lh; stagelib_ensure(v, 0, &lh); } else if (j->cont == -7 && v && v->ok) gpl_fo_made(v); }
+        else if (j->kind == 3) {
+            int how;
+            uint64_t hb = ssrc_hb(&j->src[1]);
+            VStage *v = stage_ensure(&j->src[1], hb, j->key1, 0, &how);
+            if (how == 1) InterlockedIncrement64(&g_w_stages);
+            if (v && v->ok && D.has_gpl && gpl_sep() && !g_offline && v->stage <= 1 && stage_fits_universal(v)) { int lh; stagelib_ensure(v, 0, &lh); }
+            else if (j->cont == -7 && v && v->ok && v->stage == 1) gpl_fo_made(v);
+            if (j->cont == -7) {
+                variants_known(&j->src[1], hb);
+                stage_precompile_int_tex(&j->src[1], hb, v, 1);
+            }
+        }
         else if (j->kind == 5) { int lh; pairlib_ensure(j->lvs, j->lfs, 1, 0, &lh); }
         else if (j->kind == 6) gpl_optimise(j->pipe);
         else if (j->kind == 7) { int how, lh; VStage *v = stage_ensure(&j->src[1], ssrc_hb(&j->src[1]), j->key1, (uint32_t)j->sshade, &how); if (how == 1) InterlockedIncrement64(&g_w_stages); if (v && v->ok && D.has_gpl && gpl_sep() && stage_fits_universal(v)) stagelib_ensure(v, 0, &lh); }      /* the stage a skipped draw waits for */
@@ -2051,7 +2099,16 @@ static void stage_copy(Stage *st, int s) {
 void nvn_vk_program_set(void *prog) {
     Prog *p = prog;
     SSrc s[3];
-    if (!g_m4_on || p->st[2].state || p->st[3].state || p->st[4].state) return;
+    if (!g_m4_on) return;
+    if (p->st[2].state || p->st[3].state || p->st[4].state) {
+        static const uint32_t zero[4];
+        SSrc es;
+        if (p->st[2].state && ssrc_of(&es, p, 2)) {
+            for (uint32_t gp = 0; gp < 3; gp++) { uint32_t gkey[4] = {0, gp, 0, 0}; spawn_stage_fo(&es, gkey); }
+        }
+        if (p->st[3].state && ssrc_of(&es, p, 3)) spawn_stage_fo(&es, zero);
+        if (p->st[4].state && ssrc_of(&es, p, 4)) spawn_stage_fo(&es, zero);
+    }
     {   static int on = -1;
         if (on < 0) on = getenv("HL_VK_STAGECOPY") && atoi(getenv("HL_VK_STAGECOPY"));
         if (on) { EnterCriticalSection(&g_sh_lock); stage_copy(&p->st[0], 0); stage_copy(&p->st[1], 1); stage_copy(&p->st[5], 5); LeaveCriticalSection(&g_sh_lock); }
@@ -2173,8 +2230,9 @@ static void prewarm_start(void) {
  * follows then finds them made, waits for the one being made, or makes a queued one itself: the work of a frame that needs
  * many new pipelines at once (the first frame of a fight) is spread over all cores instead of done one by one at the draws.
  * Not followed: integer texture formats (taken as bound now) and, without extended dynamic state 3, anything. */
-typedef struct { Prog *prog[2]; int ncol, nattr, sig_ok, attr_new; TargetRef col[8], depth; uint32_t vattr[32], ints, sints, sig_tag; uint8_t logic; PKey sig; uint32_t vstream[64], vbuf_on; } Scan;      /* vstream, vbuf_on (finding 116): {stride, divisor} per stream, streams with a buffer */
+typedef struct { Prog *prog[2]; int ncol, nattr, sig_ok, attr_new; TargetRef col[8], depth; uint32_t vattr[32], ints, sints, sig_tag; uint8_t logic; PKey sig; uint32_t vstream[64], vbuf_on; uint32_t tex_int[2], tex_sint[2]; TexPool *tpool; } Scan;      /* vstream, vbuf_on (finding 116): {stride, divisor} per stream, streams with a buffer */
 static uint64_t g_scan_seen[8192];
+static struct { LONG64 gen1; TexPool *tp; Tex *t; uint64_t nh; uint8_t isint; } g_scan_tm[1024];
 static void scan_sig(Scan *s) {
     memset(&s->sig, 0, sizeof s->sig);
     s->sig_ok = pkey_targets_of(&s->sig, s->ncol, s->col, &s->depth) && (s->ncol || s->depth.tex);
@@ -2185,12 +2243,15 @@ static void scan_begin(Scan *s) {
     s->nattr = R.nattr; memcpy(s->vattr, R.vattr, sizeof s->vattr); s->attr_new = 1; s->logic = R.logic;
     memcpy(s->vstream, R.vstream, sizeof s->vstream); s->vbuf_on = 0;
     for (int i = 0; i < 32; i++) if (R.vbuf[i].addr && R.vbuf[i].size) s->vbuf_on |= 1u << i;
+    s->tex_int[0] = R.tex_int[0]; s->tex_int[1] = R.tex_int[1];
+    s->tex_sint[0] = R.tex_sint[0]; s->tex_sint[1] = R.tex_sint[1];
+    s->tpool = R.tpool;
     scan_sig(s);
 }
 static void scan_draw(Scan *s, unsigned prim) {
-    static const uint8_t tclass[7] = {0, 1, 1, 1, 2, 2, 2};
+    static const uint8_t tclass[8] = {0, 1, 1, 1, 2, 2, 2, 2};
     Prog *p0 = s->prog[0], *p1 = s->prog[1];
-    if (!p0 || prim > 6 || !s->sig_ok || !p0->st[0].code || (p1 && !p1->st[1].code) || p0->dead || (p1 && p1->dead)) return;
+    if (!p0 || prim > 7 || !s->sig_ok || !p0->st[0].code || (p1 && !p1->st[1].code) || p0->dead || (p1 && p1->dead)) return;
     if (s->attr_new) {                             /* which attributes are integers (as draw_prepare) */
         s->ints = s->sints = 0; s->attr_new = 0;
         for (int i = 0; i < 16 && i < s->nattr; i++) {
@@ -2207,7 +2268,8 @@ static void scan_draw(Scan *s, unsigned prim) {
     SCK(s->sig_tag);
     SCK(tclass[prim] | (uint64_t)s->logic << 8 | (uint64_t)(p1 ? p1->sample_shading & 1 : 0) << 16);
     SCK((uint64_t)s->ints << 32 | s->sints);
-    SCK((uint64_t)R.tex_int[0] << 32 | R.tex_int[1]);
+    SCK((uint64_t)s->tex_int[0] << 32 | s->tex_int[1]);
+    SCK((uint64_t)s->tex_sint[0] << 32 | s->tex_sint[1]);
 #undef SCK
     tag |= 1;
     uint32_t vl = 0;
@@ -2224,10 +2286,37 @@ static void scan_draw(Scan *s, unsigned prim) {
     unsigned slot = (unsigned)(tag >> 20) & 8191;
     if (g_scan_seen[slot] == tag) return;
     g_scan_seen[slot] = tag;
-    uint32_t key0[4] = {s->ints, s->sints, R.tex_int[0], R.tex_sint[0]}, key1[4] = {0, 0, R.tex_int[1], R.tex_sint[1]};
+    uint32_t key0[4] = {s->ints, s->sints, s->tex_int[0], s->tex_sint[0]}, key1[4] = {0, 0, s->tex_int[1], s->tex_sint[1]};
     VStage *vs = p0->st[0].vk, *fs = p1 ? p1->st[1].vk : NULL;
     int fs_made = !p1 || (fs && fs->state == 2 && fs->fo == 0 && key_fits(1, key1, fs->key, fs->dep, fs->tex_units));
     int vs_made = fs_made && vs && vs->state == 2 && key_fits(0, key0, vs->key, vs->dep, vs->tex_units) && vs->fo == (fs && fs->ok ? fs->in_attr & ~(vs->out_attr & ~vs->fo) : 0);
+    SSrc a, b;
+    int has_a = 0, has_f = 0;
+    if (!fs_made || !vs_made) {
+        if (!fs_made && p1 && ssrc_of(&b, p1, 1)) {
+            has_f = 1;
+            uint64_t hf = ssrc_hb(&b);
+            VStage *busy = NULL, *f2;
+            EnterCriticalSection(&g_sh_lock);
+            f2 = vstage_find(hf, 1, b.code_len, key1, 0, &busy);
+            LeaveCriticalSection(&g_sh_lock);
+            if (f2 && f2->state == 2) { fs = f2; fs_made = 1; }
+        }
+        if (fs_made && !vs_made && ssrc_of(&a, p0, 0)) {
+            has_a = 1;
+            uint64_t hv = ssrc_hb(&a);
+            VStage *busy = NULL, *v2;
+            uint32_t fo = 0;
+            EnterCriticalSection(&g_sh_lock);
+            v2 = vstage_find(hv, 0, a.code_len, key0, 0, &busy);
+            if (v2 && v2->state == 2 && v2->ok && fs && fs->ok) {
+                fo = fs->in_attr & ~(v2->out_attr & ~v2->fo);
+                if (fo) v2 = vstage_find(hv, 0, a.code_len, key0, fo, &busy);
+            }
+            LeaveCriticalSection(&g_sh_lock);
+            if (v2 && v2->state == 2) { vs = v2; vs_made = 1; }
+        }
+    }
     PKey k = s->sig;
     k.topo_class = tclass[prim]; k.logic = s->logic; k.sshade = p1 ? (uint8_t)p1->sample_shading : 0;
     if (vl) pkey_vlay_set(&k, vl);
@@ -2246,9 +2335,8 @@ static void scan_draw(Scan *s, unsigned prim) {
         LeaveCriticalSection(&g_sh_lock);
         return;
     }
-    SSrc a, b;
-    if (!ssrc_of(&a, p0, 0)) return;
-    int has_f = p1 && ssrc_of(&b, p1, 1);
+    if (!has_a && !ssrc_of(&a, p0, 0)) return;
+    if (!has_f) has_f = p1 && ssrc_of(&b, p1, 1);
     Job *j = calloc(1, sizeof *j + (size_t)a.code_len + a.cdata_size + 16 + (has_f ? (size_t)b.code_len + b.cdata_size + 16 : 0));
     uint8_t *d = j->data;
     j->kind = 2; j->k = k; memcpy(j->key0, key0, 16); memcpy(j->key1, key1, 16);
@@ -2263,11 +2351,40 @@ static void scan_list(uint64_t handle, int depth, Scan *s) {
     size_t len = 0;
     uint8_t *data = nvn_front_list(handle, &len);
     if (!data) return;
+    LONG64 gen1 = nvn_front_pool_gen() + 1;
     for (size_t off = 0; off + sizeof(Cmd) <= len;) {
         const Cmd *m = (const Cmd *)(data + off);
         const uint64_t *a = m->a;
         if (m->size < sizeof(Cmd)) break;
         switch (m->op) {
+        case OP_TEXPOOL: s->tpool = P(a[0]); break;
+        case OP_TEXTURES: {
+            int stage = (int)a[0] % 6, first = (int)a[1], count = (int)a[2];
+            if (stage < 2) {
+                for (int i = 0; i < count && first + i < 32; i++) {
+                    uint64_t h;
+                    unsigned u = (unsigned)(first + i);
+                    memcpy(&h, BLOB(m) + i * 8, 8);
+                    unsigned sl = (unsigned)((h * 0x9E3779B97F4A7C15ull) >> 54) & 1023u;
+                    int isint = 0;
+                    if (g_scan_tm[sl].gen1 == gen1 && g_scan_tm[sl].tp == s->tpool && g_scan_tm[sl].nh == h && (!g_scan_tm[sl].t || !g_scan_tm[sl].t->dead)) {
+                        isint = g_scan_tm[sl].isint;
+                    } else {
+                        Tex *t = NULL; View v;
+                        if (s->tpool && (nvn_front_handle(s->tpool, NULL, h, &t, &v, NULL) & 1) && t && !t->dead) {
+                            int nf = (v.set & 0x84) == 0x84 && v.format ? v.format : t->b.format;
+                            int k = nf >= 0x6D ? nf - 0x6D : (nf - 1) % 12;
+                            if (((nf >= 1 && nf <= 0x30) || (nf >= 0x6D && nf <= 0x78)) && (k == 2 || k == 3 || k == 7 || k == 8 || k == 10 || k == 11)) isint = k == 3 || k == 8 || k == 11 ? 2 : 1;
+                            if (nf == 0x3E) isint = 1;
+                        }
+                        g_scan_tm[sl].gen1 = gen1; g_scan_tm[sl].tp = s->tpool; g_scan_tm[sl].t = t; g_scan_tm[sl].nh = h; g_scan_tm[sl].isint = (uint8_t)isint;
+                    }
+                    s->tex_int[stage] = (s->tex_int[stage] & ~(1u << u)) | ((uint32_t)(isint != 0) << u);
+                    s->tex_sint[stage] = (s->tex_sint[stage] & ~(1u << u)) | ((uint32_t)(isint == 2) << u);
+                }
+            }
+            break;
+        }
         case OP_PROGRAM: for (int st = 0; st < 2; st++) if (a[1] & (1u << st)) { Prog *p = P(a[0]); s->prog[st] = p && !p->dead && p->st[st].state ? p : NULL; } break;
         case OP_TARGETS: {
             const TargetRef *col = (const TargetRef *)BLOB(m), *dep = col + 8;
@@ -2446,7 +2563,8 @@ static void pcache_save_at(int where, int marker) {
         WIN32_FILE_ATTRIBUTE_DATA fa0;
         LONG64 added = g_pc_dirty - g_pc_dirty_saved;
         int have_file = GetFileAttributesExA(g_pcache_path, GetFileExInfoStandard, &fa0) && (fa0.nFileSizeLow || fa0.nFileSizeHigh);
-        if (have_file && !marker && added < 8 && !(e && !strcmp(e, "always"))) {      /* under 8 new entries: not worth 0.9 GB of writing (run s14prep1: 1 entry = 11 s of exit); they are made again next time, a few ms */
+        int small_cache = !have_file || (!fa0.nFileSizeHigh && fa0.nFileSizeLow < (128u << 20));
+        if (have_file && !marker && added < (small_cache ? 1 : 8) && !(e && !strcmp(e, "always"))) {      /* under 8 new entries on a large cache: not worth 0.9 GB of writing (run s14prep1: 1 entry = 11 s of exit); small caches (< 128 MB) save any new creation */
             printf("nvn_vk: pipeline cache NOT rewritten at exit: %lld creations were added since %s (under 8: not worth rewriting the file; HL_VK_PCSAVE=always writes it anyway)\n", (long long)added, g_pc_dirty_saved ? "the last save of this run" : "it was read at start");
             fflush(stdout);
             return;

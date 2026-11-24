@@ -113,6 +113,10 @@ typedef struct {
 
 /* Returns 1 on success. out->glsl must be freed by the caller. */
 int mx_translate(const MxIn *in, MxOut *out);
+/* Static scan of Maxwell machine code: returns the bitmask of texture units whose loaded values are consumed
+ * predominantly by integer instructions (for pre-compiling integer-sampler variants ahead of draws). If sint_tex
+ * is non-NULL, receives the subset of units consumed predominantly by signed integer instructions. */
+uint32_t mx_infer_int_tex(const MxIn *in, uint32_t *sint_tex);
 /* Name of the Maxwell opcode of an instruction word (suyu's opcode table). */
 const char *mx_opcode_name(uint64_t insn);
 
