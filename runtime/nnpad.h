@@ -10,7 +10,7 @@ typedef struct {
     int lx, ly, rx, ry;         /* -32767..32767, up/right positive, dead zone and circular normalisation applied */
     int wired;                  /* 0 = bluetooth / wireless */
     int has_motion;             /* the device has a gyro and accelerometer */
-    float accel[3];             /* in G, Nintendo axes (see nnpad_sdl.c; the frame is NOT VERIFIED against a console) */
+    float accel[3];             /* in G, Nintendo axes (see nnpad_sdl.c: +x right, +y forward, +z up; gravity at rest is (0, 0, -1)) */
     float gyro[3];              /* in revolutions per second, same axes */
 } NnPadState;
 
@@ -19,6 +19,7 @@ void nnpad_prompts_used(int keyboard);          /* player 1 used a pad (0) or th
 int  nnpad_prompts_by_letter(void);             /* [Recomps#1] finding 148: player 1's face buttons by printed letter (A = the bottom button) */
 int  nnpad_menu_swapped(void);                  /* [witchtime] [general] swap_confirm, for the device in use: the pad's A and B change places (nnhid.c), prompts and panel follow */
 int  nnpad_init(void);                           /* SDL up (no video, no window); 0 = failed. Also loads controllers.ini. */
+void nnpad_shutdown(void);                       /* stop rumble and close open pads on exit */
 void nnpad_poll(int force);                      /* hot-plug, config reload; cheap when called often (at most once per ms) */
 int  nnpad_present(int player);                  /* a device is assigned to this player slot */
 int  nnpad_get(int player, NnPadState *out);     /* 0 = none */

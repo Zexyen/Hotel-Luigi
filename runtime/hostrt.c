@@ -475,6 +475,7 @@ void display_report(FILE *out);              /* display.c */
 void audio_report(FILE *out);                /* nnaudio.c: underruns of the run */
 void hid_report(FILE *out);                  /* nnhid.c: synthetic XInput pad (HL_XINPUT_SYNTH) */
 void os_thread_report(FILE *out);            /* os_threads.c: every thread the game created, with its nn::os arguments */
+void nnpad_shutdown(void);                   /* nnpad_sdl.c: stop rumble and close open pads */
 
 
 void report_and_exit(int code) {
@@ -488,6 +489,7 @@ void report_and_exit(int code) {
     os_thread_report(stdout);
     if (g_trace) { print_import_summary(g_trace); print_hostfn_summary(g_trace); fclose(g_trace); }
     fflush(stdout);
+    nnpad_shutdown();
     ExitProcess((UINT)code);
 }
 
