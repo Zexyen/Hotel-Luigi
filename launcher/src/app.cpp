@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
+#include <csignal>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -183,7 +184,66 @@ const char* start_error(const std::string& repo)
 	return build_command(repo, "setup").empty() ? NO_BUILD_TOOL : "The build tool cannot be started.";
 }
 
+volatile std::sig_atomic_t prepare_stop = 0;
+
 } // namespace
+
+// ---------------------------------------------------------------------------------------------------- --prepare
+int prepare_build(const char* argv0, const std::vector<std::string>& args)
+{
+	const Paths paths = Paths::find(argv0);
+	const std::string stamp = paths.build + "/" BUILT_VERSION;
+	std::remove(stamp.c_str());                  // written again only when this build finishes, so a cut-off one never looks built
+	BuildRunner runner;
+	if (!runner.start(paths.repo, args))
+	{
+		std::printf("%s\n", start_error(paths.repo));
+		return 1;
+	}
+	for (int s : {SIGINT, SIGTERM})              // the build runs in a process group of its own: stopped here, it stops too
+		std::signal(s, [](int) { prepare_stop = 1; });
+	std::string said;
+	double said_at = 0;
+	while (runner.running())
+	{
+		if (prepare_stop)
+			runner.stop();
+		runner.poll();
+		const int cur = step_index(runner.current);
+		if (cur >= 0)
+		{
+			float progress = 0;                  // weighted as the build screen's bar (refresh_build)
+			for (int i = 0; i < cur; i++)
+				progress += weight(BuildRunner::steps()[size_t(i)]);
+			std::string doing = phase_of(runner.current);
+			doing[0] = char(std::toupper(static_cast<unsigned char>(doing[0])));
+			if (runner.current == "compile" && runner.to_compile > 0)
+			{
+				progress += weight("compile") * float(runner.compiled) / float(runner.to_compile);
+				doing += " " + std::to_string(runner.compiled) + " of " + std::to_string(runner.to_compile) + " files";
+			}
+			char line[200];
+			std::snprintf(line, sizeof line, "progress %.3f %s", std::clamp(progress, 0.f, 1.f), doing.c_str());
+			if (line != said || now_seconds() - said_at > 60)    // and once a minute, so a long step never looks stuck
+			{
+				std::printf("%s\n", line);
+				std::fflush(stdout);
+				said = line;
+				said_at = now_seconds();
+			}
+		}
+		SDL_Delay(200);
+	}
+	if (runner.exit_code)
+	{
+		for (const std::string& l : runner.lines)    // the build's own reason, after its FAILED line; the rest is in build/logs
+			std::printf("%s\n", l.c_str());
+		return runner.exit_code;
+	}
+	std::ofstream(stamp, std::ios::binary) << HL_VERSION;
+	std::printf("progress 1 Built from your dump\n");
+	return 0;
+}
 
 // ---------------------------------------------------------------------------------------------------- start and loop
 bool App::init(int argc, char** argv)

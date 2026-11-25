@@ -1,6 +1,8 @@
 #include "update.h"
 #include "platform.h"
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <mutex>
 #include <thread>
@@ -153,7 +155,8 @@ void check(const Paths& paths)
 	std::error_code ec;
 	fs::remove_all(to_path(paths.build + "/update"), ec);    // what the last update replaced (fails harmlessly if busy)
 	const long long mine = version_number(HL_VERSION);
-	if (mine < 0 || !UPDATE_REPO[0])           // a developer's build, or a project that names no repository to update from
+	const char* rl = std::getenv("RECOMPLAUNCHER");
+	if (mine < 0 || !UPDATE_REPO[0] || (rl && !std::strcmp(rl, "1")))   // a developer's build, a project with no repository, or RecompLauncher updates it
 		return;
 	set(State::checking, "");
 	std::thread([mine] {

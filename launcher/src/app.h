@@ -36,6 +36,10 @@ struct ModRow { Rml::String name, note, kind; bool on = true; };
 struct SettingRow { Rml::String name, note, value; int index = 0; Rml::String bump = "none"; };   // index: the row in setting_defs(); bump: the value's nudge animation after a change
 struct MenuRow { Rml::String label, tag; std::string action; bool dim = false; };   // a bar of the title's staircase
 
+// --prepare [hlbuild setup's arguments]: the build without a window, for RecompLauncher's setup step. Prints
+// "progress <0..1> <text>" lines; ends with the build's exit code, and leaves build/built_version as the build screen does.
+int prepare_build(const char* argv0, const std::vector<std::string>& args);
+
 class App {
 public:
 	bool init(int argc, char** argv);
