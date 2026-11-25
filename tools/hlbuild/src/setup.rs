@@ -71,7 +71,7 @@ const WINDOWS_LIBS: [(&str, &str, &str); 4] = [
     ("FFmpeg", "libavformat/avformat.h", "-lavformat -lavcodec -lswscale -lswresample -lavutil"),
 ];
 
-const USAGE: &str = "usage: hlbuild setup [--dump <folder>] [--jobs N] [--only <step> | --from <step>] [--status] [--accept-modified] [--move-dump]
+const USAGE: &str = "usage: hlbuild setup [--dump <folder> | --dump <game.xci|nsp> [--update <update.nsp>] --keys <prod.keys>] [--jobs N] [--only <step> | --from <step>] [--status] [--accept-modified] [--move-dump]
                      [--mods <folder>] [--llvm <folder>] [--repo <folder>]
 steps: deps verify convert mods tables lift compile link text check (tools/hlbuild/README.md, \"Steps\", describes them)";
 
@@ -84,6 +84,8 @@ fn say(msg: impl AsRef<str>) {
 
 struct Args {
     dump: Option<String>,
+    update: Option<String>, // with a package as --dump: the update's .nsp
+    keys: Option<String>,   // and the player's prod.keys
     jobs: Option<usize>,
     only: Option<String>,
     from: Option<String>,
@@ -98,6 +100,8 @@ struct Args {
 fn parse(args: &[String]) -> Result<Args, String> {
     let mut a = Args {
         dump: None,
+        update: None,
+        keys: None,
         jobs: None,
         only: None,
         from: None,
@@ -122,6 +126,8 @@ fn parse(args: &[String]) -> Result<Args, String> {
         };
         match k {
             "--dump" => a.dump = Some(val()?),
+            "--update" => a.update = Some(abspath(&val()?)),
+            "--keys" => a.keys = Some(abspath(&val()?)),
             "--jobs" => a.jobs = Some(val()?.parse().map_err(|_| "argument --jobs: invalid int value".to_string())?),
             "--only" | "--from" => {
                 let v = val()?;
@@ -523,9 +529,13 @@ fn romfs_manifest(root: &Path) -> ((usize, u64, String), HashMap<String, u64>) {
 }
 
 fn step_verify(cx: &mut Ctx) -> Result<(), Fail> {
-    let Some(dump) = cx.dump.clone() else {
+    let Some(given) = cx.dump.clone() else {
         return Err(Fail("--dump <folder> is required".into()));
     };
+    let dump = dump_folder(cx, &given).to_string_lossy().into_owned();
+    if dump != given {
+        unpack(cx, &given, &dump)?;
+    }
     // encrypted packages anywhere outside romfs/
     fn scan(d: &Path) -> Result<(), Fail> {
         let Ok(rd) = fs::read_dir(d) else { return Ok(()) };
@@ -543,7 +553,7 @@ fn step_verify(cx: &mut Ctx) -> Result<(), Fail> {
         }
         if let Some(b) = bad {
             return Err(Fail(format!(
-                "{}: encrypted packages are not accepted ({}). Give the extracted ExeFS and RomFS folders (README, \"What you extract from your own console\").",
+                "{}: encrypted packages are not read from a folder ({}). Give the package itself (--dump <game.xci|nsp> --update <update.nsp> --keys <prod.keys>), or the extracted ExeFS and RomFS folders (README, \"What you extract from your own console\").",
                 d.display(),
                 crate::py::repr_str(&b)
             )));
@@ -635,8 +645,44 @@ fn step_verify(cx: &mut Ctx) -> Result<(), Fail> {
             VERSION
         )));
     }
-    cx.state.insert("dump".into(), json!(dump));
+    cx.state.insert("dump".into(), json!(given));
+    cx.state.insert("update".into(), json!(cx.a.update));
     say(format!("  exefs and romfs match the supported version: {} ({} RomFS files)", VERSION, count));
+    Ok(())
+}
+
+/// the folder the steps read: the dump, or build/dump where verify unpacks a package (.xci or .nsp) given as --dump
+fn dump_folder(cx: &Ctx, dump: &str) -> PathBuf {
+    if Path::new(dump).is_file() {
+        cx.build.join("dump")
+    } else {
+        PathBuf::from(dump)
+    }
+}
+
+/// a package and its update to build/dump/exefs and romfs, with the player's keys (nx.rs); from scratch each time, so a
+/// run that was cut off never leaves half a dump behind for the checks below
+fn unpack(cx: &Ctx, package: &str, out: &str) -> Result<(), Fail> {
+    let Some(keys) = cx.a.keys.as_deref() else {
+        return Err(Fail(format!(
+            "{} is a package: it needs your console's keys to be read (--keys <prod.keys>), and the 1.4.0 update with it (--update <update.nsp>)",
+            package
+        )));
+    };
+    if cx.a.update.is_none() {
+        say("  no --update given: the package itself has to be version 1.4.0");
+    }
+    let _ = fs::remove_dir_all(out);
+    let t0 = Instant::now();
+    crate::nx::unpack(
+        Path::new(package),
+        cx.a.update.as_deref().map(Path::new),
+        Path::new(keys),
+        Path::new(out),
+        &|l| say(l),
+    )
+    .map_err(|e| Fail(format!("{}\n(the package is read with your keys from {})", e, keys)))?;
+    say(format!("  unpacked into build/dump in {}", fmt_secs(t0.elapsed().as_secs_f64())));
     Ok(())
 }
 
@@ -728,6 +774,11 @@ fn step_convert(cx: &mut Ctx) -> Result<(), Fail> {
     let Some(dump) = cx.dump.clone() else {
         return Err(Fail("the dump folder is not known: run with --dump <folder>".into()));
     };
+    let (dump, mv) = {
+        let d = dump_folder(cx, &dump);
+        let unpacked = d != Path::new(&dump);
+        (d.to_string_lossy().into_owned(), cx.a.move_dump || unpacked) // what verify unpacked is moved, not copied
+    };
     let out = cx.targets.join("exefs");
     let d = exefs_source(Path::new(&dump), &cx.targets);
     fs::create_dir_all(&out).map_err(|e| Fail(e.to_string()))?;
@@ -746,21 +797,24 @@ fn step_convert(cx: &mut Ctx) -> Result<(), Fail> {
         say(format!("  {} -> targets/exefs/{}.elf, segment hashes ok", name, name));
     }
     // the game, the launcher and the run scripts read targets/romfs and targets/sysdata/fonts
-    if !cx.a.move_dump {
+    if !mv {
         say("  copying the game data into targets/ (--move-dump moves it instead)");
     }
     say(format!(
         "  targets/romfs: {}",
-        place_folder(&cx.targets.join("romfs"), &Path::new(&dump).join("romfs"), cx.a.move_dump)?
+        place_folder(&cx.targets.join("romfs"), &Path::new(&dump).join("romfs"), mv)?
     ));
     let fonts = Path::new(&dump).join("sysdata").join("fonts");
     if fonts.is_dir() || cx.targets.join("sysdata").join("fonts").is_dir() {
         say(format!(
             "  targets/sysdata/fonts: {}",
-            place_folder(&cx.targets.join("sysdata").join("fonts"), &fonts, cx.a.move_dump)?
+            place_folder(&cx.targets.join("sysdata").join("fonts"), &fonts, mv)?
         ));
     } else {
         say("  no sysdata/fonts in the dump: a font of this PC will stand in for the console's system fonts (BUILDING.md)");
+    }
+    if mv && dump == cx.build.join("dump").to_string_lossy() {
+        let _ = fs::remove_dir_all(&dump); // unpacked from a package: everything it held is in targets/ now
     }
     Ok(())
 }
@@ -1056,6 +1110,9 @@ pub fn main(args: &[String]) -> i32 {
             if d != old {
                 cx.done().clear(); // another dump: everything is made again
             }
+        }
+        if cx.a.update.is_some() && cx.state.get("update").and_then(|v| v.as_str()) != cx.a.update.as_deref() {
+            cx.done().clear(); // another update with the same package: the same
         }
     }
     let todo: Vec<&str> = match &cx.a.only {

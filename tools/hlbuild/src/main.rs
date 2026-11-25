@@ -12,6 +12,7 @@ mod lifter;
 mod link;
 mod lprof;
 mod nso;
+mod nx;
 mod nvn_procs;
 mod pchtxt;
 mod py;
