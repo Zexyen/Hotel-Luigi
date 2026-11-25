@@ -129,6 +129,8 @@ void nvn_front_barrier_texmem(void);                                        /* n
 int nvn_front_tex_layers(const Tex *t);
 int nvn_front_tex_over(const Tex *t, Tex **out, int max);                   /* nvn_gl.c: live textures with an image at t's storage address, of t's format and at least t's size (writes up to max, returns total count) */
 Tex *nvn_front_tex_same(const Tex *t);                                      /* nvn_gl.c: another live texture with a back-end image over exactly t's storage and of t's layout */
+Tex *nvn_front_tex_same_vk(const Tex *t, void *vk);                         /* nvn_gl.c: another live texture over t's storage that currently points to vk */
+int nvn_front_tex_sharing(const Tex *t, void *vk, Tex **out, int max);      /* nvn_gl.c: all live textures over t's storage pointing to vk (writes up to max, returns total count) */
 int nvn_front_tex_overlapping(const Tex *t, Tex **out, int max);            /* nvn_gl.c: the other live textures over t's storage that have a back-end image */
 int nvn_front_tex_levels(const Tex *t);                                     /* levels the host image has (builder levels clamped to the size) */
 /* 1 when the guest memory of the texture must be read (again): first use, or written since the last look. `commit` = the
