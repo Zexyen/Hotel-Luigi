@@ -1,0 +1,7 @@
+#!/bin/sh
+# The AppImage's entry point (the Linux release packs one folder as a .tar.gz and as an AppImage): the launcher, from
+# wherever the folder is. Mounted, the folder is read-only, and the launcher keeps the build, settings and saves in
+# ~/.local/share/hotel-luigi (launcher/src/config.h, Paths); unpacked (RecompLauncher, --appimage-extract) it keeps them
+# in the folder, as the .tar.gz does. --data <folder> puts them anywhere.
+here=$(dirname "$(readlink -f "$0")")     # not $APPDIR: started by another AppImage, it is that one's
+exec "$here/build/hotel-luigi-game" "$@"

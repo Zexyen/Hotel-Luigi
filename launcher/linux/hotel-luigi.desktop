@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Hotel Luigi
+Comment=Luigi's Mansion 3 on PC, built from your own copy
+Exec=hotel-luigi-game
+Icon=hotel-luigi
+Categories=Game;
+Terminal=false

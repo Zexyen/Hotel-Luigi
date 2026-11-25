@@ -22,14 +22,14 @@
     { "id": "keys", "label": "Your console's prod.keys", "role": "key", "shared": "switch.prod-keys" }
   ],
   "prepare": {
-    "program": ["build/hotel-luigi-game.exe", "build/hotel-luigi-game"],
+    "program": ["Hotel-Luigi-x86_64.AppImage", "build/hotel-luigi-game.exe", "build/hotel-luigi-game"],
     "args": ["--prepare", "--dump={input:game}", "--update={input:update}", "--keys={input:keys}"],
     "label": "Building the game from your dump",
     "done": ["{install}/build/built_version"],
     "keeps_copy": true
   },
   "start": {
-    "program": ["build/hotel-luigi-game.exe", "build/hotel-luigi-game"],
+    "program": ["Hotel-Luigi-x86_64.AppImage", "build/hotel-luigi-game.exe", "build/hotel-luigi-game"],
     "args": ["--play"]
   },
   "system": {

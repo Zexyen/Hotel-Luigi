@@ -69,7 +69,13 @@ and keys, or the folder), builds it, and starts the game.
 
 A release archive brings everything the build needs (the launcher, the build tool, the runtime already built, clang
 and lld), so the PC needs no compiler or Python: take the one for your system from the
-[releases page](https://github.com/Zexyen/Hotel-Luigi/releases), unpack it and start the launcher in it.
+[releases page](https://github.com/Zexyen/Hotel-Luigi/releases), unpack it and start the launcher in it. On Linux the
+`.AppImage` is the same folder as one file: start it as it is.
+
+Where the game keeps its files: the build (about 8 GB with the game's data), `config/`, `mods/`, the saves
+(`build/userdata`), the caches and the logs (`build/run`) are in the release folder. An AppImage started as it is keeps
+them in `~/.local/share/hotel-luigi` instead. `--data <folder>` (or `HL_DATA=<folder>`) puts all of them in that folder,
+for any of them: give it every time the launcher starts.
 
 With Discord running, your status shows the floor, the room and your money (Rich Presence). `HL_DISCORD=0` in the
 environment switches it off; `HL_DISCORD_APP_ID=<id>` uses a Discord application of your own.
