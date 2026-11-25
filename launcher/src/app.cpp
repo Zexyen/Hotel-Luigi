@@ -498,9 +498,12 @@ void App::bind_model()
 	c.BindEventCallback("remove_textures", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) { remove_textures(); });
 	c.BindEventCallback("create_shortcut", [this](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
 		// the release's own launcher at the top, which an update keeps in place; a checkout without one: this program
+		// started from an AppImage: the AppImage, as its mounted folder moves every time
 		std::string top = paths.repo + "/" LAUNCHER_NAME HL_EXE, said;
+		const char* appimage = std::getenv("APPIMAGE");
 		const char* desktop = SDL_GetUserFolder(SDL_FOLDER_DESKTOP);
-		create_shortcut(desktop ? desktop : "", is_program(top) ? top : paths.self, paths.ui + "/img/icon.png", &said);
+		create_shortcut(desktop ? desktop : "", appimage && appimage[0] && paths.fixed ? appimage : is_program(top) ? top : paths.self,
+			paths.ui + "/img/icon.png", &said);
 		shortcut_note = said;
 		model.DirtyVariable("shortcut_note");
 	});
@@ -898,7 +901,7 @@ void App::go_now(const Rml::String& to)
 void App::refresh_title()
 {
 	built = file_exists(paths.build + "/" + GAME_EXE) && file_exists(paths.build + "/" + GAME_LIB) &&
-		file_exists(paths.repo + "/targets/exefs/main.elf");
+		file_exists(paths.data + "/targets/exefs/main.elf");
 	std::string built_version;
 	std::getline(std::ifstream(paths.build + "/" BUILT_VERSION), built_version);
 	// the game is built on the player's PC, so new launcher files (auto-update or unpacked by hand) leave an old game in build/ [issue 22]

@@ -72,7 +72,7 @@ const WINDOWS_LIBS: [(&str, &str, &str); 4] = [
 ];
 
 const USAGE: &str = "usage: hlbuild setup [--dump <folder> | --dump <game.xci|nsp> [--update <update.nsp>] --keys <prod.keys>] [--jobs N] [--only <step> | --from <step>] [--status] [--accept-modified] [--move-dump]
-                     [--mods <folder>] [--llvm <folder>] [--repo <folder>]
+                     [--mods <folder>] [--llvm <folder>] [--repo <folder>] [--data <folder>: everything it writes goes there]
 steps: deps verify convert mods tables lift compile link text check (tools/hlbuild/README.md, \"Steps\", describes them)";
 
 struct Fail(String);
@@ -844,7 +844,7 @@ fn step_mods(cx: &mut Ctx) -> Result<(), Fail> {
             .mods
             .clone()
             .or_else(|| cx.state.get("mods_dir").and_then(|v| v.as_str()).map(String::from))
-            .unwrap_or_else(|| format!("{}/mods", cx.repo)),
+            .unwrap_or_else(|| crate::layout::data_root(cx.root()).join("mods").to_string_lossy().into_owned()),
     );
     let folder_p = PathBuf::from(&folder);
     let (nso_p, elf) = (cx.targets.join("exefs").join("main"), cx.targets.join("exefs").join("main.elf"));
@@ -857,7 +857,7 @@ fn step_mods(cx: &mut Ctx) -> Result<(), Fail> {
     if !nso_p.is_file() || !elf.is_file() {
         return Err(Fail("targets/exefs/main / main.elf are missing: run convert first".into()));
     }
-    let settings = pchtxt::read_settings(&cx.root().join("config").join("mods.ini")); // the launcher's Mods window switches
+    let settings = pchtxt::read_settings(&crate::layout::data_root(cx.root()).join("config").join("mods.ini")); // the launcher's Mods window switches
     let rel = |f: &PathBuf| f.strip_prefix(&folder_p).unwrap_or(f).to_string_lossy().into_owned();
     let mut off: Vec<String> = files
         .iter()
@@ -1064,7 +1064,7 @@ pub fn main(args: &[String]) -> i32 {
         }
     };
     let repo = abspath(a.repo.as_deref().unwrap_or("."));
-    let build = Path::new(&repo).join("build");
+    let build = crate::layout::build(Path::new(&repo));
     let state_file = build.join("setup_state.json");
     let state: Map<String, Value> = fs::read(&state_file)
         .ok()
@@ -1079,7 +1079,7 @@ pub fn main(args: &[String]) -> i32 {
     let jobs = a.jobs.filter(|j| *j > 0).unwrap_or_else(crate::util::default_jobs);
     let mut cx = Ctx {
         repo: repo.clone(),
-        targets: Path::new(&repo).join("targets"),
+        targets: crate::layout::targets(Path::new(&repo)),
         logs: build.join("logs"),
         build,
         state_file,

@@ -406,6 +406,7 @@ pub fn run_step(repo: &str, clang: &str, t: Target, jobs: usize, env: &(dyn Fn(&
     let root = format!("{}/scripts/..", repo); // the spelling every player's stamps hold: another compiles everything again
     fs::create_dir_all(Path::new(repo).join("scripts")).map_err(|e| format!("scripts: {}", e))?; // so the spelling resolves
     let gen = match crate::layout::sub().as_str() {
+        _ if crate::layout::has_data() => crate::layout::build(Path::new(repo)).join("gen_eh").to_string_lossy().into_owned(),
         "" => format!("{}/build/gen_eh", root),
         p => format!("{}/build/{}/gen_eh", root, p), // [witchtime] program N (crate::layout)
     };

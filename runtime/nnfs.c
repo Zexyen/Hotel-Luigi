@@ -167,6 +167,7 @@ static void mods_ini_path(char *out) {                   /* beside controllers.i
     char *s = strrchr(tmp, '\\'), *s2 = strrchr(tmp, '/');      /* [witchtime] '/' on Linux, as graphics.ini (gfx_options.c) */
     if (s2 > s) s = s2;
     if (s) *s = 0;
+    if (getenv("HL_DATA") && getenv("HL_DATA")[0]) snprintf(tmp, sizeof tmp, "%s/build", getenv("HL_DATA"));      /* the data folder's build/, where the runtime is (in the launcher's process too) */
     snprintf(out, MAX_PATH, "%s\\..\\config\\mods.ini", tmp);
 }
 /* mods.ini value of key in [sect] ("" when missing); trims blanks and a "; comment" after the value */
@@ -248,6 +249,7 @@ static void rom_mods_init(void) {
         char *s = strrchr(tmp, '\\'), *s2 = strrchr(tmp, '/');  /* [witchtime] '/' on Linux: build/hotel-luigi-runtime/../mods was no folder */
         if (s2 > s) s = s2;
         if (s) *s = 0;
+        if (getenv("HL_DATA") && getenv("HL_DATA")[0]) snprintf(tmp, sizeof tmp, "%s/build", getenv("HL_DATA"));      /* the data folder's build/, where the runtime is (in the launcher's process too) */
         strncat(tmp, "\\..\\mods", sizeof tmp - strlen(tmp) - 1);
     }
     if (!_fullpath(dir, tmp, MAX_PATH)) snprintf(dir, sizeof dir, "%s", tmp);

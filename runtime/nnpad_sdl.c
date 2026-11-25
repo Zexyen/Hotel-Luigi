@@ -388,6 +388,7 @@ static void cfg_path(char *out) {
     char *s = strrchr(exe, '\\'), *s2 = strrchr(exe, '/');      /* [witchtime] '/' on Linux too, as gfx_options.c opt_path */
     if (s2 > s) s = s2;
     if (s) *s = 0;
+    if (getenv("HL_DATA") && getenv("HL_DATA")[0]) snprintf(exe, sizeof exe, "%s/build", getenv("HL_DATA"));      /* the data folder's build/, where the runtime is (in the launcher's process too) */
     snprintf(tmp, sizeof tmp, "%s\\..\\config\\controllers.ini", exe);
     if (!_fullpath(out, tmp, MAX_PATH)) snprintf(out, MAX_PATH, "%s", tmp);
 }
