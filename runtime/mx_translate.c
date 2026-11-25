@@ -31,7 +31,7 @@ typedef struct {
     unsigned words;
     char *s; size_t len, cap;                 /* body being emitted */
     int fail; char why[200], failop[40];
-    uint32_t cbufs, in_attr, out_attr, tex_units, clip_out, ssbos;
+    uint32_t cbufs, in_attr, out_attr, patch_attr, tex_units, clip_out, ssbos;
     uint8_t regs[256], preds[8], in_comp[32], in_mode[32];
     int uses_gmem, uses_gstore, uses_cc, uses_layer_out, uses_vp_out, uses_psize, uses_lmem, insns, blocks, any_jump, uses_alpha, alpha_elided;
     uint8_t *reach, *leader;
@@ -317,13 +317,18 @@ static const char *vid_operand(Mx *e, const char *v, unsigned w, unsigned sel, i
     unsigned bits = w == 2 ? 16 : 8;
     return sg ? S(e, "uint(bitfieldExtract(int(%s), %u, %u))", v, sel * bits, bits) : S(e, "bitfieldExtract(%s, %u, %u)", v, sel * bits, bits);
 }
-/* [witchtime] patch attribute p (address / 4; suyu's IR::Patch): 0..3 the outer tessellation levels, 4 / 5 the inner ones, 6 + 4k + c
- * component c of generic patch vector k (not supported). write: the lvalue (float) of the control stage, else the value as uint. */
+/* [witchtime] patch attribute p (address / 4): 0..3 the outer tessellation levels (0x00..0x0c), 4 / 5 the inner ones (0x10..0x14),
+ * 6 / 7 header padding, 8 + 4k + c (0x20 + 16k + 4c) component c of generic patch vector k (0..29, 120 components, matching
+ * GLSLC's layout(location = k) assignment). write: the lvalue (float) of the control stage, else the value as uint. */
 static const char *patch_attr(Mx *e, unsigned p, int write) {
     const char *lv;
     if (p < 4) lv = S(e, "gl_TessLevelOuter[%u]", p);
     else if (p < 6) lv = S(e, "gl_TessLevelInner[%u]", p - 4);
-    else { fail(e, "patch attribute", "generic patch attribute %u (shortcut: not declared; B3's 29 control stages have only the 6 levels)", p); return "0u"; }
+    else if (p >= 8 && p < 128) {
+        unsigned k = (p - 8) >> 2, c = (p - 8) & 3;
+        e->patch_attr |= 1u << k;
+        lv = S(e, "patch_attr%u[%u]", k, c);
+    } else { fail(e, "patch attribute", "generic patch attribute %u out of range", p); return "0u"; }
     return write ? lv : S(e, "U(%s)", lv);
 }
 
@@ -2031,6 +2036,11 @@ int mx_translate(const MxIn *in, MxOut *out) {
         }
         insn(e, pc, MXW(pc));
     }
+    if (in->stage == MX_VERTEX || tess_stage(e) || in->stage == MX_GEOMETRY) e->out_attr |= in->force_out;      /* declared and set to (0, 0, 0, 1) below */
+    if (!e->fail && tess_stage(e)) {
+        uint32_t ov = e->patch_attr & (in->stage == MX_TESS_CONTROL ? e->out_attr : e->in_attr);
+        if (ov) fail(e, "patch attribute", "generic patch attribute overlaps per-vertex attribute mask 0x%x", ov);
+    }
     if (e->fail) {
         snprintf(out->why, sizeof out->why, "%s", e->why);
         snprintf(out->op, sizeof out->op, "%s", e->failop);
@@ -2043,7 +2053,6 @@ int mx_translate(const MxIn *in, MxOut *out) {
         Mx h;
         memset(&h, 0, sizeof h);
         h.in = in;
-        if (in->stage == MX_VERTEX || tess_stage(e) || in->stage == MX_GEOMETRY) e->out_attr |= in->force_out;      /* declared and set to (0, 0, 0, 1) below */
         const int vk = in->target == 1;
         const char *set0 = vk ? "set = 0, " : "", *set1 = vk ? "set = 1, " : "";
         /* [witchtime] SignedZeroInfNanPreserve: without it AMD's Windows driver may assume no NaN / Inf and fold away the isnan and
@@ -2105,6 +2114,7 @@ int mx_translate(const MxIn *in, MxOut *out) {
             else emit(&h, "in gl_PerVertex { vec4 gl_Position; } gl_in[gl_MaxPatchVertices];\n");
             for (unsigned n = 0; n < 32; n++) if (e->in_attr >> n & 1) emit(&h, "layout(location = %u) in vec4 in_attr%u[];\n", n, n);
             if (in->stage == MX_TESS_CONTROL) for (unsigned n = 0; n < 32; n++) if (e->out_attr >> n & 1) emit(&h, "layout(location = %u) out vec4 out_attr%u[];\n", n, n);
+            for (unsigned n = 0; n < 30; n++) if (e->patch_attr >> n & 1) emit(&h, "layout(location = %u) patch %s vec4 patch_attr%u;\n", n, in->stage == MX_TESS_CONTROL ? "out" : "in", n);
         }
         if (in->stage == MX_GEOMETRY) {
             /* Program header (suyu ProgramHeader): byte 0x0b threads per input primitive (invocations), word 3 bits 24..27 the

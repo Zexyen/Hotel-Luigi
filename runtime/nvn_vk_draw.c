@@ -346,6 +346,7 @@ static struct {
     uint64_t nvn_tex[6][32], c2[6][112];
     uint32_t tex_int[6], tex_sint[6];
     uint32_t patch;                                /* [witchtime] nvnCommandBufferSetPatchSize */
+    float tess_outer[4], tess_inner[2];            /* nvnCommandBufferSetOuter/InnerTessellationLevels */
     uint32_t vattr[32]; int nattr;
     struct { uint32_t stride, divisor; } vstream[32];
     uint64_t ds; uint32_t chanmask, sample_mask;
@@ -4366,6 +4367,7 @@ static int draw_prepare(unsigned prim) {
     if (!R.have_targets && !R.render_off) { R.null_w = (int)(R.viewport[0] + R.viewport[2] + 0.5f); R.null_h = (int)(R.viewport[1] + R.viewport[3] + 0.5f); }
     if ((!R.have_targets && (R.null_w <= 0 || R.null_h <= 0)) || R.render_off) { if (drawlog_on()) printf("DLS f%lld skipped: %s (vs #%d fs #%d, viewport %g,%g %gx%g)\n", nvn_front_frame_next(), R.render_off ? "rendering switched off (SetRenderEnable)" : "no render targets", R.prog[0] ? R.prog[0]->serial : -1, R.prog[1] ? R.prog[1]->serial : -1, (double)R.viewport[0], (double)R.viewport[1], (double)R.viewport[2], (double)R.viewport[3]); return 0; }      /* [witchtime] TEST ONLY log */
     int tess = R.prog[3] || R.prog[4];             /* [witchtime] NVN primitive 14 = patches, with a control and an evaluation stage */
+    if (!tess && prim == 14 && R.patch == 3) prim = 4; /* [lm3] 10F sand shadow pass draws the 3-vertex patch mesh with a plain vertex shader and no TCS/TES */
     if (tess ? prim != 14 || !R.prog[3] || !R.prog[4] || !R.patch || R.patch > V.props.limits.maxTessellationPatchSize : prim > 7 || topo[prim] < 0) {
         static char msg[96]; snprintf(msg, sizeof msg, "a draw with NVN primitive type %u%s", prim, tess ? " and a tessellation stage (without the other one, or not patches)" : ""); nvn_vk_missing(msg); return 0; }
     VkPrimitiveTopology vtopo = tess ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST : (VkPrimitiveTopology)topo[prim];
@@ -4845,7 +4847,7 @@ static void write_region(Tex *t, const View *vp, const int *r, const void *data,
     VkBufferImageCopy c;
     memset(&c, 0, sizeof c);
     c.bufferOffset = off; c.bufferRowLength = (uint32_t)rowlen; c.bufferImageHeight = (uint32_t)rows;
-    c.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; c.imageSubresource.mipLevel = (uint32_t)level; c.imageSubresource.baseArrayLayer = vt->is3d ? 0 : (uint32_t)layer; c.imageSubresource.layerCount = 1;
+    c.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; c.imageSubresource.mipLevel = (uint32_t)level; c.imageSubresource.baseArrayLayer = vt->is3d ? 0 : (uint32_t)layer; c.imageSubresource.layerCount = vt->is3d ? 1 : (uint32_t)depth;
     c.imageOffset.x = r[0]; c.imageOffset.y = r[1]; c.imageOffset.z = vt->is3d ? r[2] : 0;
     c.imageExtent.width = (uint32_t)r[3]; c.imageExtent.height = (uint32_t)r[4]; c.imageExtent.depth = (uint32_t)(vt->is3d ? depth : 1);
     vkCmdCopyBufferToImage(R.cmd, R.ring, vt->img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
@@ -5305,6 +5307,9 @@ static void exec(const Cmd *m, int depth) {
     case OP_DEPTHCLAMP: R.depth_clamp = a[0] & 1; R.dyn3_dirty = 1; if ((a[0] & 1) && !D.f2.features.depthClamp) nvn_vk_missing("depth clamp on a GPU without depthClamp"); break;
     case OP_PRIMRESTART: R.restart = a[0] & 1; break;
     case OP_PATCHSIZE: R.patch = (uint32_t)a[0]; break;
+    case OP_TESSLEVELS:
+        if (a[0]) memcpy(R.tess_outer, blob, 16); else memcpy(R.tess_inner, blob, 8);
+        break;
     case OP_IMAGES: {                              /* [witchtime] (stage, first, count) + handles: resolved at the draw / dispatch (resolve_image) */
         int stage = (int)a[0] % 6, first = (int)a[1], count = (int)a[2];
         for (int i = 0; i < count && first + i < 8; i++) if (first + i >= 0) memcpy(&R.nvn_img[stage][first + i], blob + i * 8, 8);
