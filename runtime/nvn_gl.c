@@ -4547,9 +4547,12 @@ int nvn_front_tex_over(const Tex *t, Tex **out, int max) {
     int n = 0;
     if (!t->mem) return 0;
     live_lock();
-    for (Tex *o = *live_mem_slot(t->mem); o && n < max; o = o->mem_next)
+    for (Tex *o = *live_mem_slot(t->mem); o; o = o->mem_next)
         if (o != t && o->vk && o->vk != t->vk && o->mem == t->mem && o->b.format == t->b.format && o->b.target == t->b.target && o->b.samples == t->b.samples &&
-            o->b.width >= t->b.width && o->b.height >= t->b.height) out[n++] = o;
+            o->b.width >= t->b.width && o->b.height >= t->b.height) {
+            if (n < max) out[n] = o;
+            n++;
+        }
     LeaveCriticalSection(&g_live_lock);
     return n;
 }
