@@ -295,6 +295,10 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         const char *e = getenv("HL_WINDOW"); int w, h;
         if (e && sscanf(e, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 180 && w <= 16384 && h <= 16384) { o->width = w; o->height = h; }
     }
+    {   /* Play pressed in RecompLauncher's Big Picture mode (a controller, a TV): a windowed game opens borderless instead */
+        const char *m = getenv("RECOMPLAUNCHER_MODE");
+        if (m && !strcmp(m, "bigpicture") && o->window_mode == 0) o->window_mode = 1;
+    }
     if (!getenv("HL_MODEL_LOD")) _putenv_s("HL_MODEL_LOD", o->model_lod_high ? "highest" : "game");      /* [witchtime] read by the game library */
     else o->model_lod_high = !_stricmp(getenv("HL_MODEL_LOD"), "highest");
     {   /* [witchtime] cutscene_fps: the game library (game_shim_eh.c) reads HL_CUTSCENE_FPS; a set variable (test runs) wins */

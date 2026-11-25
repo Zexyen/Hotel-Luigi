@@ -566,7 +566,7 @@ int App::run()
 	std::string tag, message;
 	if (update::state(tag, message) == update::State::done)
 		update::restart(paths);
-	return 0;
+	return play_only && returned_code >= 0 ? returned_code : 0;   // --play ends as the game did (Linux: in run_in_process)
 }
 
 // the control an element is in or is (a row around its arrows, a button), or none
