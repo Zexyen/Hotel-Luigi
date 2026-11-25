@@ -26,9 +26,17 @@ Beyond the console's picture (all off by default, in `config/graphics.ini` or th
 - Xbox, PlayStation and keyboard button prompts, remappable pads and keys (`config/controllers.ini`)
 - emulator-style code mods (`.pchtxt`), patched in at build time
 
-## What you extract from your own console
+## What you dump from your own console
 
-One folder with the decrypted, extracted contents of your own copy:
+Either the game's package and its update as your console dumps them, with your console's keys:
+
+```
+game.xci or game.nsp     the game (1.0.0 is fine)
+update.nsp               the 1.4.0 update (v327680)
+prod.keys                your console's keys, which read both
+```
+
+or one folder with the decrypted, extracted contents of your own copy:
 
 ```
 <dump>/
@@ -37,8 +45,9 @@ One folder with the decrypted, extracted contents of your own copy:
 ```
 
 Only one version is supported: 1.4.0, the latest update (title `0100DCA0064A6000`), the build whose `main` has build
-ID `79e5950ffa85acf6` (nnSdk 7.3.2). The first build step checks every file by SHA-256 and says what differs. Encrypted
-packages (`.nsp`, `.xci`, `.nca`, `.nsz`, `.xcz`) are refused, and no keys are used or needed.
+ID `79e5950ffa85acf6` (nnSdk 7.3.2). The first build step checks every file by SHA-256 and says what differs. A package
+is unpacked with your keys into `build/dump` first (a few seconds); the keys are read where they are and never copied.
+Compressed packages (`.nsz`, `.xcz`) are refused: decompress them first.
 
 The game is not distributed here in any form, and will not be. Do not ask for it in issues.
 
@@ -47,6 +56,16 @@ The game is not distributed here in any form, and will not be. Do not ask for it
 Start `hotel-luigi-game` (Windows: `hotel-luigi-game.exe`), point it at the dump folder, and let it build. The build has
 five rows, of which compiling is the long one; it is resumable, so closing the launcher loses nothing finished. The
 game then runs in the launcher's own window. Settings, mods and updates are on the launcher's screens.
+
+The launcher's window takes a dump folder. For a package, build it once from a terminal in the release folder, then
+start the launcher as usual:
+
+```sh
+build/hotel-luigi-game --prepare --dump=game.xci --update=update.nsp --keys=prod.keys
+```
+
+[RecompLauncher](https://recomplauncher.com) does all of this for you: it asks for your copy (a package with its update
+and keys, or the folder), builds it, and starts the game.
 
 A release archive brings everything the build needs (the launcher, the build tool, the runtime already built, clang
 and lld), so the PC needs no compiler or Python: take the one for your system from the
@@ -66,6 +85,7 @@ cargo build --release --manifest-path tools/hlbuild/Cargo.toml
 
 # the game, from your dump (resumable; --status shows where it is)
 tools/hlbuild/target/release/hlbuild setup --dump <dump>
+# or from the packages: --dump <game.xci|nsp> --update <update.nsp> --keys <prod.keys>
 
 # the launcher (fetches RmlUi 6.3), then start it
 cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -78,7 +98,7 @@ build/hotel-luigi-game
 | Step | What it does |
 |---|---|
 | `deps` | finds the compiler and the libraries |
-| `verify` | checks that the dump is the supported version |
+| `verify` | unpacks a package (`nx.rs`), then checks that the dump is the supported version |
 | `convert` | NSO files to ELF, the ExeFS and RomFS placed under `targets/` |
 | `mods` | patches code mods into `main.elf` |
 | `tables` | reads what the runtime needs to know from the dump's SDK |

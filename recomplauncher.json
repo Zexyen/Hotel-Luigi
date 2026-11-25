@@ -6,14 +6,24 @@
   "inputs": [
     {
       "id": "game",
-      "label": "Your dump of Luigi's Mansion 3, version 1.4.0 (0100DCA0064A6000): the decrypted, extracted folder with exefs and romfs inside.",
-      "formats": [{ "type": "folder" }],
-      "check": { "nup_build_id": "79e5950ffa85acf6" }
-    }
+      "label": "Your copy of Luigi's Mansion 3 (0100DCA0064A6000): its .xci or .nsp, or an extracted 1.4.0 dump (the folder with exefs and romfs inside).",
+      "formats": [
+        { "type": "folder" },
+        { "type": "file", "extensions": ["xci", "nsp"], "requires": ["keys"] }
+      ]
+    },
+    {
+      "id": "update",
+      "label": "With an .xci or .nsp: the 1.4.0 update (.nsp, v327680).",
+      "role": "update",
+      "optional": true,
+      "formats": [{ "type": "file", "extensions": ["nsp"] }]
+    },
+    { "id": "keys", "label": "Your console's prod.keys", "role": "key", "shared": "switch.prod-keys" }
   ],
   "prepare": {
     "program": ["build/hotel-luigi-game.exe", "build/hotel-luigi-game"],
-    "args": ["--prepare", "--dump={input:game}"],
+    "args": ["--prepare", "--dump={input:game}", "--update={input:update}", "--keys={input:keys}"],
     "label": "Building the game from your dump",
     "done": ["{install}/build/built_version"],
     "keeps_copy": true
@@ -25,6 +35,10 @@
   "system": {
     "windows": { "version": "10", "graphics": { "vulkan": "1.3" } },
     "linux": { "glibc": "2.35", "graphics": { "vulkan": "1.3" } }
+  },
+  "exit_codes": {
+    "0": "ok",
+    "5": "The game's graphics couldn't start: it needs a GPU and driver with Vulkan 1.3. The log in Logs says what was missing."
   },
   "saves": ["{install}/build/userdata"],
   "folders": {

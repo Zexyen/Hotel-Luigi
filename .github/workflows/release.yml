@@ -60,7 +60,7 @@ jobs:
         run: |
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "name=Recomp-$v-linux-x86_64" >> "$GITHUB_OUTPUT"
+          echo "name=Hotel-Luigi-$v-linux-x86_64" >> "$GITHUB_OUTPUT"
 
       - name: Packages
         run: |
@@ -234,7 +234,7 @@ jobs:
         run: |
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "name=Recomp-$v-windows-x86_64" >> "$GITHUB_OUTPUT"
+          echo "name=Hotel-Luigi-$v-windows-x86_64" >> "$GITHUB_OUTPUT"
 
       - name: Packages
         run: |
@@ -445,7 +445,7 @@ jobs:
         run: |
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "name=Recomp-$v-windows-x86_64" >> "$GITHUB_OUTPUT"
+          echo "name=Hotel-Luigi-$v-windows-x86_64" >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@v4
         with:
