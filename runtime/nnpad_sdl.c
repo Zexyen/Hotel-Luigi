@@ -530,6 +530,7 @@ static void reassign_all(void) {                  /* [players] changed in the fi
         say("nn::pad: \"%s\" -> player %d\n", g_dev[i].name, g_dev[i].slot + 1);
     }
 }
+static void dev_state(Dev *d, NnPadState *o);
 static void poll_devices(void) {                  /* lock held */
     int n = 0;
     SDL_UpdateJoysticks();
@@ -550,6 +551,22 @@ static void poll_devices(void) {                  /* lock held */
     for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && !g_dev[i].ignored && g_dev[i].slot < 0) {      /* a slot may have been freed */
         g_dev[i].slot = assign_slot(&g_dev[i]);
         if (g_dev[i].slot >= 0) { remember(g_dev[i].guid, g_dev[i].slot); apply_player_index(&g_dev[i]); say("nn::pad: \"%s\" -> player %d\n", g_dev[i].name, g_dev[i].slot + 1); }
+    }
+    /* #38: player 1's pad is gone (battery dead, switched off) while another pad is still connected as a later player: the
+     * first of those to press a button becomes player 1, as on the console, instead of player 1 waiting for a NEW device.
+     * Not when [players] pins player 1 to a device or to nobody. The pad that left gets the first free slot if it comes back. */
+    if (!slot_taken(0) && !g_cfg.pnone[0] && !g_cfg.pguid[0][0] && (g_kb_slot != 0 || g_kb_shared)) {
+        for (int i = 0; i < MAXDEV; i++) {
+            Dev *d = &g_dev[i];
+            NnPadState s;
+            if (!d->used || d->ignored || d->slot <= 0 || d->dropped) continue;
+            if (g_cfg.pguid[d->slot][0] && !_stricmp(g_cfg.pguid[d->slot], d->guid)) continue;      /* pinned to its slot */
+            dev_state(d, &s);
+            if (!(s.buttons & 0xffff)) continue;
+            say("nn::pad: player 1 has no pad; \"%s\" pressed a button: player %d -> player 1\n", d->name, d->slot + 1);
+            d->slot = 0; remember(d->guid, 0); apply_player_index(d);
+            break;
+        }
     }
     /* Switch Pro / Joy-Con hot-plug: if the initial EnableIMU subcommand dropped during Bluetooth/USB handshake, SDL
      * considers the sensor enabled while GetGamepadSensorData keeps returning {0,0,0}. Toggling false->true forces
@@ -1349,6 +1366,24 @@ int nnpad_selftest(const NnHidHooks *h) {
         h->state(5, &btn, st, &attr); ok = btn & 1; h->state(2, &btn, st, &attr); ok = ok && !(btn & 1) && h->style(2) == 0;
         SDL_SetJoystickVirtualButton(js[5], SDL_GAMEPAD_BUTTON_EAST, false);
         check(ok, "pad 6 replugged while player 3 is also free: it returns to ITS slot (player 6), not the first free one");
+        /* #38: player 1's pad goes away; another connected pad takes player 1 with a button press, not only a new device */
+        SDL_CloseJoystick(js[0]); SDL_DetachVirtualJoystick(id[0]); settle();
+        vj_clear(js[1], SDL_GAMEPAD_BUTTON_COUNT, 6); settle();
+        check(h->style(0) == 0 && h->style(1) == 1, "player 1's pad unplugged, nothing pressed: player 1 stays empty, pad 2 stays player 2");
+        SDL_SetJoystickVirtualButton(js[1], SDL_GAMEPAD_BUTTON_EAST, true); settle();
+        h->state(0, &btn, st, &attr); ok = (btn & 1) && h->style(1) == 0;
+        SDL_SetJoystickVirtualButton(js[1], SDL_GAMEPAD_BUTTON_EAST, false); settle();
+        check(ok, "player 1 empty: pad 2 presses A and becomes player 1 (player 2 now empty)");
+        id[0] = vj_make(0, 0x100, 1, 1); settle(); js[0] = SDL_OpenJoystick(id[0]);
+        check(h->style(1) == 1 && h->style(0) == 1, "the old player 1 pad comes back: player 1 is taken, it gets the free player 2");
+        SDL_CloseJoystick(js[1]); SDL_DetachVirtualJoystick(id[1]); settle();      /* back to pad 1 = player 1, pad 2 = player 2 for the tests below */
+        vj_clear(js[0], SDL_GAMEPAD_BUTTON_COUNT, 6); SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_EAST, true); settle();
+        SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_EAST, false); settle();
+        id[1] = vj_make(1, 0x101, 1, 0); settle(); js[1] = SDL_OpenJoystick(id[1]);
+        lock(); { Dev *a = dev_of(0), *b = dev_of(1); char ga[40], gb[40];
+            SDL_GUIDToString(SDL_GetJoystickGUIDForID(id[0]), ga, sizeof ga); SDL_GUIDToString(SDL_GetJoystickGUIDForID(id[1]), gb, sizeof gb);
+            ok = a && b && !_stricmp(a->guid, ga) && !_stricmp(b->guid, gb); } unlock();
+        check(ok, "and back: pad 1 presses A while player 1 is empty -> player 1; pad 2 returns as player 2");
     }
 
     /* ---- remap from the ini, layout labels, hot reload */
