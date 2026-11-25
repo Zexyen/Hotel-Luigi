@@ -135,7 +135,7 @@ Useful `hlbuild setup` options:
   directly—a plain `setup` either reruns from `tables` (for `runtime/` changes) or does not detect `games/lm3/runtime/`
   changes.
 - `--move-dump` moves RomFS into `targets/` instead of hard-linking or copying it.
-- `clang` is searched in `--llvm <folder>`, `$LLVM_ROOT/bin`, `deps/llvm/bin`, and then `PATH`.
+- `clang` is searched in `--llvm <folder>`, `deps/llvm/bin`, `$LLVM_ROOT/bin`, and then `PATH`.
 
 ## Layout
 
