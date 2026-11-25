@@ -1,0 +1,232 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Hotel Luigi",
+  "repo": "Zexyen/Hotel-Luigi",
+  "inputs": [
+    {
+      "id": "game",
+      "label": "Your dump of Luigi's Mansion 3, version 1.4.0 (0100DCA0064A6000): the decrypted, extracted folder with exefs and romfs inside.",
+      "formats": [{ "type": "folder" }],
+      "check": { "nup_build_id": "79e5950ffa85acf6" }
+    }
+  ],
+  "prepare": {
+    "program": ["build/hotel-luigi-game.exe", "build/hotel-luigi-game"],
+    "args": ["--prepare", "--dump={input:game}"],
+    "label": "Building the game from your dump",
+    "done": ["{install}/build/built_version"],
+    "keeps_copy": true
+  },
+  "start": {
+    "program": ["build/hotel-luigi-game.exe", "build/hotel-luigi-game"],
+    "args": ["--play"]
+  },
+  "system": {
+    "windows": { "version": "10", "graphics": { "vulkan": "1.3" } },
+    "linux": { "glibc": "2.35", "graphics": { "vulkan": "1.3" } }
+  },
+  "saves": ["{install}/build/userdata"],
+  "folders": {
+    "game": [{ "path": "{install}/targets" }],
+    "saves": [{ "path": "{install}/build/userdata" }],
+    "logs": [{ "path": "{install}/build/run" }],
+    "mods": [{ "path": "{install}/mods" }]
+  },
+  "actions": [
+    { "id": "saves", "label": "Saves", "help": "Your save files.", "open": "saves" },
+    { "id": "mods", "label": "Mods", "help": "Code mods (.pchtxt) and data mods. Changing a code mod rebuilds part of the game.", "open": "mods" },
+    { "id": "logs", "label": "Logs", "help": "The game's log, for bug reports.", "open": "logs" }
+  ],
+  "config": [
+    { "id": "main", "format": "ini", "file": [{ "path": "{install}/config/graphics.ini" }] },
+    { "id": "controllers", "format": "ini", "file": [{ "path": "{install}/config/controllers.ini" }] }
+  ],
+  "settings": [
+    {
+      "id": "window", "label": "Display mode", "group": "Display",
+      "help": "Windowed, or the monitor the window is on.",
+      "choices": [
+        { "label": "Windowed", "set": { "window": "windowed" } },
+        { "label": "Borderless", "set": { "window": "borderless" } },
+        { "label": "Fullscreen", "set": { "window": "fullscreen" } }
+      ],
+      "defaults": { "window": "windowed" }
+    },
+    {
+      "id": "size", "label": "Window size", "group": "Display",
+      "help": "The window in windowed mode.",
+      "when": { "window": "windowed" },
+      "choices": [
+        { "label": "1280 × 720", "set": { "width": "1280", "height": "720" } },
+        { "label": "1600 × 900", "set": { "width": "1600", "height": "900" } },
+        { "label": "1920 × 1080", "set": { "width": "1920", "height": "1080" } },
+        { "label": "2560 × 1440", "set": { "width": "2560", "height": "1440" } },
+        { "label": "3840 × 2160", "set": { "width": "3840", "height": "2160" } }
+      ],
+      "defaults": { "width": "1280", "height": "720" }
+    },
+    {
+      "id": "vsync", "label": "Vertical sync", "group": "Display",
+      "help": "Auto locks to a 60, 120 or 240 Hz display. Off tears, for the lowest latency.",
+      "choices": [
+        { "label": "Auto", "set": { "vsync": "auto" } },
+        { "label": "Display", "set": { "vsync": "display" } },
+        { "label": "Clock", "set": { "vsync": "clock" } },
+        { "label": "Off", "set": { "vsync": "off" } },
+        { "label": "On", "set": { "vsync": "on" } },
+        { "label": "Mailbox", "set": { "vsync": "mailbox" } }
+      ],
+      "defaults": { "vsync": "auto" }
+    },
+    {
+      "id": "frame_rate", "label": "Frame rate", "group": "Display",
+      "help": "30 is the game as made. Higher rates keep the game's speed the same.",
+      "choices": [
+        { "label": "30 fps", "set": { "frame_rate": "30" } },
+        { "label": "60 fps", "set": { "frame_rate": "60" } },
+        { "label": "90 fps", "set": { "frame_rate": "90" } },
+        { "label": "120 fps", "set": { "frame_rate": "120" } }
+      ],
+      "defaults": { "frame_rate": "30" }
+    },
+    {
+      "id": "frame_time_overlay", "label": "Performance overlay", "group": "Display",
+      "help": "Frame rate and frame time at the top right of the picture.",
+      "choices": [
+        { "label": "Off", "set": { "frame_time_overlay": "off" } },
+        { "label": "On", "set": { "frame_time_overlay": "on" } }
+      ],
+      "defaults": { "frame_time_overlay": "off" }
+    },
+    {
+      "id": "resolution_scale", "label": "Internal resolution", "group": "Graphics",
+      "help": "What the game renders at, times its own size. 1.0 is the console's.",
+      "choices": [
+        { "label": "0.4 ×", "set": { "resolution_scale": "0.4" } },
+        { "label": "0.5 ×", "set": { "resolution_scale": "0.5" } },
+        { "label": "0.6 ×", "set": { "resolution_scale": "0.6" } },
+        { "label": "0.75 ×", "set": { "resolution_scale": "0.75" } },
+        { "label": "0.8 ×", "set": { "resolution_scale": "0.8" } },
+        { "label": "1.0 ×", "set": { "resolution_scale": "1.0" } },
+        { "label": "1.2 ×", "set": { "resolution_scale": "1.2" } },
+        { "label": "1.6 ×", "set": { "resolution_scale": "1.6" } },
+        { "label": "2.0 ×", "set": { "resolution_scale": "2.0" } },
+        { "label": "2.4 ×", "set": { "resolution_scale": "2.4" } },
+        { "label": "3.0 ×", "set": { "resolution_scale": "3.0" } }
+      ],
+      "defaults": { "resolution_scale": "1.0" }
+    },
+    {
+      "id": "upscaler", "label": "Upscaling", "group": "Graphics",
+      "help": "FSR 3.1 smooths edges at the internal resolution. Quality to Ultra Performance draw smaller and upscale: faster, a little softer. Experimental.",
+      "choices": [
+        { "label": "Off", "set": { "upscaler": "off" } },
+        { "label": "FSR anti-aliasing", "set": { "upscaler": "fsr3" } },
+        { "label": "FSR Quality", "set": { "upscaler": "fsr3_quality" } },
+        { "label": "FSR Balanced", "set": { "upscaler": "fsr3_balanced" } },
+        { "label": "FSR Performance", "set": { "upscaler": "fsr3_performance" } },
+        { "label": "FSR Ultra Performance", "set": { "upscaler": "fsr3_ultra_performance" } }
+      ],
+      "defaults": { "upscaler": "off" }
+    },
+    {
+      "id": "aspect_ratio", "label": "Picture shape", "group": "Graphics",
+      "help": "Wider shows more at the sides. Auto is the screen's.",
+      "choices": [
+        { "label": "16:9", "set": { "aspect_ratio": "16:9" } },
+        { "label": "Auto", "set": { "aspect_ratio": "auto" } },
+        { "label": "21:9", "set": { "aspect_ratio": "21:9" } },
+        { "label": "32:9", "set": { "aspect_ratio": "32:9" } }
+      ],
+      "defaults": { "aspect_ratio": "16:9" }
+    },
+    {
+      "id": "aspect", "label": "Picture fit", "group": "Graphics",
+      "help": "Keep the picture's shape, or fill the window.",
+      "choices": [
+        { "label": "Keep shape", "set": { "aspect": "keep" } },
+        { "label": "Stretch", "set": { "aspect": "stretch" } }
+      ],
+      "defaults": { "aspect": "keep" }
+    },
+    {
+      "id": "model_lod", "label": "Model detail", "group": "Graphics",
+      "help": "Highest keeps every model at its finest detail at any distance. Weaker GPUs may lose frame rate.",
+      "choices": [
+        { "label": "As on the console", "set": { "model_lod": "game" } },
+        { "label": "Highest", "set": { "model_lod": "highest" } }
+      ],
+      "defaults": { "model_lod": "game" }
+    },
+    {
+      "id": "film_grain", "label": "Film grain", "group": "Graphics",
+      "help": "The game's moving noise over the picture.",
+      "choices": [
+        { "label": "On", "set": { "film_grain": "on" } },
+        { "label": "Off", "set": { "film_grain": "off" } }
+      ],
+      "defaults": { "film_grain": "on" }
+    },
+    {
+      "id": "hdr", "label": "HDR", "group": "Graphics",
+      "help": "Auto follows the desktop's HDR. Lights go above white.",
+      "choices": [
+        { "label": "Auto", "set": { "hdr": "auto" } },
+        { "label": "Off", "set": { "hdr": "off" } },
+        { "label": "On", "set": { "hdr": "on" } }
+      ],
+      "defaults": { "hdr": "auto" }
+    },
+    {
+      "id": "hdr_paper_white", "label": "HDR white", "group": "Graphics", "advanced": true,
+      "help": "The game's white with HDR on. Auto is the desktop's.",
+      "choices": [
+        { "label": "Auto", "set": { "hdr_paper_white": "auto" } },
+        { "label": "100 nits", "set": { "hdr_paper_white": "100" } },
+        { "label": "150 nits", "set": { "hdr_paper_white": "150" } },
+        { "label": "200 nits", "set": { "hdr_paper_white": "200" } },
+        { "label": "250 nits", "set": { "hdr_paper_white": "250" } },
+        { "label": "300 nits", "set": { "hdr_paper_white": "300" } },
+        { "label": "400 nits", "set": { "hdr_paper_white": "400" } }
+      ],
+      "defaults": { "hdr_paper_white": "auto" }
+    },
+    {
+      "id": "hdr_peak", "label": "HDR peak", "group": "Graphics", "advanced": true,
+      "help": "Your monitor's peak brightness, for the scene's lights.",
+      "choices": [
+        { "label": "Auto", "set": { "hdr_peak": "auto" } },
+        { "label": "400 nits", "set": { "hdr_peak": "400" } },
+        { "label": "600 nits", "set": { "hdr_peak": "600" } },
+        { "label": "800 nits", "set": { "hdr_peak": "800" } },
+        { "label": "1000 nits", "set": { "hdr_peak": "1000" } },
+        { "label": "1500 nits", "set": { "hdr_peak": "1500" } },
+        { "label": "2000 nits", "set": { "hdr_peak": "2000" } },
+        { "label": "4000 nits", "set": { "hdr_peak": "4000" } }
+      ],
+      "defaults": { "hdr_peak": "auto" }
+    },
+    {
+      "id": "button_prompts", "label": "Button prompts", "group": "Controls", "in": "controllers",
+      "help": "Auto follows what you use.",
+      "choices": [
+        { "label": "Auto", "set": { "general/button_prompts": "auto" } },
+        { "label": "PlayStation", "set": { "general/button_prompts": "playstation" } },
+        { "label": "Xbox", "set": { "general/button_prompts": "xbox" } },
+        { "label": "Switch", "set": { "general/button_prompts": "switch" } },
+        { "label": "Keyboard", "set": { "general/button_prompts": "keyboard" } }
+      ],
+      "defaults": { "general/button_prompts": "auto" }
+    },
+    {
+      "id": "swap_confirm", "label": "Swap confirm", "group": "Controls", "in": "controllers",
+      "help": "The bottom button confirms and the right one goes back.",
+      "choices": [
+        { "label": "Off", "set": { "general/swap_confirm": "off" } },
+        { "label": "On", "set": { "general/swap_confirm": "on" } }
+      ],
+      "defaults": { "general/swap_confirm": "off" }
+    }
+  ]
+}

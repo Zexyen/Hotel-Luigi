@@ -12,6 +12,7 @@
 #   deps/llvm/                       clang + lld (LLVM_VERSION, trimmed from LLVM's own release), which hlbuild uses:
 #                                    the game's code compiles without system headers (runtime/freestanding)
 #   licenses/                        the licences of the libraries and tools above
+# recomplauncher.json comes with the source, at the top: how RecompLauncher sets the game up and starts it.
 # Nothing derived from the game is in it: the player builds that from their own dump.
 #
 # Windows (job windows, cross-built on Ubuntu with llvm-mingw; job windows-test then runs it on Windows): a .zip with
@@ -189,6 +190,7 @@ jobs:
           mkdir -p "dist/$name/build" "dist/$name/deps" "dist/$name/licenses"
           git archive HEAD | tar -x -C "dist/$name"
           rm -rf "dist/$name/.github"
+          test -f "dist/$name/recomplauncher.json"      # RecompLauncher reads it at the top of the archive
           cp build/hotel-luigi-game "dist/$name/build/"
           cp tools/hlbuild/target/release/hlbuild "dist/$name/build/"
           cp -L "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0" "dist/$name/build/"
@@ -405,6 +407,7 @@ jobs:
           mkdir -p "$p/build" "$p/deps" "$p/licenses"
           git archive HEAD | tar -x -C "$p"
           rm -rf "$p/.github"
+          test -f "$p/recomplauncher.json"              # RecompLauncher reads it at the top of the archive
           cp hotel-luigi-game.exe "$p/"
           cp build/hotel-luigi-game.exe "$RUNNER_TEMP/sdl3/bin/SDL3.dll" "$p/build/"
           cp tools/hlbuild/target/x86_64-pc-windows-gnullvm/release/hlbuild.exe "$p/build/"
