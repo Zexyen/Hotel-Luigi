@@ -1105,7 +1105,11 @@ static void vk_drop(int kind, void *host) {
     t->vk = NULL;
     for (int i = 0; i < 8; i++) if (R.col[i].tex == t) { pass_end(); R.col[i].tex = NULL; }
     if (R.depth.tex == t) { pass_end(); R.depth.tex = NULL; }
-    if (vt->refs > 1) { vt->refs--; return; }       /* shared with another texture over the same storage (vt_get2) */
+    if (vt->refs > 1) {
+        vt->refs--;
+        if (vt->t == t) { Tex *o = nvn_front_tex_same_vk(t, vt); if (o) vt->t = o; }
+        return;
+    }       /* shared with another texture over the same storage (vt_get2) */
     vt_garbage(vt);
 }
 static void rs_demote(Tex *t) {                     /* [witchtime] made again at the game's size at its next use (g_rs_keep) */
@@ -1449,6 +1453,8 @@ static VTex *vt_get(Tex *t) { return vt_get2(t, 1); }
  * not draw them all again: a paused scene is a picture it drew once); R.col and R.depth name textures, so the next pass takes
  * the new images. When the scale leaves or reaches 1.0 the fragment stages change translation (g_rs_flips): each is looked up
  * again at its next draw, held like the first run at a scale when it was never made. */
+static uint32_t g_tex_batch_gen = 1, g_attach_gen = 1;
+static void attach_mark_targets(void);
 static void rs_apply(void) {
     float was = rs_scale(), was_r = rs_render_scale();
     int n = 0, was_on = RS_ON;
@@ -1457,15 +1463,60 @@ static void rs_apply(void) {
     g_rs = -1;
     if (rs_scale() == was && rs_render_scale() == was_r) return;      /* (the upscaler mode is latched again either way) */
     if (was_on != RS_ON) g_rs_flips++;
+    cmd_wait_all();
+    nvn_front_take_dead(vk_drop);
+    garbage_collect();
+    Tex *sh_stack[64], **sh = sh_stack;
+    int sh_cap = 64;
     for (VTex *vt = g_vtex_all, *next; vt; vt = next) {      /* a new image goes to the head of the list: not met here */
         Tex *t = vt->t;
         Fmt f;
         next = vt->next;
-        if (!t || t->dead || t->vk != vt || !nvn_front_fmt(t->b.format, &f) || !(vt->rs || rs_wants(t, vt, t->b.width, t->b.height, f.kind))) continue;
+        if (!t) continue;
+        if (t->dead || t->vk != vt) {
+            Tex *o = nvn_front_tex_same_vk(t, vt);
+            if (!o) continue;
+            vt->t = t = o;
+        }
+        if (!nvn_front_fmt(t->b.format, &f) || !(vt->rs || rs_wants(t, vt, t->b.width, t->b.height, f.kind))) continue;
+        /* [lm3] issue 55: multiple Tex records over the same pool memory share one VTex (vt_get2 / nvn_front_tex_same).
+         * Detach every alias pointing to vt before calling vt_get2(t, 0); otherwise nvn_front_tex_same(t) finds a
+         * still-attached alias and hands back the old vt (nv == vt), which vt_garbage(vt) then destroys while all
+         * aliases still point to it (vt_check -> exit code 6 on the next frame). */
+        int k = nvn_front_tex_sharing(t, vt, sh, sh_cap);
+        if (k > sh_cap) {
+            int nc = sh_cap;
+            while (nc < k) nc *= 2;
+            Tex **p = sh == sh_stack ? malloc((size_t)nc * sizeof *p) : realloc(sh, (size_t)nc * sizeof *p);
+            if (p) { sh = p; sh_cap = nc; k = nvn_front_tex_sharing(t, vt, sh, sh_cap); }
+            else k = sh_cap;
+        }
+        if (vt->refs > k) {
+            /* fallback: collect any remaining Tex pointing to vt outside the live_mem bucket */
+            for (Tex *a = nvn_front_tex_first(); a; a = a->all_next) {
+                if (a->vk != vt) continue;
+                int seen = 0;
+                for (int i = 0; i < k; i++) if (sh[i] == a) { seen = 1; break; }
+                if (seen) continue;
+                if (k == sh_cap) {
+                    int nc = sh_cap * 2;
+                    Tex **p = sh == sh_stack ? malloc((size_t)nc * sizeof *p) : realloc(sh, (size_t)nc * sizeof *p);
+                    if (!p) { a->vk = NULL; continue; }
+                    if (sh == sh_stack) memcpy(p, sh_stack, (size_t)k * sizeof *p);
+                    sh = p; sh_cap = nc;
+                }
+                sh[k++] = a;
+            }
+        }
+        for (int i = 0; i < k; i++) sh[i]->vk = NULL;
         t->vk = NULL;
         VTex *nv = vt_get2(t, 0);
-        if (vt->samples == 1 && fmt_supported(vt->fmt, VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT)) {      /* else it stays cleared until the game draws it */
+        for (int i = 0; i < k; i++) if (sh[i] != t && !sh[i]->dead && !sh[i]->vk) { sh[i]->vk = nv; nv->refs++; }
+        nv->wstamp = vt->wstamp; nv->gw = vt->gw; nv->drawn = vt->drawn;
+        if (vt != nv && vt->samples == 1 && vt->layout != VK_IMAGE_LAYOUT_UNDEFINED &&
+            fmt_supported(vt->fmt, VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT)) {      /* else it stays cleared until the game draws it */
             vt_layout(vt, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL); vt_layout(nv, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            cmd_begin();
             for (int l = 0; l < vt->levels && l < nv->levels; l++) {
                 VkImageBlit b;
                 memset(&b, 0, sizeof b);
@@ -1478,6 +1529,12 @@ static void rs_apply(void) {
         vt_garbage(vt);
         n++;
     }
+    if (sh != sh_stack) free(sh);
+    g_vtex_gen++;
+    g_tex_batch_gen++;
+    attach_mark_targets();
+    R.dyn_dirty = 1;
+    dsh_forget();
     cmd_wait_all();
     garbage_collect();
     QueryPerformanceFrequency(&fq);
@@ -2135,7 +2192,6 @@ static VkImageView fsr_dither_view(int s, unsigned u, Tex *t, VTex *vt, const Vi
 static int g_vk_test;                              /* session 13, TEST ONLY: HL_VK_TEST (see the dynamic state) */
 static int g_dp_potential;                         /* [witchtime] issues 132, 133: draw_prepare for an indirect draw whose count or records the GPU decides */
 static int g_dp_fs_stores;                         /* [witchtime] issue 147: the draw just prepared has a fragment stage that stores into images */
-static uint32_t g_tex_batch_gen = 1, g_attach_gen = 1;
 static int pass_begin(void) {
     VkRenderingAttachmentInfo ca[8], da;
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};

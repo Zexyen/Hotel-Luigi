@@ -4566,6 +4566,28 @@ Tex *nvn_front_tex_same(const Tex *t) {
     LeaveCriticalSection(&g_live_lock);
     return r;
 }
+Tex *nvn_front_tex_same_vk(const Tex *t, void *vk) {
+    Tex *r = NULL;
+    if (!t || !t->mem || !vk) return NULL;
+    live_lock();
+    for (Tex *o = *live_mem_slot(t->mem); o && !r; o = o->mem_next)
+        if (o != t && o->vk == vk) r = o;
+    LeaveCriticalSection(&g_live_lock);
+    return r;
+}
+int nvn_front_tex_sharing(const Tex *t, void *vk, Tex **out, int max) {
+    int n = 0;
+    if (!t || !vk) return 0;
+    if (!t->mem) {
+        if (!t->dead && t->vk == vk) { if (n < max) out[n] = (Tex *)t; n++; }
+        return n;
+    }
+    live_lock();
+    for (Tex *o = *live_mem_slot(t->mem); o; o = o->mem_next)
+        if (o->vk == vk) { if (n < max) out[n] = o; n++; }
+    LeaveCriticalSection(&g_live_lock);
+    return n;
+}
 int nvn_front_tex_overlapping(const Tex *t, Tex **out, int max) {
     int n = 0;
     if (!t->mem) return 0;
