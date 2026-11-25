@@ -18,7 +18,7 @@ namespace {
 
 // program 0 is the game; program N (the picture book's story is 1) has its own folder in targets/ and build/
 std::string program_dir(int program) { return program ? "/program" + std::to_string(program) : ""; }
-std::string main_elf(const Paths& paths, int program = 0) { return paths.repo + "/targets" + program_dir(program) + "/exefs/main.elf"; }
+std::string main_elf(const Paths& paths, int program = 0) { return paths.data + "/targets" + program_dir(program) + "/exefs/main.elf"; }
 std::string program_build(const Paths& paths, int program) { return paths.build + program_dir(program); }
 
 // the save folder, where the runtime leaves the switch file (runtime/b3_imports.c switch_path; ..\userdata from build/run)
@@ -111,7 +111,18 @@ GameStart prepare_game(const Paths& paths, int program, bool after_switch)
 	// launcher again in the same environment)
 	const char* last = std::getenv("HL_PROGRAM");
 	const bool other = after_switch || (last && std::strcmp(last, std::to_string(program).c_str()) != 0);
-	set_env("HL_ROMFS", paths.repo + "/targets" + program_dir(program) + "/romfs", other);
+	set_env("HL_ROMFS", paths.data + "/targets" + program_dir(program) + "/romfs", other);
+	if (paths.data != paths.repo)
+	{                                            // the built runtime is in the data folder, the SDL3 it needs beside this launcher
+#ifdef _WIN32
+		const char *var = "PATH", sep = ';';
+#else
+		const char *var = "LD_LIBRARY_PATH", sep = ':';  // (a child runtime: in this process SDL3 is loaded already)
+#endif
+		const char* was = std::getenv(var);
+		if (!was || std::string(was).rfind(paths.bin, 0) != 0)
+			set_env(var, was && was[0] ? paths.bin + sep + was : paths.bin, true);
+	}
 	set_env("HL_PROGRAM", std::to_string(program), true);
 	if (program || other)
 	{                                            // each program its own shaders: the container store is tied to its root_000.pkz

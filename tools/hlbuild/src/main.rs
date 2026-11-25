@@ -12,6 +12,7 @@ mod lifter;
 mod link;
 mod lprof;
 mod nso;
+mod nx;
 mod nvn_procs;
 mod pchtxt;
 mod py;
@@ -53,6 +54,20 @@ fn print_all(lines: Result<Vec<String>, String>) {
 
 fn main() {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // the data folder (layout.rs): --data <folder>, else HL_DATA (the launcher sets it)
+    let data = match args.iter().position(|a| a == "--data") {
+        Some(i) => {
+            let d = args.get(i + 1).cloned().unwrap_or_else(|| die("--data needs a folder"));
+            args.drain(i..i + 2);
+            Some(d)
+        }
+        None => std::env::var("HL_DATA").ok().filter(|d| !d.is_empty()),
+    };
+    if let Some(d) = data {
+        let d = std::path::absolute(&d).unwrap_or_else(|e| die(e));
+        std::fs::create_dir_all(&d).unwrap_or_else(|e| die(format!("{}: {}", d.display(), e)));
+        layout::set_data(d);
+    }
     // [witchtime] --program N: the tables, compile and link commands work on program N's folders (layout.rs)
     if let Some(i) = args.iter().position(|a| a == "--program") {
         let p = args.get(i + 1).and_then(|v| v.parse().ok()).unwrap_or_else(|| die("--program needs a number"));
@@ -133,7 +148,7 @@ fn main() {
             let ini = args
                 .iter()
                 .find_map(|a| a.strip_prefix("--ini=").map(PathBuf::from))
-                .unwrap_or_else(|| repo_root(&args).join("config").join("mods.ini"));
+                .unwrap_or_else(|| layout::data_root(&repo_root(&args)).join("config").join("mods.ini"));
             let rest: Vec<&String> = args[1..]
                 .iter()
                 .enumerate()
@@ -165,7 +180,7 @@ fn main() {
             let mut names = positional(&args);
             let path = match names.first() {
                 Some(p) if p.ends_with(".elf") => PathBuf::from(names.remove(0)),
-                _ => repo_root(&args).join("targets").join("exefs").join("sdk.elf"),
+                _ => layout::targets(&repo_root(&args)).join("exefs").join("sdk.elf"),
             };
             let d = std::fs::read(&path).unwrap_or_else(|e| die(format!("{}: {}", path.display(), e)));
             print_all(nvn_procs::procs(&d).map(|t| nvn_procs::listing(&t, &names)));
@@ -177,7 +192,7 @@ fn main() {
                 die("usage: see tools/hlbuild/README.md")
             }
             let read = |p: &Path| std::fs::read_to_string(p).unwrap_or_else(|e| die(format!("{}: {}", p.display(), e)));
-            let sites = files.get(2).map(PathBuf::from).unwrap_or_else(|| repo_root(&args).join("build").join("gen_eh").join("fps_sites.txt"));
+            let sites = files.get(2).map(PathBuf::from).unwrap_or_else(|| layout::build(&repo_root(&args)).join("gen_eh").join("fps_sites.txt"));
             let every = args.iter().any(|a| a == "--all");
             print_all(fps_census::report(&read(Path::new(files[0])), &read(Path::new(files[1])), &read(&sites), every));
         }

@@ -44,6 +44,7 @@ private:
 	long long compile_log_start = 0;
 	void line(const std::string& l);
 	void read_compile_log();
+	std::string build_dir() const;
 };
 
 double now_seconds();

@@ -6,6 +6,11 @@
 
 struct Paths {
 	std::string repo;          // the checkout: the launcher lives in <repo>/build
+	std::string bin;           // <repo>/build: the programs a release ships (this launcher, hlbuild, SDL3)
+	// everything the game writes (the build, targets/, config/, mods/, and so saves, caches and logs): HL_DATA (or
+	// --data); else <repo>, or the user's data folder when <repo> is read-only (a mounted AppImage)
+	std::string data;
+	bool fixed = false;        // <repo> cannot be written to, so it is never updated in place
 	std::string build, ui, config, mods, run;
 	std::string self;          // this program
 	static Paths find(const char* argv0);
@@ -34,6 +39,9 @@ struct ModEntry {
 std::vector<ModEntry> list_mods(const Paths& paths, const std::string& mods_dir, std::string& error);
 
 bool file_exists(const std::string& path);
+bool writable(const std::string& dir);
+// where a program keeps its files for this user: ~/.local/share/hotel-luigi, %LOCALAPPDATA%/hotel-luigi, ...
+std::string user_data_dir();
 // The build tool and the arguments before a command's own: hlbuild (tools/hlbuild; the release ships it in build/).
 // Empty in a checkout where it was never built: NO_BUILD_TOOL is what to tell the player. command: "setup", "mods-tree"...
 std::vector<std::string> build_command(const std::string& repo, const std::string& command);

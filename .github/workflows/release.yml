@@ -12,7 +12,10 @@
 #   deps/llvm/                       clang + lld (LLVM_VERSION, trimmed from LLVM's own release), which hlbuild uses:
 #                                    the game's code compiles without system headers (runtime/freestanding)
 #   licenses/                        the licences of the libraries and tools above
+# recomplauncher.json comes with the source, at the top: how RecompLauncher sets the game up and starts it.
 # Nothing derived from the game is in it: the player builds that from their own dump.
+#
+# Linux also gets the same folder as Hotel-Luigi-<tag>-linux-x86_64.AppImage (launcher/linux/AppRun).
 #
 # Windows (job windows, cross-built on Ubuntu with llvm-mingw; job windows-test then runs it on Windows): a .zip with
 #   hotel-luigi-game.exe                   starts build/hotel-luigi-game.exe
@@ -46,6 +49,7 @@ env:
   LLVM_MINGW_TAG: '20260922'
   VULKAN_HEADERS_TAG: vulkan-sdk-1.4.341.0
   FREETYPE_TAG: VER-2-13-3
+  APPIMAGETOOL_TAG: '1.9.1'
 
 jobs:
   linux:
@@ -59,7 +63,7 @@ jobs:
         run: |
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "name=Recomp-$v-linux-x86_64" >> "$GITHUB_OUTPUT"
+          echo "name=Hotel-Luigi-$v-linux-x86_64" >> "$GITHUB_OUTPUT"
 
       - name: Packages
         run: |
@@ -189,6 +193,7 @@ jobs:
           mkdir -p "dist/$name/build" "dist/$name/deps" "dist/$name/licenses"
           git archive HEAD | tar -x -C "dist/$name"
           rm -rf "dist/$name/.github"
+          test -f "dist/$name/recomplauncher.json"      # RecompLauncher reads it at the top of the archive
           cp build/hotel-luigi-game "dist/$name/build/"
           cp tools/hlbuild/target/release/hlbuild "dist/$name/build/"
           cp -L "$RUNNER_TEMP/sdl3/lib/libSDL3.so.0" "dist/$name/build/"
@@ -200,9 +205,25 @@ jobs:
           cp "$RUNNER_TEMP/glslang/LICENSE.txt" "dist/$name/licenses/glslang.txt"
           cp deps/llvm/LICENSE.TXT "dist/$name/licenses/LLVM.txt"
           ln -s build/hotel-luigi-game "dist/$name/hotel-luigi-game"
+          # the AppImage's entry point, desktop entry and icon: in the .tar.gz too, so both are the same folder
+          cp launcher/linux/AppRun launcher/linux/hotel-luigi.desktop "dist/$name/"
+          cp launcher/ui/img/icon.png "dist/$name/hotel-luigi.png"
           LD_LIBRARY_PATH= ldd "dist/$name/build/hotel-luigi-game" | tee /dev/stderr | grep -q "dist/$name/build/libSDL3.so.0"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
           (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+          ls -la dist
+
+      # the same folder as one file. Mounted it is read-only, so the launcher keeps the build in ~/.local/share/hotel-luigi
+      # (launcher/linux/AppRun); RecompLauncher unpacks it and plays it from the folder, as the .tar.gz
+      - name: AppImage
+        run: |
+          name="${{ steps.version.outputs.name }}"
+          curl -sSfL -o "$RUNNER_TEMP/appimagetool" "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_TAG/appimagetool-x86_64.AppImage"
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$RUNNER_TEMP/appimagetool" --no-appstream "dist/$name" "dist/$name.AppImage"
+          (cd dist && sha256sum "$name.AppImage" > "$name.AppImage.sha256")
+          # it starts from wherever it is unpacked, as RecompLauncher runs it
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/dist/$name.AppImage" --appimage-extract >/dev/null && test -x squashfs-root/AppRun && test -f squashfs-root/recomplauncher.json)
           ls -la dist
 
       - uses: actions/upload-artifact@v4
@@ -210,6 +231,7 @@ jobs:
           name: ${{ steps.version.outputs.name }}
           path: |
             dist/*.tar.gz
+            dist/*.AppImage
             dist/*.sha256
 
       - name: Release
@@ -220,6 +242,7 @@ jobs:
           generate_release_notes: true
           files: |
             dist/*.tar.gz
+            dist/*.AppImage
             dist/*.sha256
 
   windows:
@@ -232,7 +255,7 @@ jobs:
         run: |
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "name=Recomp-$v-windows-x86_64" >> "$GITHUB_OUTPUT"
+          echo "name=Hotel-Luigi-$v-windows-x86_64" >> "$GITHUB_OUTPUT"
 
       - name: Packages
         run: |
@@ -405,6 +428,7 @@ jobs:
           mkdir -p "$p/build" "$p/deps" "$p/licenses"
           git archive HEAD | tar -x -C "$p"
           rm -rf "$p/.github"
+          test -f "$p/recomplauncher.json"              # RecompLauncher reads it at the top of the archive
           cp hotel-luigi-game.exe "$p/"
           cp build/hotel-luigi-game.exe "$RUNNER_TEMP/sdl3/bin/SDL3.dll" "$p/build/"
           cp tools/hlbuild/target/x86_64-pc-windows-gnullvm/release/hlbuild.exe "$p/build/"
@@ -442,7 +466,7 @@ jobs:
         run: |
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "name=Recomp-$v-windows-x86_64" >> "$GITHUB_OUTPUT"
+          echo "name=Hotel-Luigi-$v-windows-x86_64" >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@v4
         with:

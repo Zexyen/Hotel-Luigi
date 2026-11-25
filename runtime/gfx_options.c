@@ -218,6 +218,7 @@ static void opt_path(char *out) {
     char *s = strrchr(exe, '\\'), *s2 = strrchr(exe, '/');      /* [witchtime] '/' on Linux: build/hotel-luigi-runtime/../config was not a folder, the file was never read */
     if (s2 > s) s = s2;
     if (s) *s = 0;
+    if (getenv("HL_DATA") && getenv("HL_DATA")[0]) snprintf(exe, sizeof exe, "%s/build", getenv("HL_DATA"));      /* the data folder's build/, where the runtime is (in the launcher's process too) */
     snprintf(tmp, sizeof tmp, "%s\\..\\config\\graphics.ini", exe);
     if (!_fullpath(out, tmp, MAX_PATH)) snprintf(out, MAX_PATH, "%s", tmp);
 }
@@ -294,6 +295,10 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     {   /* [witchtime] HL_WINDOW=<w>x<h> wins over width / height (window size in the desktop's units, as the keys) */
         const char *e = getenv("HL_WINDOW"); int w, h;
         if (e && sscanf(e, "%dx%d", &w, &h) == 2 && w >= 320 && h >= 180 && w <= 16384 && h <= 16384) { o->width = w; o->height = h; }
+    }
+    {   /* Play pressed in RecompLauncher's Big Picture mode (a controller, a TV): a windowed game opens borderless instead */
+        const char *m = getenv("RECOMPLAUNCHER_MODE");
+        if (m && !strcmp(m, "bigpicture") && o->window_mode == 0) o->window_mode = 1;
     }
     if (!getenv("HL_MODEL_LOD")) _putenv_s("HL_MODEL_LOD", o->model_lod_high ? "highest" : "game");      /* [witchtime] read by the game library */
     else o->model_lod_high = !_stricmp(getenv("HL_MODEL_LOD"), "highest");

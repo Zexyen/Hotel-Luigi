@@ -15,6 +15,13 @@
 
 double now_seconds() { return double(SDL_GetTicksNS()) * 1e-9; }
 
+// where hlbuild writes: the data folder (Paths::find sets HL_DATA when there is one), else the checkout
+std::string BuildRunner::build_dir() const
+{
+	const char* d = std::getenv("HL_DATA");
+	return (d && d[0] ? std::string(d) : repo) + "/build";
+}
+
 const std::vector<std::string>& BuildRunner::steps()
 {
 	static const std::vector<std::string> s = {"deps", "verify", "convert", "mods", "tables", "lift", "compile", "link", "check"};
@@ -113,7 +120,7 @@ void BuildRunner::line(const std::string& l)
 				std::sscanf(l.c_str(), "[%d/%d]", &compiled, &to_compile);
 			if (name == "compile")                   // only what this run writes counts (the log is appended to)
 			{
-				std::ifstream f(repo + "/build/logs/compile.log", std::ios::binary | std::ios::ate);
+				std::ifstream f(build_dir() + "/logs/compile.log", std::ios::binary | std::ios::ate);
 				compile_log_start = f ? std::streamoff(f.tellg()) : 0;
 			}
 		}
@@ -126,7 +133,7 @@ void BuildRunner::line(const std::string& l)
 
 void BuildRunner::read_compile_log()
 {
-	std::ifstream f(repo + "/build/logs/compile.log", std::ios::binary | std::ios::ate);
+	std::ifstream f(build_dir() + "/logs/compile.log", std::ios::binary | std::ios::ate);
 	if (!f)
 		return;
 	std::streamoff size = f.tellg();

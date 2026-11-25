@@ -121,12 +121,48 @@ Paths Paths::find(const char* argv0)
 		place = place.substr(0, at + 4);
 #endif
 	p.repo = env && env[0] ? env : dirname(dirname(place));
-	p.build = p.repo + "/build";
+	p.bin = p.repo + "/build";
 	p.ui = p.repo + "/launcher/ui";
-	p.config = p.repo + "/config";
-	p.mods = p.repo + "/mods";
+	p.fixed = !writable(p.repo);
+	const char* data = std::getenv("HL_DATA");
+	p.data = data && data[0] ? std::filesystem::absolute(data).generic_string() : p.fixed ? user_data_dir() : p.repo;
+	if (p.data != p.repo)
+	{                                            // hlbuild, the game and the launcher started again all take it from here
+		set_env("HL_DATA", p.data, true);
+		std::error_code ec;
+		std::filesystem::create_directories(p.data + "/config", ec);
+		std::filesystem::create_directories(p.data + "/build", ec);
+	}
+	p.build = p.data + "/build";
+	p.config = p.data + "/config";
+	p.mods = p.data + "/mods";
 	p.run = p.build + "/run";
 	return p;
+}
+
+bool writable(const std::string& dir)
+{
+	const std::string f = dir + "/.hl-write-test";
+	FILE* t = std::fopen(f.c_str(), "wb");
+	if (!t)
+		return false;
+	std::fclose(t);
+	std::remove(f.c_str());
+	return true;
+}
+
+std::string user_data_dir()
+{
+	const char* v;
+#ifdef _WIN32
+	std::string d = (v = std::getenv("LOCALAPPDATA")) && v[0] ? v : ".";
+	std::replace(d.begin(), d.end(), '\\', '/');
+#elif defined(__APPLE__)
+	std::string d = std::string((v = std::getenv("HOME")) ? v : ".") + "/Library/Application Support";
+#else
+	std::string d = (v = std::getenv("XDG_DATA_HOME")) && v[0] ? v : std::string((v = std::getenv("HOME")) ? v : ".") + "/.local/share";
+#endif
+	return d + "/hotel-luigi";
 }
 
 std::string ini_get(const std::string& file, const std::string& section, const std::string& key, const std::string& def)

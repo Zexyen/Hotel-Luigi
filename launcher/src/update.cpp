@@ -1,6 +1,8 @@
 #include "update.h"
 #include "platform.h"
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <mutex>
 #include <thread>
@@ -115,22 +117,22 @@ std::string install(const fs::path& from, const fs::path& to, const fs::path& ol
 
 void run_update(Paths paths, std::string tag, std::string url, std::string sha256)
 {
-	const std::string dir = paths.build + "/update", archive = dir + "/" + url.substr(url.find_last_of('/') + 1);
+	const std::string dir = paths.bin + "/update", archive = dir + "/" + url.substr(url.find_last_of('/') + 1);
 	std::error_code ec;
 	fs::remove_all(to_path(dir), ec);
 	make_dir(dir);
 	make_dir(dir + "/new");
 	int code = -1;
 	set(State::working, "Downloading " + tag + "...");
-	std::string out = run_capture({"curl", "-sSfL", "--connect-timeout", "20", "-o", archive, url}, paths.build, &code);
+	std::string out = run_capture({"curl", "-sSfL", "--connect-timeout", "20", "-o", archive, url}, paths.bin, &code);
 	if (code)
 		return set(State::failed, "Download failed: " + (out.empty() ? "is curl installed?" : out));
 	set(State::working, "Checking " + tag + "...");
-	std::string got = run_capture({paths.build + "/hlbuild" HL_EXE, "sha256", archive}, paths.build, &code).substr(0, 64);
+	std::string got = run_capture({paths.bin + "/hlbuild" HL_EXE, "sha256", archive}, paths.bin, &code).substr(0, 64);
 	if (code || got != sha256)
 		return set(State::failed, "The download is damaged (checksum mismatch); try again");
 	set(State::working, "Unpacking " + tag + "...");
-	out = run_capture({"tar", "-xf", archive, "-C", dir + "/new"}, paths.build, &code);
+	out = run_capture({"tar", "-xf", archive, "-C", dir + "/new"}, paths.bin, &code);
 	if (code)
 		return set(State::failed, "Cannot unpack the download: " + out);
 	fs::path top;    // the archive holds one folder, <name>-<tag>-<os>
@@ -151,10 +153,11 @@ void run_update(Paths paths, std::string tag, std::string url, std::string sha25
 void check(const Paths& paths)
 {
 	std::error_code ec;
-	fs::remove_all(to_path(paths.build + "/update"), ec);    // what the last update replaced (fails harmlessly if busy)
+	fs::remove_all(to_path(paths.bin + "/update"), ec);    // what the last update replaced (fails harmlessly if busy)
 	const long long mine = version_number(HL_VERSION);
-	if (mine < 0 || !UPDATE_REPO[0])           // a developer's build, or a project that names no repository to update from
-		return;
+	const char* rl = std::getenv("RECOMPLAUNCHER");
+	if (mine < 0 || !UPDATE_REPO[0] || (rl && !std::strcmp(rl, "1")) || paths.fixed)   // a developer's build, a project with no repository,
+		return;                                  // RecompLauncher updates it, or a folder that cannot be written (an AppImage: a new one replaces it)
 	set(State::checking, "");
 	std::thread([mine] {
 		int code = -1;
