@@ -1099,6 +1099,7 @@ static void vk_drop(int kind, void *host) {
     if (g_rs_npost && !g_rs_demoting) rs_post_forget(t);      /* [witchtime] issue 118: the same for a tonemap target */
     if (!g_rs_demoting && (t == g_rs_fine_kept || t == g_rs_fine_full)) g_rs_fine_kept = g_rs_fine_full = NULL;      /* [witchtime] issue 126 */
     if (g_hdr_tm == t && !g_rs_demoting) g_hdr_tm = NULL;
+    if (t->dead && t->over) { free(t->over); t->over = NULL; t->nover = t->over_cap = 0; t->over_frame = 0; }
     VTex *vt = t->vk;
     if (!vt) return;
     t->vk = NULL;
@@ -1263,11 +1264,27 @@ static int rs_wants(Tex *t, const VTex *vt, int gw, int gh, int kind) {
  * shortcut: level 0, layer 0 only; the same size is copied, another size is scaled (see alias_sync). What the console's
  * shared memory gives for two different widths is not known (their block-linear layouts differ); this is what the game's
  * passes need to show its picture. */
-static uint64_t g_wstamp;
+static uint64_t g_wstamp, g_vtex_gen;
 static void alias_sync(Tex *t, VTex *vt) {
     long long now = nvn_front_frame_next();
     if (!(t->b.flags & 8) || t->b.target != 1 || vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT || vt->decode || vt->expand) return;
-    if (t->over_frame != now + 1) { t->over_frame = now + 1; t->nover = nvn_front_tex_over(t, t->over, 48);      /* every size of the target that has an image now: the full-size one is the oldest record, last in the list */ }
+    /* [lm3] issue 41: every larger size over this memory that has an image now. The full-size record is the oldest,
+     * at the tail of *live_mem_slot(t->mem); a fixed cap truncated before reaching it when >48 intermediate DRS sizes
+     * were live at high frame rates (105-120 fps), leaving the post-process alias frozen on an old frame. */
+    if (t->over_frame != now + 1 || t->over_gen != g_vtex_gen) {
+        int n;
+        for (;;) {
+            n = nvn_front_tex_over(t, t->over, t->over_cap);
+            if (n <= t->over_cap) break;
+            int cap = t->over_cap ? t->over_cap : 16;
+            while (cap < n) cap *= 2;
+            Tex **p = realloc(t->over, (size_t)cap * sizeof *p);
+            if (!p) { n = t->over_cap; break; }
+            t->over = p; t->over_cap = cap;
+        }
+        t->nover = n;
+        t->over_frame = now + 1; t->over_gen = g_vtex_gen;
+    }
     VTex *src = NULL;
     for (int i = 0; i < t->nover; i++) { VTex *o = t->over[i]->dead ? NULL : t->over[i]->vk; if (o && o != vt && o->fmt == vt->fmt && o->w >= vt->w && o->h >= vt->h && o->wstamp > vt->wstamp && (!src || o->wstamp > src->wstamp)) src = o; }
     if (!src) return;
@@ -1303,7 +1320,7 @@ static VTex *vt_get2(Tex *t, int sync) {
          * it samples another (its lit scene reached the screen as the light buffer that had been in that memory before):
          * they are one image on the console, so they are one image here. */
         Tex *same = nvn_front_tex_same(t);
-        if (same && same->vk) { vt = same->vk; vt->refs++; t->vk = vt; { static int n; if (n++ < 3) printf("nvn_vk: texture %d x %d format 0x%x shares the image of another texture over the same memory\n", t->b.width, t->b.height, t->b.format); } }
+        if (same && same->vk) { vt = same->vk; vt->refs++; t->vk = vt; g_vtex_gen++; { static int n; if (n++ < 3) printf("nvn_vk: texture %d x %d format 0x%x shares the image of another texture over the same memory\n", t->b.width, t->b.height, t->b.format); } }
     }
     if (vt) { vt->used = nvn_front_frame_next(); if (t->gpu_written) vt->gw = 1; else if (vt->gw) t->gpu_written = 1; }
     if (!vt) {
@@ -1379,7 +1396,7 @@ static VTex *vt_get2(Tex *t, int sync) {
         VKC(vkBindImageMemory(V.device, vt->img, vt->mem.mem, vt->mem.off));
         vt->layout = VK_IMAGE_LAYOUT_UNDEFINED;
         vt->next = g_vtex_all; if (g_vtex_all) g_vtex_all->prev = vt; g_vtex_all = vt;
-        t->vk = vt;
+        t->vk = vt; g_vtex_gen++;
         R.images++; R.images_live++; nvn_front_count(5, 1);
         g_fmt_hist[b->format & 255]++;
         if (can_color || vt->aspect != VK_IMAGE_ASPECT_COLOR_BIT) {      /* an image nothing was written to reads as zero (the OpenGL driver's behaviour, which the comparison saw) */
@@ -6982,6 +6999,7 @@ static void vkd_shutdown(void) {
                                                     * the submit and read a destroyed image when the panel's shutdown submitted it later (a stop while loading) */
     R.done = ~0ull; nvn_front_done_moved(); garbage_collect();
     while (g_vtex_all) { VTex *vt = g_vtex_all; if (vt->t) vt->t->vk = NULL; vt_destroy(vt); }
+    for (Tex *t = nvn_front_tex_first(); t; t = t->all_next) { free(t->over); t->over = NULL; t->nover = t->over_cap = 0; t->over_frame = 0; }
     for (int i = 0; i < 1024; i++) for (Pipe *p = g_pipes[i], *n; p; p = n) { n = p->next; vkDestroyPipeline(V.device, p->p, NULL); if (p->p_fast) vkDestroyPipeline(V.device, p->p_fast, NULL); if (!p->libbed) { vkDestroyPipelineLayout(V.device, p->layout, NULL); vkDestroyDescriptorSetLayout(V.device, p->dl[0], NULL); vkDestroyDescriptorSetLayout(V.device, p->dl[1], NULL); } free(p); }
     for (int i = 0; i < 64; i++) for (Pipe *p = g_tpipes[i], *n; p; p = n) { n = p->next; vkDestroyPipeline(V.device, p->p, NULL); vkDestroyPipelineLayout(V.device, p->layout, NULL); vkDestroyDescriptorSetLayout(V.device, p->dl[0], NULL); vkDestroyDescriptorSetLayout(V.device, p->dl[1], NULL); free(p); }      /* [witchtime] tessellated pipelines */
     gpl_destroy();

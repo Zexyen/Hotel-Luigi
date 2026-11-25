@@ -48,7 +48,7 @@ typedef struct Tex {
     VNode *views;
     void *vk;                              /* the Vulkan back end's record of this texture (nvn_vk_draw.c: VTex), NULL until first used */
     void *prep;                            /* #45: its ASTC decode on tex_prep's threads (nvn_gl.c), render thread's */
-    long long over_frame; struct Tex *over[48]; int nover;      /* nvn_vk_draw.c alias_sync: the larger textures over this one's memory, looked up once a frame */
+    long long over_frame; uint64_t over_gen; struct Tex **over; int nover, over_cap;      /* nvn_vk_draw.c alias_sync: the larger textures over this one's memory, looked up once a frame (or when a VTex is made) */
     struct Tex *mem_next;                  /* nvn_gl.c: the live textures at the same storage address (g_live_mem), newest first */
     struct Tex *live_next, *live_prev;     /* nvn_gl.c: the textures not finalized (tex_initialize retires the ones whose storage a new texture takes) */
     long long ahead_seen;                  /* session 8 (nvn_vk_draw.c tex_ahead): 1 + the frame the render thread first saw this record; -1 = looked at, not taken */
@@ -127,7 +127,7 @@ uint8_t *nvn_front_list(uint64_t handle, size_t *len);                      /* l
 void nvn_front_batch_begin(void);                                           /* a new submitted batch: texture memory is looked at again once */
 void nvn_front_barrier_texmem(void);                                        /* nvnCommandBufferBarrier bit 0x10 */
 int nvn_front_tex_layers(const Tex *t);
-int nvn_front_tex_over(const Tex *t, Tex **out, int max);                   /* nvn_gl.c: live textures with an image at t's storage address, of t's format and at least t's size (not t's own layout) */
+int nvn_front_tex_over(const Tex *t, Tex **out, int max);                   /* nvn_gl.c: live textures with an image at t's storage address, of t's format and at least t's size (writes up to max, returns total count) */
 Tex *nvn_front_tex_same(const Tex *t);                                      /* nvn_gl.c: another live texture with a back-end image over exactly t's storage and of t's layout */
 int nvn_front_tex_overlapping(const Tex *t, Tex **out, int max);            /* nvn_gl.c: the other live textures over t's storage that have a back-end image */
 int nvn_front_tex_levels(const Tex *t);                                     /* levels the host image has (builder levels clamped to the size) */
