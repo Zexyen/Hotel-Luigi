@@ -545,9 +545,11 @@ int App::run()
 	{
 		SDL_Event ev;
 		// while an animation plays RmlUi asks for the next frame at once; the swapchain's vsync paces it
-		const int wait = ctx->GetNextUpdateDelay() <= 0 ? 1 : runner.running() ? 30 : 50;
+		const bool animating = ctx->GetNextUpdateDelay() <= 0 || leaving || want_focus;
+		const int wait = animating ? 1 : runner.running() ? 30 : 100;
 		if (SDL_WaitEventTimeout(&ev, wait))
 		{
+			dirty = true;
 			handle(ev);
 			while (running && SDL_PollEvent(&ev))
 				handle(ev);
@@ -558,8 +560,13 @@ int App::run()
 		{
 			want_play = false;
 			play();
+			dirty = true;
 		}
-		draw();
+		if (dirty || animating || ctx->GetNextUpdateDelay() <= 0)
+		{
+			dirty = false;
+			draw();
+		}
 	}
 	if (runner.running())
 		runner.stop();                       // the build resumes from this step next time
@@ -671,8 +678,27 @@ void App::prompts_use(SDL_Gamepad* pad)
 	if (!pad)
 		return;
 	const SDL_GamepadType t = SDL_GetGamepadType(pad);
-	prompts_use(t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5 ? 2
-		: t == SDL_GAMEPAD_TYPE_XBOX360 || t == SDL_GAMEPAD_TYPE_XBOXONE ? 3 : 1);
+	if (t == SDL_GAMEPAD_TYPE_PS3 || t == SDL_GAMEPAD_TYPE_PS4 || t == SDL_GAMEPAD_TYPE_PS5)
+		prompts_use(2);
+	else if (t == SDL_GAMEPAD_TYPE_XBOX360 || t == SDL_GAMEPAD_TYPE_XBOXONE)
+		prompts_use(3);
+	else if (t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO || t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT
+		|| t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT || t == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR
+		|| t == SDL_GAMEPAD_TYPE_GAMECUBE)
+		prompts_use(1);
+	else
+	{
+		const SDL_GamepadButtonLabel south = SDL_GetGamepadButtonLabel(pad, SDL_GAMEPAD_BUTTON_SOUTH);
+		prompts_use(south == SDL_GAMEPAD_BUTTON_LABEL_CROSS ? 2
+			: south == SDL_GAMEPAD_BUTTON_LABEL_A ? 3 : 1);
+	}
+}
+
+static bool is_nav_key(Rml::Input::KeyIdentifier k)
+{
+	using namespace Rml::Input;
+	return k == KI_RETURN || k == KI_ESCAPE || k == KI_UP || k == KI_DOWN
+		|| k == KI_LEFT || k == KI_RIGHT || k == KI_Q || k == KI_E;
 }
 
 void App::handle(SDL_Event& ev)
@@ -702,23 +728,39 @@ void App::handle(SDL_Event& ev)
 		auto button = SDL_GamepadButton(ev.gbutton.button);
 		SDL_GamepadButtonLabel label = pad ? SDL_GetGamepadButtonLabel(pad, button) : SDL_GAMEPAD_BUTTON_LABEL_UNKNOWN;
 		using namespace Rml::Input;
+		KeyIdentifier k = KI_UNKNOWN;
 		// confirm and back by what the button says on it: A / cross, B / circle (A is on the right on a Nintendo pad)
 		if (label == SDL_GAMEPAD_BUTTON_LABEL_A || label == SDL_GAMEPAD_BUTTON_LABEL_CROSS)
-			key(KI_RETURN);
+			k = KI_RETURN;
 		else if (label == SDL_GAMEPAD_BUTTON_LABEL_B || label == SDL_GAMEPAD_BUTTON_LABEL_CIRCLE)
-			back();
+			k = KI_ESCAPE;
 		else if (button == SDL_GAMEPAD_BUTTON_DPAD_UP)
-			key(KI_UP);
+			k = KI_UP;
 		else if (button == SDL_GAMEPAD_BUTTON_DPAD_DOWN)
-			key(KI_DOWN);
+			k = KI_DOWN;
 		else if (button == SDL_GAMEPAD_BUTTON_DPAD_LEFT)
-			key(KI_LEFT);
+			k = KI_LEFT;
 		else if (button == SDL_GAMEPAD_BUTTON_DPAD_RIGHT)
-			key(KI_RIGHT);
+			k = KI_RIGHT;
 		else if (button == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER)
-			key(KI_Q);
+			k = KI_Q;
 		else if (button == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)
-			key(KI_E);
+			k = KI_E;
+		if (k == KI_UNKNOWN)
+			return;
+		// Steam Deck / Steam Input can mirror one press across Steam Virtual Gamepad + physical HIDAPI pad, or
+		// across HIDAPI gamepad + Desktop keyboard chords: suppress the duplicate from another source within 60 ms.
+		const Uint64 now = SDL_GetTicks();
+		if (k == last_nav_key && now - last_nav_ms < 60 && (!last_nav_from_pad || last_nav_pad != ev.gbutton.which))
+			return;
+		last_nav_key = k;
+		last_nav_ms = now;
+		last_nav_pad = ev.gbutton.which;
+		last_nav_from_pad = true;
+		if (k == KI_ESCAPE)
+			back();
+		else
+			key(k);
 		return;
 	}
 	case SDL_EVENT_GAMEPAD_AXIS_MOTION:
@@ -732,10 +774,22 @@ void App::handle(SDL_Event& ev)
 		break;
 	case SDL_EVENT_KEY_DOWN:
 	{
-		prompts_use(4);
-		if (Rml::Element* f = ctx->GetFocusElement(); f && f->GetTagName() == "input")
-			typed = true;                        // keys into the dump folder's box: the mouse leaves its focus there (hover_focus)
+		Rml::Element* f = ctx->GetFocusElement();
+		const bool in_input = f && f->GetTagName() == "input";
 		Rml::Input::KeyIdentifier k = RmlSDL::ConvertKey(int(ev.key.key));
+		const Uint64 now = SDL_GetTicks();
+		if (!in_input && is_nav_key(k))
+		{
+			if (k == last_nav_key && last_nav_from_pad && now - last_nav_ms < 60)
+				return;
+			last_nav_key = k;
+			last_nav_ms = now;
+			last_nav_pad = 0;
+			last_nav_from_pad = false;
+		}
+		prompts_use(4);
+		if (in_input)
+			typed = true;                        // keys into the dump folder's box: the mouse leaves its focus there (hover_focus)
 		if (k == Rml::Input::KI_ESCAPE)
 		{
 			back();
@@ -1356,12 +1410,16 @@ void App::start_build()
 void App::tick()
 {
 	if (leaving && system->GetElapsedTime() - leave_at >= 0.22)
+	{
 		go_now(next_screen);
+		dirty = true;
+	}
 	{
 		std::lock_guard<std::mutex> lock(picked_mutex);
 		if (picked)
 		{
 			picked = false;
+			dirty = true;
 			dump = picked_folder;
 			verified = false;
 			dump_modified = accept_modified = false;    // a new folder is checked as it is
@@ -1380,10 +1438,12 @@ void App::tick()
 			update_seen = seen;
 			update_message = message;
 			refresh_title();
+			dirty = true;
 		}
 	}
 	if (!runner.poll() && !((job == Job::build || job == Job::textures) && runner.running()))
 		return;
+	dirty = true;
 	if (job == Job::verify)
 	{
 		checks.clear();

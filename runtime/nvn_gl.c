@@ -2318,12 +2318,14 @@ static uint8_t *list_lookup(uint64_t h, size_t *len) {
 }
 /* Render thread, once per frame: drop lists not submitted for a while (NVN has no call that frees a command handle). */
 static void list_collect(void) {
+    int fps = gfx_options()->frame_rate;
+    LONG64 ttl = fps > 30 ? (LONG64)fps * 4 : 120;      /* keep ~4 s of unfinalized command handles at 60..120 fps, as 120 frames does at 30 fps */
     AcquireSRWLockExclusive(&g_list_lock);
     for (int i = 0; i < g_list_count; i++) {
         List *l = &g_lists[i];
         if (!l->data) continue;
         LONG64 last = l->used >= 0 ? l->used : l->created;
-        if (l->finalized || g_st.frames - last > 120) { free(l->data); l->data = NULL; l->gen++; g_list_free[g_list_free_n++] = i; }      /* finalized by the game, or (a handle the game never finalized) unused for two seconds */
+        if (l->finalized || g_st.frames - last > ttl) { free(l->data); l->data = NULL; l->gen++; g_list_free[g_list_free_n++] = i; }
     }
     ReleaseSRWLockExclusive(&g_list_lock);
 }

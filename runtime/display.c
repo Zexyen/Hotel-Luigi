@@ -5,6 +5,10 @@
 #include <string.h>
 #include <windows.h>
 #include <math.h>
+#ifdef __linux__
+#include <time.h>
+#include <errno.h>
+#endif
 #include "runtime.h"
 #include "hostrt.h"
 #include "gfx_options.h"
@@ -146,6 +150,14 @@ void display_perf_thread(void) {
     if (g_pc_on && g_pc_n > 0) SetThreadSelectedCpuSets(GetCurrentThread(), g_pc_ids, (ULONG)g_pc_n);
 }
 static void precise_wait_until(LONGLONG target, HANDLE timer) {
+#ifdef __linux__
+    /* On Linux QueryPerformanceCounter is CLOCK_MONOTONIC in nanoseconds (plat.h). Sleeping to an absolute
+     * deadline via clock_nanosleep wakes within ~20-50 us without the 0.5 ms YieldProcessor() spin that keeps
+     * Steam Deck / mobile APU clocks elevated and fans spinning even at 30 fps. */
+    (void)timer;
+    struct timespec ts = { (time_t)(target / 1000000000LL), (long)(target % 1000000000LL) };
+    while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &ts, NULL) == EINTR) {}
+#else
     LARGE_INTEGER now, due;
     QueryPerformanceCounter(&now);
     LONGLONG left = target - now.QuadPart;
@@ -153,6 +165,7 @@ static void precise_wait_until(LONGLONG target, HANDLE timer) {
     due.QuadPart = -((left - g_freq.QuadPart / 2000) * 10000000 / g_freq.QuadPart);
     if (due.QuadPart < 0) { if (timer && SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE)) WaitForSingleObject(timer, 100); else Sleep((DWORD)(left * 1000 / g_freq.QuadPart)); }
     for (QueryPerformanceCounter(&now); now.QuadPart < target; QueryPerformanceCounter(&now)) YieldProcessor();
+#endif
 }
 static DWORD WINAPI vblank_thread(LPVOID arg) {
     (void)arg;
@@ -1415,12 +1428,11 @@ void display_pace(void) {
     if (!g_interval) next = now;
     else if (left > 0) {
         static HANDLE timer;
-        LARGE_INTEGER after, due;
+        LARGE_INTEGER after;
         hitch_pacing(1);
         if (!timer) timer = CreateWaitableTimerExW(NULL, NULL, 0x00000002 /* CREATE_WAITABLE_TIMER_HIGH_RESOLUTION */, TIMER_ALL_ACCESS);
-        due.QuadPart = -((left - g_freq.QuadPart / 2000) * 10000000 / g_freq.QuadPart);          /* relative, 100 ns units */
-        if (due.QuadPart < 0) { if (timer && SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE)) WaitForSingleObject(timer, 100); else Sleep((DWORD)(left * 1000 / g_freq.QuadPart)); }
-        for (QueryPerformanceCounter(&after); after.QuadPart < next.QuadPart; QueryPerformanceCounter(&after)) YieldProcessor();
+        precise_wait_until(next.QuadPart, timer);
+        QueryPerformanceCounter(&after);
         hitch_pacing(0);
         nvn_pf_pace(after.QuadPart - now.QuadPart);
     } else if (-left > frame_ticks) next.QuadPart = now.QuadPart - frame_ticks;
