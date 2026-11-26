@@ -55,6 +55,10 @@ private:
 	Rml::Context* ctx = nullptr;
 	Rml::DataModelHandle model;
 	std::vector<SDL_Gamepad*> pads;
+	Rml::Input::KeyIdentifier last_nav_key = Rml::Input::KI_UNKNOWN;
+	Uint64 last_nav_ms = 0;
+	SDL_JoystickID last_nav_pad = 0;
+	bool last_nav_from_pad = false;
 	int prompts = 4;                // footer hints: 1 Switch, 2 PlayStation, 3 Xbox, 4 keyboard
 	bool prompts_fixed = false;     // [general] button_prompts names one; else they follow what was used last
 	void prompts_read();
@@ -99,7 +103,7 @@ private:
 	// work for the main loop
 	BuildRunner runner;
 	enum class Job { none, verify, build, textures } job = Job::none;
-	bool running = true, want_play = false, want_focus = true;
+	bool running = true, want_play = false, want_focus = true, dirty = true;
 	int program = 0;                   // the program the next Play starts (game_host.h; a program switch sets it)
 	bool after_switch = false;
 	bool play_only = false;            // --play: the game starts at once, and the launcher ends with it

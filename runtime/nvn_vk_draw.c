@@ -1044,6 +1044,7 @@ static VkFlags layout_access(VkImageLayout l) {
     case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL: return VK_ACCESS_TRANSFER_WRITE_BIT; case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL: return VK_ACCESS_TRANSFER_READ_BIT;
     case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL: return VK_ACCESS_SHADER_READ_BIT; case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL: return VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL: return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL: return VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_SHADER_READ_BIT;
     case VK_IMAGE_LAYOUT_GENERAL: return VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
     default: return 0;
     }
@@ -2193,6 +2194,15 @@ static VkImageView fsr_dither_view(int s, unsigned u, Tex *t, VTex *vt, const Vi
 static int g_vk_test;                              /* session 13, TEST ONLY: HL_VK_TEST (see the dynamic state) */
 static int g_dp_potential;                         /* [witchtime] issues 132, 133: draw_prepare for an indirect draw whose count or records the GPU decides */
 static int g_dp_fs_stores;                         /* [witchtime] issue 147: the draw just prepared has a fragment stage that stores into images */
+static int draw_writes_ds(void) {
+    if (R.rast_discard) return 0;
+    if ((R.ds >> 1) & 1) return 1;
+    if (R.ds & 4) {
+        for (int face = 0; face < 2; face++) if (R.swmask[face])
+            for (int k = 0; k < 3; k++) { unsigned op = (unsigned)((R.ds >> (16 + face * 12 + k * 4)) & 15); if (op >= 2 && op <= 8) return 1; }
+    }
+    return 0;
+}
 static int pass_begin(void) {
     VkRenderingAttachmentInfo ca[8], da;
     VkRenderingInfo ri = {VK_STRUCTURE_TYPE_RENDERING_INFO};
@@ -2231,8 +2241,12 @@ static int pass_begin(void) {
         if (vt->aspect == VK_IMAGE_ASPECT_COLOR_BIT) nvn_vk_missing("a colour format bound as depth target");
         else if (RS_ON && rs_ui_native() && vt->rs && !R.pass_rs && w && (lvl_(vt->w, target_level(&R.depth)) != w || lvl_(vt->h, target_level(&R.depth)) != h)) g_rs_mixed++;      /* session 9 (HL_VK_UI_NATIVE): an unscaled colour target with a scaled depth target: the pass runs WITHOUT depth (counted, reported at exit); PR #8 review: != (not <), above 1.0 the scaled depth is LARGER than the colour */
         else {
-            vt_layout(vt, vt->feedback ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-            da.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO; da.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; da.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            VkImageLayout dlay = vt->feedback == 2 ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                               : vt->feedback      ? VK_IMAGE_LAYOUT_GENERAL
+                               : VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            vt_layout(vt, dlay);
+            da.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO; da.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            da.storeOp = vt->feedback == 2 ? VK_ATTACHMENT_STORE_OP_NONE : VK_ATTACHMENT_STORE_OP_STORE;
             da.imageView = target_view(&R.depth, vt); da.imageLayout = vt->layout;
             if (vt->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ri.pDepthAttachment = &da;
             if (vt->aspect & VK_IMAGE_ASPECT_STENCIL_BIT) ri.pStencilAttachment = &da;
@@ -2547,13 +2561,19 @@ static void resolve_sampler(int s, VStage *v, int i) {
                  ((dim == DIM_CUBE || dim == DIM_CUBEA) && (have == DIM_2DA) && e.nlay >= 6 && vt->w == vt->h);
         if (ok && vt->samples == 1) {
             if (attached && have_targets_live()) {
-                if (!vt->feedback) { vt->feedback = 1; R.feedback++; pass_end(); }
-                else if (vt->fb_dirty && vt->layout == VK_IMAGE_LAYOUT_GENERAL) {
-                    pass_end(); cmd_begin();
-                    image_barrier(vt->img, vt->aspect, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
-                    vt->fb_dirty = 0;
+                int depth_ro = s != 5 && (vt->aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) && !draw_writes_ds();
+                if (depth_ro) {
+                    if (vt->feedback != 2) { if (!vt->feedback) R.feedback++; vt->feedback = 2; pass_end(); }
+                    vt_layout(vt, VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL);
+                } else {
+                    if (vt->feedback != 1) { if (!vt->feedback) R.feedback++; vt->feedback = 1; pass_end(); }
+                    if (vt->layout != VK_IMAGE_LAYOUT_GENERAL) vt_layout(vt, VK_IMAGE_LAYOUT_GENERAL);
+                    else if (vt->fb_dirty) {
+                        pass_end(); cmd_begin();
+                        image_barrier(vt->img, vt->aspect, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
+                        vt->fb_dirty = 0;
+                    }
                 }
-                vt_layout(vt, VK_IMAGE_LAYOUT_GENERAL);
             }
             else vt_layout(vt, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             g_dtex[g_ndtex].view = vt_view(vt, &e, dim, 0); g_dtex[g_ndtex].layout = vt->layout;
@@ -4442,6 +4462,10 @@ static int draw_prepare(unsigned prim) {
         (g_hdr_tm_frame != nvn_front_frame_next() || !g_hdr_tm || R.col[0].tex->b.width >= g_hdr_tm->b.width)) { g_hdr_tm = R.col[0].tex; g_hdr_tm_frame = nvn_front_frame_next(); }      /* [witchtime] HDR: hdr_tm_view; the widest of the frame (not a screen inside the scene) */
     if (!g_dp_potential) fsr_draw(fs);             /* [witchtime] issue 118: FSR before the first draw that reads the finished scene (may end the pass); not from a draw the GPU may cull (g_dp_potential) */
     /* 1. textures (may upload, change layouts, end the pass) */
+    if (R.depth.tex && !R.depth.tex->dead && R.depth.tex->vk && ((VTex *)R.depth.tex->vk)->feedback == 2 && draw_writes_ds()) {
+        pass_end();
+        ((VTex *)R.depth.tex->vk)->feedback = 0;
+    }
     g_ndtex = 0;
     g_movie_y = 0; g_fs_screen = g_fs_small = 0;
     for (int j = 0; j < nsv; j++) for (int i = 0; i < sv[j]->nsmp; i++) resolve_sampler(sx[j], sv[j], i);
@@ -4743,14 +4767,7 @@ static int draw_prepare(unsigned prim) {
     ckpt(0, vs, fs, tes);                          /* [issue 26] */
     if (!R.rast_discard) {
         if (fs) for (int i = 0; i < R.ncol; i++) if (R.col[i].tex && R.col[i].tex->vk && ((R.chanmask >> (4 * i)) & 15)) ((VTex *)R.col[i].tex->vk)->fb_dirty = 1;
-        if (R.depth.tex && R.depth.tex->vk) {
-            int dw = (int)((R.ds >> 1) & 1);
-            if (!dw && (R.ds & 4)) {
-                for (int face = 0; face < 2 && !dw; face++) if (R.swmask[face])
-                    for (int k = 0; k < 3; k++) { unsigned op = (unsigned)((R.ds >> (16 + face * 12 + k * 4)) & 15); if (op >= 2 && op <= 8) { dw = 1; break; } }
-            }
-            if (dw) ((VTex *)R.depth.tex->vk)->fb_dirty = 1;
-        }
+        if (R.depth.tex && R.depth.tex->vk && draw_writes_ds()) ((VTex *)R.depth.tex->vk)->fb_dirty = 1;
     }
     for (int i = 0; i < g_dw_n; i++) if (g_dw_cb[i]->state == 1 && R.recording) g_dw_cb[i]->wserial = R.serial + 1;
     return 1;
@@ -5281,8 +5298,8 @@ static void exec(const Cmd *m, int depth) {
         const TargetRef *col = (const TargetRef *)blob, *dep = col + 8;
         int n = (int)a[0] < 8 ? (int)a[0] : 8;
         pass_end();
-        for (int i = 0; i < R.ncol; i++) if (R.col[i].tex && R.col[i].tex->vk) { VTex *vt = R.col[i].tex->vk; vt->feedback = 0; vt->fb_dirty = 0; }
-        if (R.depth.tex && R.depth.tex->vk) { VTex *vt = R.depth.tex->vk; vt->feedback = 0; vt->fb_dirty = 0; }
+        for (int i = 0; i < R.ncol; i++) if (R.col[i].tex && R.col[i].tex->vk) ((VTex *)R.col[i].tex->vk)->feedback = 0;
+        if (R.depth.tex && R.depth.tex->vk) ((VTex *)R.depth.tex->vk)->feedback = 0;
         memset(R.col, 0, sizeof R.col); memset(&R.depth, 0, sizeof R.depth);
         R.ncol = 0; R.have_targets = 0;
         for (int i = 0; i < n; i++) if (col[i].tex && !col[i].tex->dead) { R.col[i] = col[i]; R.ncol = i + 1; R.have_targets = 1; }
@@ -5403,6 +5420,7 @@ static void exec(const Cmd *m, int depth) {
     }
     case OP_CLEARDS: {
         if (!R.have_targets || R.render_off || !R.depth.tex || !((a[0] & 1) || (uint32_t)a[2])) break;
+        if (R.depth.tex->vk && ((VTex *)R.depth.tex->vk)->feedback == 2) { pass_end(); ((VTex *)R.depth.tex->vk)->feedback = 0; }
         if (!pass_begin()) break;
         VTex *vt = R.depth.tex->vk;
         VkClearAttachment ca;

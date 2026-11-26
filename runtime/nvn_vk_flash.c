@@ -8,8 +8,9 @@
  * clears, textures uploaded, pipelines linked / made at a draw, holds, images made, extra presents of a held loading
  * screen, the layout the window texture was in before the present blit (0 = never written: undefined content), the
  * list of the passes (size, format, window texture or not, draws in it) and the 16x9 brightness map.
- * HL_VK_FLASHLOG=0 off; =2 also reports every jump to near white that does NOT come back within 3 frames (a scene
- * change to a white screen is the game's own; for diagnosis). Default 1. Nothing here changes what is drawn. */
+ * HL_VK_FLASHLOG=1 enables the detector; =2 also reports every jump to near white that does NOT come back within 3 frames
+ * (a scene change to a white screen is the game's own; for diagnosis). Default 0 (opt-in to avoid an extra per-frame blit
+ * and readback on every GPU). Nothing here changes what is drawn. */
 #define FL_W 16
 #define FL_H 9
 #define FL_RING 8
@@ -30,7 +31,7 @@ static struct {
     LONG64 jumps, flashes;
 } g_fl = {.on = -1};
 
-static int fl_on(void) { if (g_fl.on < 0) { const char *e = getenv("HL_VK_FLASHLOG"); g_fl.on = e ? atoi(e) : 1; } return g_fl.on; }
+static int fl_on(void) { if (g_fl.on < 0) { const char *e = getenv("HL_VK_FLASHLOG"); g_fl.on = e ? atoi(e) : 0; } return g_fl.on; }
 /* pass_begin: one entry per pass of the frame being drawn */
 static void fl_pass(int w, int h, int fmt, int win, int ncol, int depth) {
     if (!fl_on()) return;

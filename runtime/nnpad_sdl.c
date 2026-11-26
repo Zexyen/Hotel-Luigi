@@ -534,7 +534,7 @@ static void apply_player_index(Dev *d) {
     SDL_SetGamepadLED(d->gp, col[d->slot][0], col[d->slot][1], col[d->slot][2]);
 }
 static const char *type_name(int t) {
-    static const char *const n[] = {"unknown", "standard", "Xbox 360", "Xbox One", "PS3", "PS4", "PS5", "Switch Pro", "Joy-Con left", "Joy-Con right", "Joy-Con pair", "GameCube"};
+    static const char *const n[] = {"unknown", "standard", "Xbox 360", "Xbox One", "PS3", "PS4", "PS5", "Switch Pro", "Joy-Con left", "Joy-Con right", "Joy-Con pair", "GameCube", "Steam"};
     return t >= 0 && t < (int)(sizeof n / sizeof n[0]) ? n[t] : "other";
 }
 static void enable_sensors(Dev *d, int cycle) {
@@ -553,6 +553,14 @@ static void enable_sensors(Dev *d, int cycle) {
 static int is_switch_pad(int gtype) {
     return gtype == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO || gtype == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT ||
            gtype == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT || gtype == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR;
+}
+static int dev_vid(const Dev *d) { return d->gp ? SDL_GetGamepadVendor(d->gp) : d->js ? SDL_GetJoystickVendor(d->js) : 0; }
+static int dev_pid(const Dev *d) { return d->gp ? SDL_GetGamepadProduct(d->gp) : d->js ? SDL_GetJoystickProduct(d->js) : 0; }
+static int is_steam_virtual_pad(const Dev *d) { return dev_vid(d) == 0x28de && dev_pid(d) == 0x11ff; }
+static int is_steam_deck_pad(const Dev *d) { return d->gp && dev_vid(d) == 0x28de && dev_pid(d) == 0x1205; }
+static int guid_pinned(const char *guid) {
+    for (int p = 0; p < 8; p++) if (g_cfg.pguid[p][0] && !_stricmp(g_cfg.pguid[p], guid)) return 1;
+    return 0;
 }
 static void dev_add(SDL_JoystickID id) {
     Dev *d = NULL;
@@ -574,6 +582,23 @@ static void dev_add(SDL_JoystickID id) {
     if (d->gp) {
         d->gtype = SDL_GetGamepadType(d->gp);
         enable_sensors(d, 0);
+    }
+    /* When both Steam Virtual Gamepad (0x28de:0x11ff, no IMU) and the physical Steam Deck (0x28de:0x1205, with IMU)
+     * are visible to SDL3, keep only the physical Steam Deck so it owns player 1 with native gyro and no phantom 2P. */
+    if (is_steam_virtual_pad(d) && !guid_pinned(d->guid)) {
+        for (int i = 0; i < MAXDEV; i++) if (&g_dev[i] != d && g_dev[i].used && !g_dev[i].ignored && is_steam_deck_pad(&g_dev[i])) {
+            d->ignored = 1;
+            say("nn::pad: ignored \"%s\" %s (physical Steam Deck already connected)\n", d->name, d->guid);
+            if (d->gp) SDL_CloseGamepad(d->gp); else SDL_CloseJoystick(d->js);
+            d->gp = NULL; d->js = NULL;
+            return;
+        }
+    } else if (is_steam_deck_pad(d)) {
+        for (int i = 0; i < MAXDEV; i++) if (&g_dev[i] != d && g_dev[i].used && !g_dev[i].ignored && is_steam_virtual_pad(&g_dev[i]) && !guid_pinned(g_dev[i].guid)) {
+            say("nn::pad: replacing \"%s\" (slot %d) with physical Steam Deck \"%s\"\n", g_dev[i].name, g_dev[i].slot + 1, d->name);
+            if (g_dev[i].gp) SDL_CloseGamepad(g_dev[i].gp); else if (g_dev[i].js) SDL_CloseJoystick(g_dev[i].js);
+            g_dev[i].gp = NULL; g_dev[i].js = NULL; g_dev[i].slot = -1; g_dev[i].ignored = 1;
+        }
     }
     d->wireless = SDL_GetJoystickConnectionState(d->js) == SDL_JOYSTICK_CONNECTION_WIRELESS;
     d->slot = assign_slot(d);
@@ -1005,11 +1030,19 @@ int nnpad_button_prompts(void) {
         if (!best) best = d;
     }
     int t = best ? best->gtype : SDL_GAMEPAD_TYPE_UNKNOWN;
+    SDL_GamepadButtonLabel south = best ? SDL_GetGamepadButtonLabel(best->gp, SDL_GAMEPAD_BUTTON_SOUTH) : SDL_GAMEPAD_BUTTON_LABEL_UNKNOWN;
     unlock();
     switch (t) {
     case SDL_GAMEPAD_TYPE_PS3: case SDL_GAMEPAD_TYPE_PS4: case SDL_GAMEPAD_TYPE_PS5: return 2;
     case SDL_GAMEPAD_TYPE_XBOX360: case SDL_GAMEPAD_TYPE_XBOXONE: return 3;
-    default: return best || nnpad_keyboard_player() < 0 ? 1 : 4;      /* no pad: the keyboard is what there is, if it is on */
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO: case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT:
+    case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT: case SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR:
+    case SDL_GAMEPAD_TYPE_GAMECUBE: return 1;
+    default:
+        if (!best) return nnpad_keyboard_player() < 0 ? 1 : 4;      /* no pad: the keyboard is what there is, if it is on */
+        if (south == SDL_GAMEPAD_BUTTON_LABEL_CROSS) return 2;
+        if (south == SDL_GAMEPAD_BUTTON_LABEL_A) return 3;         /* Steam Deck, Steam Virtual Gamepad and generic A-south pads */
+        return 1;
     }
 }
 /* [Recomps#1] finding 148: do player 1's face buttons go by printed letter, A being the bottom button (Xbox A, PlayStation
@@ -1273,6 +1306,7 @@ int nnpad_selftest(const NnHidHooks *h) {
     check(attr == 3 && btn == 0 && st[0] == 0 && st[1] == 0, "connected state: attribute 3 (connected, wired), all zero");
     check(g_vj[0].pidx == 0 && g_vj[0].led_b == 255, "player index and LED colour set on the pad (player 1)");
     check(h->led(0) == 1, "player LED pattern for player 1 reported");
+    check(nnpad_button_prompts() == 3, "auto button_prompts maps a standard A-south gamepad (e.g. Steam Deck) to Xbox (3), not Switch");
     SDL_GUIDToString(SDL_GetJoystickGUIDForID(id[0]), guid0, sizeof guid0);
 
     /* ---- hot-plug out and in */

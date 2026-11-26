@@ -222,6 +222,20 @@ static void opt_path(char *out) {
     snprintf(tmp, sizeof tmp, "%s\\..\\config\\graphics.ini", exe);
     if (!_fullpath(out, tmp, MAX_PATH)) snprintf(out, MAX_PATH, "%s", tmp);
 }
+static int is_steam_deck(void) {
+#ifdef __linux__
+    const char *e = getenv("SteamDeck");
+    if (e && !strcmp(e, "1")) return 1;
+    FILE *f = fopen("/sys/devices/virtual/dmi/id/board_name", "rb");
+    if (f) {
+        char buf[64] = {0};
+        size_t n = fread(buf, 1, sizeof buf - 1, f);
+        fclose(f);
+        if (n > 0 && (!strncmp(buf, "Jupiter", 7) || !strncmp(buf, "Galileo", 7))) return 1;
+    }
+#endif
+    return 0;
+}
 static int upscaler_of(const char *v) {      /* [witchtime] issue 118: GfxOptions.upscaler; an unknown value is off */
     static const char *const k[] = {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance"};
     for (int i = 1; i < 6; i++) if (!_stricmp(v, k[i])) return i;
@@ -242,7 +256,16 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         char b[MAX_PATH];
         snprintf(b, sizeof b, "%s", o->path);
         for (char *p = b + 3; *p; p++) if (*p == '\\' || *p == '/') { *p = 0; CreateDirectoryA(b, NULL); *p = '\\'; }
-        if ((f = fopen(o->path, "wb")) != NULL) { fwrite(k_default_ini, 1, strlen(k_default_ini), f); fclose(f); written = 1; }
+        if ((f = fopen(o->path, "wb")) != NULL) {
+            const char *dock = is_steam_deck() ? strstr(k_default_ini, "\nconsole_mode = docked") : NULL;
+            if (dock) {
+                fwrite(k_default_ini, 1, (size_t)(dock - k_default_ini), f);
+                fputs("\nconsole_mode = handheld", f);
+                fputs(dock + strlen("\nconsole_mode = docked"), f);
+                printf("graphics options: Steam Deck detected on first run: defaulting console_mode = handheld (720p internal)\n");
+            } else fwrite(k_default_ini, 1, strlen(k_default_ini), f);
+            fclose(f); written = 1;
+        }
         f = fopen(o->path, "rb");
     }
     char line[512];
