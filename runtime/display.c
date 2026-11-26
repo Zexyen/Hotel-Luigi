@@ -438,6 +438,7 @@ static DWORD WINAPI window_thread(LPVOID arg) {
     if (visible) {                                   /* [Recomps#1] raw mouse movement for the mouse camera (WM_INPUT, foreground only) */
         RAWINPUTDEVICE rid = {1, 2, 0, g_hwnd};       /* generic desktop, mouse */
         RegisterRawInputDevices(&rid, 1, sizeof rid);
+        { HMODULE imm = LoadLibraryA("imm32.dll"); void *(WINAPI *iac)(HWND, void *) = imm ? (void *(WINAPI *)(HWND, void *))(void *)GetProcAddress(imm, "ImmAssociateContext") : NULL; if (iac) iac(g_hwnd, NULL); }      /* disable IME on the gameplay window so East Asian IMEs do not intercept Shift/keys or steal focus */
         atexit(mouse_release);
     }
     InterlockedExchange(&g_ready, 1);
@@ -493,9 +494,10 @@ static SDL_Scancode vk_scancode(int vk) {
     case 0x21: return SDL_SCANCODE_PAGEUP;        case 0x22: return SDL_SCANCODE_PAGEDOWN;    case 0x23: return SDL_SCANCODE_END;
     case 0x24: return SDL_SCANCODE_HOME;          case VK_LEFT: return SDL_SCANCODE_LEFT;     case VK_UP: return SDL_SCANCODE_UP;
     case VK_RIGHT: return SDL_SCANCODE_RIGHT;     case VK_DOWN: return SDL_SCANCODE_DOWN;     case 0x2D: return SDL_SCANCODE_INSERT;
-    case 0x2E: return SDL_SCANCODE_DELETE;        case VK_LSHIFT: return SDL_SCANCODE_LSHIFT; case VK_RSHIFT: return SDL_SCANCODE_RSHIFT;
-    case VK_LCONTROL: return SDL_SCANCODE_LCTRL;  case VK_RCONTROL: return SDL_SCANCODE_RCTRL; case VK_LMENU: return SDL_SCANCODE_LALT;
-    case VK_RMENU: return SDL_SCANCODE_RALT;      case 0xBA: return SDL_SCANCODE_SEMICOLON;   case 0xBB: return SDL_SCANCODE_EQUALS;
+    case 0x2E: return SDL_SCANCODE_DELETE;        case VK_SHIFT: return SDL_SCANCODE_LSHIFT;  case VK_LSHIFT: return SDL_SCANCODE_LSHIFT; case VK_RSHIFT: return SDL_SCANCODE_RSHIFT;
+    case VK_CONTROL: return SDL_SCANCODE_LCTRL;   case VK_LCONTROL: return SDL_SCANCODE_LCTRL; case VK_RCONTROL: return SDL_SCANCODE_RCTRL;
+    case VK_MENU: return SDL_SCANCODE_LALT;       case VK_LMENU: return SDL_SCANCODE_LALT;    case VK_RMENU: return SDL_SCANCODE_RALT;
+    case 0x14: return SDL_SCANCODE_CAPSLOCK;      case 0xBA: return SDL_SCANCODE_SEMICOLON;   case 0xBB: return SDL_SCANCODE_EQUALS;
     case 0xBC: return SDL_SCANCODE_COMMA;         case 0xBD: return SDL_SCANCODE_MINUS;       case 0xBE: return SDL_SCANCODE_PERIOD;
     case 0xBF: return SDL_SCANCODE_SLASH;         case 0xC0: return SDL_SCANCODE_GRAVE;       case 0xDB: return SDL_SCANCODE_LEFTBRACKET;
     case 0xDC: return SDL_SCANCODE_BACKSLASH;     case 0xDD: return SDL_SCANCODE_RIGHTBRACKET; case 0xDE: return SDL_SCANCODE_APOSTROPHE;

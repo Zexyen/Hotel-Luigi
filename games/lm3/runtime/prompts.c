@@ -157,7 +157,8 @@ static void copy(int g, int from) {
 /* the name of a virtual key on a keycap, as in [keyboard]; 0 (unbound) = "" */
 static void key_label(int vk, char *out) {
     static const struct { int vk; const char *s; } name[] = {{0x05, "M4"}, {0x06, "M5"}, {0x08, "BKS"}, {0x09, "TAB"}, {0x0d, "ENT"}, {0x10, "SFT"},
-        {0x11, "CTL"}, {0x12, "ALT"}, {0x1b, "ESC"}, {0x20, "SPC"}, {0x25, "LFT"}, {0x26, "UP"}, {0x27, "RGT"}, {0x28, "DWN"}, {0xa0, "SFT"},
+        {0x11, "CTL"}, {0x12, "ALT"}, {0x14, "CAP"}, {0x1b, "ESC"}, {0x20, "SPC"}, {0x21, "PGU"}, {0x22, "PGD"}, {0x23, "END"}, {0x24, "HOM"},
+        {0x25, "LFT"}, {0x26, "UP"}, {0x27, "RGT"}, {0x28, "DWN"}, {0x2d, "INS"}, {0x2e, "DEL"}, {0xa0, "SFT"},
         {0xa1, "SFT"}, {0xa2, "CTL"}, {0xa3, "CTL"}, {0xa4, "ALT"}, {0xa5, "ALT"}};
     out[0] = 0;
     if (!vk) return;
