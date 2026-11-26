@@ -292,6 +292,7 @@ static void pcm_upload(int wait) {
         pcmenu_gpu(g_gpu.on);
         printf("pcmenu: the panel is composed on the %s\n", g_gpu.on ? "GPU" : "CPU"); fflush(stdout);
     }
+    if (!V.extent.width || !V.extent.height) return;
     if (pcmenu_panel_size((int)V.extent.width, (int)V.extent.height, r, &gen) && (gen != g_pcm.gen || !g_pcm.ready)) {
         int kind = pcmenu_kind(), use_gpu = g_gpu.on && kind != 2;      /* kind 2 (perf overlay / debug list) copies straight to tgt; never touch g_gpu.canvas */
         int next = kind == 2 ? (g_pcm.cur ^ 1) : 0;

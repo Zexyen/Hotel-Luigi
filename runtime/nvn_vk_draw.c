@@ -5647,10 +5647,13 @@ static void replay(uint64_t handle, int depth) {
 
 /* ---------------------------------------------------------------- the RBackend members */
 static void prewarm_wait(void);
+static void boot_shaders_hold(void);
 static void vk_submit(void *arg) {
     SubmitJob *j = arg;
     if (!V.alive) return;                          /* after the shutdown at exit: the device is gone */
     prewarm_wait();
+    boot_shaders_hold();
+    if (!V.alive || g_display_close || g_m4_quit) return;
     LONG64 t0 = tk();
     if (!cb_defer_pending()) cb_sync();            /* what the last batch's dispatches wrote is in guest memory before this batch reads it (keep mode: cb_defer_pending) */
     gcp_settle_done();
@@ -6363,6 +6366,100 @@ static void present_progress(float frac) { if (!g_ovl.bar_arg) return; g_ovl.fra
  * NOT covered (said in the log line at the end): pipelines of pairs never drawn on this PC are still linked at their first
  * loading screen or draw (a link is 0.011 ms on NVIDIA, up to 3.9 ms on Intel). */
 extern volatile LONG g_display_close;              /* display.c */
+/* Boot-time shader progress screen for games without an offline container store (e.g. LM3, where the game itself hands
+ * over all ~5,300 programs via nvnProgramSetShaders before frame 1). nvn_vk_program_set defers blocking during boot so
+ * the full count is already queued when the first draw batch arrives; the render thread then displays the same
+ * "Preparing shaders" screen as Witch Time's prep_first_hold while the workers drain the queue. */
+static void boot_shaders_hold(void) {
+    static int done, mode = -1;
+    if (done || !g_m4_on || !g_pw_nthread) return;
+    LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
+    if (g_prep_thread && g_prep_state == 0 && !g_prep_nfiles) {
+        LONG64 tw = tk();
+        while (g_prep_thread && g_prep_state == 0 && !g_prep_nfiles && !g_display_close && !g_m4_quit && (tk() - tw) * 1000 < 500 * fq.QuadPart) Sleep(10);
+    }
+    if (g_prep_nfiles || (g_prep_thread && g_prep_state != 3)) return;
+    EnterCriticalSection(&g_sh_lock);
+    LONG64 dn = g_jq_done + g_bq_done, tot = g_jq_queued + g_bq_queued;
+    LeaveCriticalSection(&g_sh_lock);
+    if (tot <= 0) return;
+    done = 1;
+    InterlockedExchange(&g_boot_shaders_done, 1);
+    if (mode < 0) { const char *e = getenv("HL_VK_PREPARE"); mode = e ? (!_stricmp(e, "background") ? 1 : !_stricmp(e, "off") ? 2 : 0) : gfx_options()->shader_prepare; }
+    if (mode) {
+        printf("nvn_vk_prep: first-run screen not shown: %s (%lld boot stages queued)\n", mode == 1 ? "shader_prepare = background" : "shader_prepare = off", (long long)tot);
+        fflush(stdout);
+        return;
+    }
+    if (g_prep_marked && dn < tot) {
+        LONG64 tw = tk();
+        while (dn < tot && !g_display_close && !g_m4_quit && (tk() - tw) * 1000 < 400 * fq.QuadPart) {
+            Sleep(10);
+            EnterCriticalSection(&g_sh_lock);
+            dn = g_jq_done + g_bq_done; tot = g_jq_queued + g_bq_queued;
+            LeaveCriticalSection(&g_sh_lock);
+        }
+    }
+    if (g_display_close || g_m4_quit) return;
+    if (dn >= tot) {
+        if (!g_prep_marked) pcache_save_at(1, 1);
+        return;
+    }
+    LONG64 t0 = tk(), tlog = t0, dn0 = dn;
+    int stopped = 0;
+    printf("nvn_vk_prep: FIRST-RUN PREPARATION: %s (first start here, a new driver, or new game data): holding at boot until all %lld queued shader stages are ready; %d workers\n",
+           g_prep_marked ? "cached shader load still running" : g_prep_marker, (long long)tot, g_pw_nthread);
+    fflush(stdout);
+    PresentJob dummy;
+    memset(&dummy, 0, sizeof dummy);
+    void *prev_bar = g_ovl.bar_arg;
+    g_ovl.bar_arg = &dummy;
+    g_ovl.screen = 1;
+    char info[96];
+    snprintf(info, sizeof info, "Vulkan  \xC2\xB7  %s  \xC2\xB7  %s", V.props.deviceName, D.drv.driverName);
+    for (;;) {
+        EnterCriticalSection(&g_sh_lock);
+        dn = g_jq_done + g_bq_done; tot = g_jq_queued + g_bq_queued;
+        LeaveCriticalSection(&g_sh_lock);
+        if (dn >= tot) break;
+        if (g_display_close || g_m4_quit) { stopped = 1; break; }
+        double el = (double)(tk() - t0) / (double)fq.QuadPart;
+        double f = tot > 0 ? (double)dn / (double)tot : 1.0;
+        if (f > 0.999) f = 0.999;
+        int pct = (int)(f * 100.0);
+        LONG64 made = dn - dn0;
+        int eta = made > 20 && el > 2.0 ? (int)(el * (double)(tot - dn) / (double)made) : -1;
+        pcmenu_prep_show(pct, (long long)dn, (long long)tot, eta, 0, info);
+        if ((V.swapchain || swapchain_create()) && V.extent.width > 0 && V.extent.height > 0) {
+            pcm_upload(1);
+            present_progress((float)f);
+        }
+        if (tk() - tlog > 10 * fq.QuadPart) {
+            tlog = tk();
+            printf("nvn_vk_prep: first-run screen: %d %%, %lld of %lld stages, %.0f s so far, about %d s left\n", pct, (long long)dn, (long long)tot, el, eta);
+            fflush(stdout);
+        }
+        for (int w = 0; w < 5; w++) {
+            if (g_display_close || g_m4_quit) break;
+            EnterCriticalSection(&g_sh_lock);
+            dn = g_jq_done + g_bq_done; tot = g_jq_queued + g_bq_queued;
+            LeaveCriticalSection(&g_sh_lock);
+            if (dn >= tot) break;
+            Sleep(20);
+        }
+    }
+    g_ovl.screen = 0;
+    g_ovl.bar_arg = prev_bar;
+    pcmenu_prep_hide();
+    double el = (double)(tk() - t0) / (double)fq.QuadPart;
+    if (stopped) {
+        printf("nvn_vk_prep: FIRST-RUN PREPARATION STOPPED after %.1f s (the window was closed): %lld of %lld stages done; the next start goes on from the stage records and the cache\n", el, (long long)dn, (long long)tot);
+    } else {
+        printf("nvn_vk_prep: FIRST-RUN PREPARATION FINISHED in %.1f s on %d workers: %lld stage jobs; the pipeline cache and the marker are written now\n", el, g_pw_nthread, (long long)dn);
+        pcache_save_at(1, 1);
+    }
+    fflush(stdout);
+}
 static void prep_first_hold(LONG64 frame) {
     static int done, mode = -1;
     if (done) return;
@@ -6432,6 +6529,7 @@ static void vk_present2(void *arg, int progress) {
     g_ovl.bar_arg = arg;
     g_wd_where = 1;
     m4_barrier(frame, R.frame_draws);
+    boot_shaders_hold();
     prep_first_hold(frame);                        /* session 14: the first-run preparation screen (returns at once on every later present) */
     if (pcmenu_kind() == 2) pcm_debug_present();   /* [lm3] a debug list (pcmenu.c pcmenu_debug_list): its pixels when they changed */
     g_wd_where = 0;
@@ -6442,6 +6540,9 @@ static void vk_present2(void *arg, int progress) {
     if ((g_prep_state == 5 || g_prep_state == 1) && !fight_recent()) {
         g_ovl.thick = 4;
         g_ovl.frac = g_prep_state == 5 ? (float)g_store_pct / 100.0f : g_prep_nfiles ? (float)g_pq_done / (float)(g_pq_queued > 0 ? g_pq_queued + (LONG64)(g_prep_nfiles - g_prep_read) * 90 : 1) : 0;      /* about 90 variations a file */
+    } else if (g_jq_queued > g_jq_done && !fight_recent()) {
+        g_ovl.thick = 4;
+        g_ovl.frac = g_jq_queued > 0 ? (float)g_jq_done / (float)g_jq_queued : 0.0f;
     }
     g_render_tid = GetCurrentThreadId();
     if (g_skip_fr_n) { g_skip_frames++; printf("nvn_vk_skipf: frame %lld (%s): %lld draws left out (shader_wait = skip)\n", (long long)frame, g_in_fight ? "fight" : "no fight", (long long)g_skip_fr_n); g_skip_fr_n = 0; }
@@ -6586,7 +6687,7 @@ swap: ;
             if (g_pt_on > 0) pt_mark((int)V.extent.width, (int)V.extent.height, 0, 0, 0, 1, 2);
             vkCmdBlitImage(R.cmd, src->img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_LINEAR);      /* PR #8: src = vt, or the last reduction step */
         } else { VkClearColorValue z; memset(&z, 0, sizeof z); z.float32[3] = 1.0f; vkCmdClearColorImage(R.cmd, tgt, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &z, 1, &sr); }
-        fl_capture(vt, fl_s4, frame, fl_layout);      /* session 13: 16x9 copy of what is presented, for the flash detector */
+        if (!(progress && g_ovl.screen)) fl_capture(vt, fl_s4, frame, fl_layout);      /* session 13: 16x9 copy of what is presented, for the flash detector */
         overlay_draw(tgt);
         pcm_vk_draw(tgt);                             /* [witchtime] the PC menu's panel (nvn_vk_pcmenu.c); nothing while it is closed */
         if (V.hdr) hdr_pass(index, tgt);              /* [Recomps#1] finding 147: leaves the swapchain image in PRESENT_SRC */
