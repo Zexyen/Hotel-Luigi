@@ -67,7 +67,7 @@ static const char *const g_kbn[KB_N] = {"A", "B", "X", "Y", "STICK_L", "STICK_R"
  * left stick = W A S D (walk: left Ctrl), right stick = I J K L and the mouse */
 #define KB2(a, b) ((a) | (b) << 8)
 static const int g_kb_default[KB_N] = {KB2(VK_RBUTTON, VK_RETURN), KB2(VK_SPACE, VK_BACK), VK_LBUTTON, 'E', 'C', KB2(VK_MBUTTON, 'V'),
-    'R', 'F', KB2('Q', VK_XBUTTON1), VK_LSHIFT, VK_ESCAPE, VK_TAB, KB2(VK_LEFT, '1'), KB2(VK_UP, '2'), KB2(VK_RIGHT, '3'), KB2(VK_DOWN, 'T'),
+    'R', 'F', KB2('Q', VK_XBUTTON1), VK_SHIFT, VK_ESCAPE, VK_TAB, KB2(VK_LEFT, '1'), KB2(VK_UP, '2'), KB2(VK_RIGHT, '3'), KB2(VK_DOWN, 'T'),
     'A', 'W', 'D', 'S', 'J', 'I', 'L', 'K', VK_LCONTROL};
 
 static CRITICAL_SECTION g_cs;
@@ -187,34 +187,34 @@ static const char *const g_default_ini =
 "; The environment variable HL_KEYBOARD_PLAYER (0 = none, 1..8) overrides this line. The keyboard counts only while the game window has the focus.\r\n"
 "player = auto\r\n"
 "; Keys: a letter or digit, LEFT UP RIGHT DOWN ENTER BACKSPACE SPACE TAB ESC SHIFT CTRL ALT LSHIFT RSHIFT LCTRL RCTRL LALT RALT F1..F12,\r\n"
-"; NUM0..NUM9, MOUSE1..MOUSE5 (left, right, middle, back, forward), or 0x<virtual key code>; none = unbound. Two keys for one\r\n"
-"; button: separated by a comma (A = MOUSE2, ENTER). Pad and keyboard work at the same time (no switch needed). The Pro buttons\r\n"
-"; and what the first game built on this runtime did with them (change the comments with the keys for yours):\r\n"
+"; NUM0..NUM9, MOUSE1..MOUSE5 (left, right, middle, back, forward), INS DEL HOME END PAGEUP PAGEDOWN CAPSLOCK, punctuation (e.g. . - / ; [ ] '),\r\n"
+"; or 0x<virtual key code>; none = unbound. Two keys for one button: separated by a comma (A = MOUSE2, ENTER). Pad and keyboard work at the same\r\n"
+"; time (no switch needed). The Pro Controller buttons and what they do in Luigi's Mansion 3:\r\n"
 "X = MOUSE1\r\n"
-"; punch\r\n"
+"; Dark-Light Device (hold)\r\n"
 "A = MOUSE2, ENTER\r\n"
-"; kick; confirm in menus\r\n"
+"; Strobulb / interact / Slam; confirm in menus\r\n"
 "B = SPACE, BACKSPACE\r\n"
-"; jump; back in menus\r\n"
+"; back in menus\r\n"
 "Y = E\r\n"
-"; shoot (hold)\r\n"
-"ZR = LSHIFT\r\n"
-"; dodge\r\n"
+"; Suction Shot (plunger)\r\n"
+"ZR = SHIFT\r\n"
+"; Poltergust suction (hold); ZL + ZR = Burst\r\n"
 "ZL = Q, MOUSE4\r\n"
-"; Demon Slave (hold, with the attack keys)\r\n"
+"; Poltergust blow (hold); ZL + ZR = Burst\r\n"
 "L = R\r\n"
-"; weapon switch\r\n"
+"; Suction Shot (alternate); L + R = Dark-Light\r\n"
 "R = F\r\n"
-"; stance change\r\n"
+"; Strobulb (alternate); L + R = Dark-Light\r\n"
 "STICK_R = MOUSE3, V\r\n"
-"; camera / lock-on\r\n"
+"; Gooigi\r\n"
 "STICK_L = C\r\n"
-"; waypoint\r\n"
+"; left stick press\r\n"
 "PLUS = ESC\r\n"
 "; pause (also lets the mouse go)\r\n"
 "MINUS = TAB\r\n"
-"; subscreen\r\n"
-"; D-pad: left / up / right = Demon Select, down = taunt; moves in menus\r\n"
+"; Virtual Boo\r\n"
+"; D-pad: moves in menus\r\n"
 "LEFT = LEFT, 1\r\nUP = UP, 2\r\nRIGHT = RIGHT, 3\r\nDOWN = DOWN, T\r\n"
 "; Left stick (moving; the menus too). A diagonal is as long as a straight push; WALK held = 0.4 of the travel (walking).\r\n"
 "LSTICK_LEFT = A\r\nLSTICK_UP = W\r\nLSTICK_RIGHT = D\r\nLSTICK_DOWN = S\r\nWALK = LCTRL\r\n"
@@ -260,29 +260,57 @@ static int parse_vk1(const char *t) {
     while (b[0] == ' ' || b[0] == '\t') memmove(b, b + 1, strlen(b));
     for (char *p = b + strlen(b); p > b && (p[-1] == ' ' || p[-1] == '\t' || p[-1] == '\r' || p[-1] == '\n'); ) *--p = 0;
     if (!b[0] || !_stricmp(b, "none")) return 0;
-    if (b[1] == 0) { char ch = b[0]; if (ch >= 'a' && ch <= 'z') ch -= 32; return ch; }
+    if (b[1] == 0) {
+        char ch = b[0];
+        if (ch >= 'a' && ch <= 'z') return ch - 32;
+        if ((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9')) return ch;
+        switch (ch) {
+        case ';': return 0xBA; case '=': return 0xBB; case '-': return 0xBD; case '.': return 0xBE;
+        case '/': return 0xBF; case '`': return 0xC0; case '[': return 0xDB; case '\\': return 0xDC;
+        case ']': return 0xDD; case '\'': return 0xDE;
+        default: return 0;
+        }
+    }
     if (!_stricmp(b, "LEFT")) return VK_LEFT; if (!_stricmp(b, "UP")) return VK_UP;
     if (!_stricmp(b, "RIGHT")) return VK_RIGHT; if (!_stricmp(b, "DOWN")) return VK_DOWN;
     if (!_stricmp(b, "ENTER") || !_stricmp(b, "RETURN")) return VK_RETURN; if (!_stricmp(b, "BACKSPACE")) return VK_BACK;      /* [witchtime] RETURN, ESCAPE: SDL's names */
     if (!_stricmp(b, "SPACE")) return VK_SPACE; if (!_stricmp(b, "TAB")) return VK_TAB; if (!_stricmp(b, "ESC") || !_stricmp(b, "ESCAPE")) return VK_ESCAPE;
-    if (!_stricmp(b, "SHIFT")) return VK_SHIFT; if (!_stricmp(b, "CTRL")) return VK_CONTROL; if (!_stricmp(b, "ALT")) return VK_MENU;
+    if (!_stricmp(b, "SHIFT")) return VK_SHIFT; if (!_stricmp(b, "CTRL") || !_stricmp(b, "CONTROL")) return VK_CONTROL; if (!_stricmp(b, "ALT")) return VK_MENU;
     /* [Recomps#1] the mouse buttons and the left / right modifier keys */
     if (!_strnicmp(b, "MOUSE", 5) && b[5] >= '1' && b[5] <= '5' && !b[6]) { static const int mb[5] = {VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2}; return mb[b[5] - '1']; }
-    if (!_stricmp(b, "LSHIFT")) return VK_LSHIFT; if (!_stricmp(b, "RSHIFT")) return VK_RSHIFT;
-    if (!_stricmp(b, "LCTRL")) return VK_LCONTROL; if (!_stricmp(b, "RCTRL")) return VK_RCONTROL;
-    if (!_stricmp(b, "LALT")) return VK_LMENU; if (!_stricmp(b, "RALT")) return VK_RMENU;
+    if (!_stricmp(b, "LMB")) return VK_LBUTTON; if (!_stricmp(b, "RMB")) return VK_RBUTTON; if (!_stricmp(b, "MMB")) return VK_MBUTTON;
+    if (!_stricmp(b, "LSHIFT") || !_stricmp(b, "L_SHIFT") || !_stricmp(b, "LEFT_SHIFT")) return VK_LSHIFT;
+    if (!_stricmp(b, "RSHIFT") || !_stricmp(b, "R_SHIFT") || !_stricmp(b, "RIGHT_SHIFT")) return VK_RSHIFT;
+    if (!_stricmp(b, "LCTRL") || !_stricmp(b, "L_CTRL") || !_stricmp(b, "LEFT_CTRL") || !_stricmp(b, "LCONTROL")) return VK_LCONTROL;
+    if (!_stricmp(b, "RCTRL") || !_stricmp(b, "R_CTRL") || !_stricmp(b, "RIGHT_CTRL") || !_stricmp(b, "RCONTROL")) return VK_RCONTROL;
+    if (!_stricmp(b, "LALT") || !_stricmp(b, "L_ALT") || !_stricmp(b, "LEFT_ALT")) return VK_LMENU;
+    if (!_stricmp(b, "RALT") || !_stricmp(b, "R_ALT") || !_stricmp(b, "RIGHT_ALT")) return VK_RMENU;
+    if (!_stricmp(b, "CAPS") || !_stricmp(b, "CAPSLOCK")) return 0x14;
+    if (!_stricmp(b, "PGUP") || !_stricmp(b, "PAGEUP")) return 0x21; if (!_stricmp(b, "PGDN") || !_stricmp(b, "PAGEDOWN")) return 0x22;
+    if (!_stricmp(b, "END")) return 0x23; if (!_stricmp(b, "HOME")) return 0x24;
+    if (!_stricmp(b, "INS") || !_stricmp(b, "INSERT")) return 0x2D; if (!_stricmp(b, "DEL") || !_stricmp(b, "DELETE")) return 0x2E;
+    if (!_stricmp(b, "COMMA")) return 0xBC;
     if ((b[0] == 'F' || b[0] == 'f') && atoi(b + 1) >= 1 && atoi(b + 1) <= 12) return VK_F1 + atoi(b + 1) - 1;
     if (!_strnicmp(b, "NUM", 3) && b[3] >= '0' && b[3] <= '9') return VK_NUMPAD0 + b[3] - '0';
     if (b[0] == '0' && (b[1] == 'x' || b[1] == 'X')) return (int)strtol(b, NULL, 16);
     return 0;
 }
-static int parse_vk(const char *t) {           /* [Recomps#1] one key, or two separated by a comma ("E, MOUSE3"): vk | vk2 << 8 */
+static int parse_vk_tok(const char *t, const char *bind) {
+    char b[24];
+    snprintf(b, sizeof b, "%s", t);
+    while (b[0] == ' ' || b[0] == '\t') memmove(b, b + 1, strlen(b));
+    for (char *p = b + strlen(b); p > b && (p[-1] == ' ' || p[-1] == '\t' || p[-1] == '\r' || p[-1] == '\n'); ) *--p = 0;
+    int vk = parse_vk1(b);
+    if (bind && !vk && b[0] && _stricmp(b, "none")) say("nn::pad: [keyboard] %s: unknown key \"%s\" (ignored)\n", bind, b);
+    return vk;
+}
+static int parse_vk(const char *t, const char *bind) {           /* [Recomps#1] one key, or two separated by a comma ("E, MOUSE3"): vk | vk2 << 8 */
     char b[48];
     snprintf(b, sizeof b, "%s", t);
     char *c = strchr(b, ',');
-    if (!c) return parse_vk1(b);
+    if (!c) return parse_vk_tok(b, bind);
     *c = 0;
-    return parse_vk1(b) | parse_vk1(c + 1) << 8;
+    return parse_vk_tok(b, bind) | parse_vk_tok(c + 1, bind) << 8;
 }
 static int parse_bool(const char *v) { return !(_stricmp(v, "off") && _stricmp(v, "0") && _stricmp(v, "no") && _stricmp(v, "false")) ? 0 : 1; }
 
@@ -321,6 +349,7 @@ static void cfg_set(Cfg *c, DevCfg *d, int in_dev, const char *key, char *val) {
 static void cfg_parse(Cfg *c, char *text) {
     DevCfg *cur = NULL;
     int sect = 0;                                     /* 1 general, 2 players, 3 keyboard, 4 device */
+    if ((unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF) text += 3;      /* UTF-8 BOM (Windows Notepad) */
     for (char *line = strtok(text, "\n"); line; line = strtok(NULL, "\n")) {
         while (*line == ' ' || *line == '\t') line++;
         size_t n = strlen(line);
@@ -349,7 +378,10 @@ static void cfg_parse(Cfg *c, char *text) {
             c->prompts = prompts_value(val);
         else if (sect == 1 && !_stricmp(key, "swap_confirm")) c->menu_swap = !_stricmp(val, "on");
         else if (sect == 1 && !_stricmp(key, "ignore")) { if (c->nignore < 16) snprintf(c->ignore[c->nignore++], sizeof c->ignore[0], "%s", val); }
-        else if (sect == 1) cfg_set(c, &c->def, 0, key, val);
+        else if (sect == 1) {
+            for (int i = 0; i < KB_N; i++) if (!_stricmp(key, g_kbn[i])) say("nn::pad: [general] \"%s = %s\" belongs under [keyboard], ignored\n", key, val);
+            cfg_set(c, &c->def, 0, key, val);
+        }
         else if (sect == 4 && cur) cfg_set(c, cur, 1, key, val);
         else if (sect == 2 && !_strnicmp(key, "player", 6) && key[6] >= '1' && key[6] <= '8' && !key[7]) {
             int p = key[6] - '1';
@@ -360,7 +392,7 @@ static void cfg_parse(Cfg *c, char *text) {
             else if (!_stricmp(key, "mouse_camera")) c->mouse_cam = parse_bool(val);            /* [Recomps#1] */
             else if (!_stricmp(key, "mouse_sensitivity")) { float v = (float)atof(val); if (v > 0.01f && v <= 20.0f) c->mouse_sens = v; }
             else if (!_stricmp(key, "mouse_invert_y")) c->mouse_inv = parse_bool(val);
-            else for (int i = 0; i < KB_N; i++) if (!_stricmp(key, g_kbn[i])) c->kb_vk[i] = parse_vk(val);
+            else for (int i = 0; i < KB_N; i++) if (!_stricmp(key, g_kbn[i])) c->kb_vk[i] = parse_vk(val, g_kbn[i]);
         }
     }
 }
@@ -397,6 +429,36 @@ static void make_dirs(const char *file) {
     snprintf(b, sizeof b, "%s", file);
     for (char *p = b + 3; *p; p++) if (*p == '\\' || *p == '/') { *p = 0; CreateDirectoryA(b, NULL); *p = '\\'; }
 }
+static int has_section(const char *text, const char *name) {
+    size_t nl = strlen(name);
+    if ((unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF) text += 3;
+    for (const char *p = text; *p; ) {
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '[' && !_strnicmp(p + 1, name, nl) && p[1 + nl] == ']') return 1;
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') p++;
+    }
+    return 0;
+}
+static void cfg_ensure_keyboard_section(const char *path) {      /* a partial file written by the launcher / RecompLauncher before first run lacks [keyboard] */
+    size_t len = 0;
+    char *text = read_file(path, &len);
+    if (!text) return;
+    if (!has_section(text, "keyboard")) {
+        const char *sec = strstr(g_default_ini, has_section(text, "players") ? "[keyboard]" : "[players]");
+        if (sec) {
+            FILE *f = fopen(path, "ab");
+            if (f) {
+                if (len && text[len - 1] != '\n') fwrite("\r\n", 1, 2, f);
+                fwrite("\r\n", 1, 2, f);
+                fwrite(sec, 1, strlen(sec), f);
+                fclose(f);
+                say("nn::pad: added missing [keyboard] defaults to %s\n", path);
+            }
+        }
+    }
+    free(text);
+}
 static void cfg_load(int first) {                 /* lock held */
     static Cfg n;
     char *text;
@@ -406,6 +468,8 @@ static void cfg_load(int first) {                 /* lock held */
         make_dirs(g_cfg.path);
         FILE *f = fopen(g_cfg.path, "wb");
         if (f) { fwrite(g_default_ini, 1, strlen(g_default_ini), f); fclose(f); say("nn::pad: wrote the default %s\n", g_cfg.path); }
+    } else if (first && !getenv("HL_CONFIG")) {
+        cfg_ensure_keyboard_section(g_cfg.path);
     }
     cfg_defaults(&n);
     text = read_file(g_cfg.path, NULL);
@@ -420,6 +484,9 @@ static void cfg_load(int first) {                 /* lock held */
     {   const char *l = getenv("HL_PAD_LAYOUT");
         if (l && l[0]) n.def.layout = !_stricmp(l, "label") || !_stricmp(l, "labels") ? 1 : 0; }
     g_cfg = n;
+    say("nn::pad: input=%s [keyboard] A=0x%x B=0x%x X=0x%x Y=0x%x L=0x%x R=0x%x ZL=0x%x ZR=0x%x\n",
+        g_cfg.input == 1 ? "keyboard" : g_cfg.input == 2 ? "controller" : "both",
+        g_cfg.kb_vk[0], g_cfg.kb_vk[1], g_cfg.kb_vk[2], g_cfg.kb_vk[3], g_cfg.kb_vk[6], g_cfg.kb_vk[7], g_cfg.kb_vk[8], g_cfg.kb_vk[9]);
 }
 
 /* ================================================================ devices */
@@ -617,7 +684,7 @@ void nnpad_poll(int force) {
     if (!force && (t.QuadPart - g_last_poll.QuadPart) * 1000 < g_qpf.QuadPart) return;
     lock();
     g_last_poll = t;
-    poll_devices();
+    if (g_cfg.input != 1) poll_devices();
     check_config(force);
     unlock();
 }
@@ -741,22 +808,26 @@ static Dev *dev_of(int player) { for (int i = 0; i < MAXDEV; i++) if (g_dev[i].u
 
 int nnpad_present(int player) {
     int r = 0;
-    if (!g_sdl_ok || player < 0 || player > 7 || g_cfg.input == 1) return 0;          /* [Recomps#1] input = keyboard: no pads */
+    if (!g_sdl_ok || player < 0 || player > 7) return 0;
     nnpad_poll(0);
     lock();
-    Dev *d = dev_of(player);
-    if (d && d->dropped) { NnPadState s; dev_state(d, &s); if (s.buttons) d->dropped = 0; }
-    r = d && !d->dropped;
+    if (g_cfg.input != 1) {          /* [Recomps#1] input = keyboard: no pads (config reload still runs above) */
+        Dev *d = dev_of(player);
+        if (d && d->dropped) { NnPadState s; dev_state(d, &s); if (s.buttons) d->dropped = 0; }
+        r = d && !d->dropped;
+    }
     unlock();
     return r;
 }
 int nnpad_get(int player, NnPadState *out) {
     int r = 0;
-    if (!g_sdl_ok || player < 0 || player > 7 || g_cfg.input == 1) return 0;          /* [Recomps#1] input = keyboard */
+    if (!g_sdl_ok || player < 0 || player > 7) return 0;
     nnpad_poll(0);
     lock();
-    Dev *d = dev_of(player);
-    if (d && !d->dropped) { dev_state(d, out); r = 1; }
+    if (g_cfg.input != 1) {          /* [Recomps#1] input = keyboard (config reload still runs above) */
+        Dev *d = dev_of(player);
+        if (d && !d->dropped) { dev_state(d, out); r = 1; }
+    }
     unlock();
     return r;
 }
@@ -1272,7 +1343,7 @@ int nnpad_selftest(const NnHidHooks *h) {
             h->key(vk, 1); h->state(0, &btn, st, &attr); h->key(vk, 0);
             if ((btn & 0xffff) != 1ull << b) { ok = 0; printf("    %s key %d: got %llx\n", g_kbn[b], k + 1, (unsigned long long)btn); }
         }
-        check(ok && nnpad_kb_vk(2) == VK_LBUTTON && (nnpad_kb_vk(0) & 0xff) == VK_RBUTTON, "default keys (controllers.ini as written): each bound key / mouse button gives exactly its Pro bit; punch X = left mouse, kick A = right mouse");
+        check(ok && nnpad_kb_vk(2) == VK_LBUTTON && (nnpad_kb_vk(0) & 0xff) == VK_RBUTTON && nnpad_kb_vk(9) == VK_SHIFT, "default keys (controllers.ini as written): each bound key / mouse button gives exactly its Pro bit; X = left mouse, A = right mouse, ZR = SHIFT");
         h->key('W', 1); h->state(0, &btn, st, &attr);
         check(st[0] == 0 && st[1] == 32767 && (btn >> 17 & 1), "W: left stick full up (and its stick-as-button bit)");
         h->key('D', 1); h->state(0, &btn, st, &attr);
@@ -1316,6 +1387,32 @@ int nnpad_selftest(const NnHidHooks *h) {
         check(ok, "rebound in the file while running: X = U (left mouse no longer punches), ZR = MOUSE5 or O, WALK = none");
         h->state(0, &btn, st, &attr); Sleep(20); h->mouse(6, 6); h->state(0, &btn, st, &attr);
         check(st[3] > 0 && st[2] > rx1 * 3 / 2, "mouse_invert_y = on: mouse down = stick up; mouse_sensitivity = 2: about twice the deflection");
+        /* issue #58: input = keyboard must still hot-reload controllers.ini, UTF-8 BOM + OEM punctuation + aliases parse cleanly */
+        Sleep(1100);
+        write_text(path, "\xEF\xBB\xBF[general]\r\ninput = keyboard\r\n[keyboard]\r\nplayer = none\r\nZR = .\r\n");
+        Sleep(1100); h->state(0, &btn, st, &attr);
+        ok = !nnpad_present(0) && nnpad_kb_vk(9) == 0xBE;
+        h->key(0xBE, 1); h->state(0, &btn, st, &attr); ok = ok && (btn & 0xffff) == 1ull << 9; h->key(0xBE, 0);
+        Sleep(1100);
+        write_text(path, "[general]\r\ninput = keyboard\r\n[keyboard]\r\nplayer = none\r\nZR = G\r\n");
+        Sleep(1100); h->state(0, &btn, st, &attr);     /* reloads via nnpad_get -> nnpad_poll(0) even while input = keyboard */
+        ok = ok && nnpad_kb_vk(9) == 'G';
+        h->key('G', 1); h->state(0, &btn, st, &attr); ok = ok && (btn & 0xffff) == 1ull << 9; h->key('G', 0);
+        check(ok && nnpad_key_vk("LEFT_SHIFT") == VK_LSHIFT && nnpad_key_vk("CAPSLOCK") == 0x14 && nnpad_key_vk("RMB") == VK_RBUTTON && nnpad_key_vk("-") == 0xBD && nnpad_key_vk(";") == 0xBA,
+              "input = keyboard reloads controllers.ini live; UTF-8 BOM, OEM punctuation ('.', '-', ';') and aliases parse to the right VKs");
+        {   /* partial launcher-written controllers.ini (only [general]) gets [players] and [keyboard] appended */
+            char p2[MAX_PATH];
+            GetTempPathA(MAX_PATH, p2); strcat(p2, "hl_pad_selftest\\partial.ini");
+            write_text(p2, "[general]\r\nbutton_prompts = keyboard\r\n");
+            cfg_ensure_keyboard_section(p2);
+            size_t n2 = 0; char *t2 = read_file(p2, &n2);
+            check(t2 && strstr(t2, "button_prompts = keyboard") && strstr(t2, "[keyboard]") && strstr(t2, "ZR = SHIFT"),
+                  "partial controllers.ini (launcher-created [general] only) keeps its setting and gets [keyboard] defaults appended");
+            free(t2); DeleteFileA(p2);
+        }
+        Sleep(1100);
+        write_text(path, "[general]\r\ninput = both\r\n[keyboard]\r\nplayer = none\r\n");
+        Sleep(1100); nnpad_poll(1);
         h->kb(0);
         h->state(0, &btn, st, &attr);
         check(btn == 0 && st[0] == 0 && st[1] == 0, "keyboard off again: player 1 is the pad alone");
@@ -1364,11 +1461,13 @@ int nnpad_selftest(const NnHidHooks *h) {
         Sleep(1100);
         write_text(path, text);
         Sleep(1100); nnpad_poll(1);
-        h->state(0, &btn, st, &attr);
+        vj_clear(js[0], SDL_GAMEPAD_BUTTON_COUNT, 6); settle(); h->state(0, &btn, st, &attr);
+        SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_SOUTH, true); settle(); h->state(0, &btn, st, &attr);
         int ok = btn == 1ull << 1 && !strcmp(nnpad_menu_swap_setting(), "on") && nnpad_menu_swap_set("off") && !strcmp(nnpad_menu_swap_setting(), "off");
         { size_t n = 0; char *t = read_file(g_cfg.path, &n); ok = ok && t && strstr(t, "swap_confirm = off\r\n[keyboard]") && strstr(t, "deadzone = 0.10\r\n"); free(t); }
         check(ok, "swap_confirm read from the ini: the game gets B for the pad's A; set keeps the file's other lines");
-        h->state(0, &btn, st, &attr);
+        vj_clear(js[0], SDL_GAMEPAD_BUTTON_COUNT, 6); settle(); h->state(0, &btn, st, &attr);
+        SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_SOUTH, true); settle(); h->state(0, &btn, st, &attr);
         check(before && btn == 1ull << 0, "ini edited while running: reloaded within ~1 s; layout=labels turns south (printed A on this pad) into Pro A");
         vj_clear(js[0], SDL_GAMEPAD_BUTTON_COUNT, 6);
         SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_NORTH, true); settle(); h->state(0, &btn, st, &attr);
