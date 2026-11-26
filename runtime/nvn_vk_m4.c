@@ -1300,6 +1300,8 @@ static void skip_queue_stage(const SSrc *src, const uint32_t *key, uint32_t fo) 
 }
 static void gpl_opt_push(Pipe *p) { Job *j = calloc(1, sizeof *j); j->kind = 6; j->pipe = p; g_gpl_opt_q++; job_push_bg(j); }
 static int g_m4_on, g_m4_quit, g_scan_on;
+extern volatile LONG g_display_close;              /* display.c */
+static volatile LONG g_boot_shaders_done;          /* nvn_vk_draw.c boot_shaders_hold: the boot shader burst has been handed to the progress screen */
 static LONG64 g_scan_jobs, g_scan_pipes, g_cs_pairs;
 static volatile LONG g_in_fight;
 static struct { int w, h, ncol, cf, df, lv; long long n, fight, first; } g_rtlog[256];      /* HL_VK_RTLOG=1: render-target sizes (nvn_vk_draw.c, where a pass begins) */
@@ -1649,11 +1651,13 @@ static void gpl_shared_vs(VStage *vs) {            /* g_sh_lock held, render thr
     for (int i = 0; i < g_nfo; i++) gpl_cross_push(vs, g_fo[i]);
 }
 static void spawn_stage_fo(const SSrc *src, const uint32_t *key) {      /* as spawn_stage, marked: the stage of a program without a vertex stage */
+    if (!g_m4_on || g_m4_quit || g_display_close) return;
     Job *j = calloc(1, sizeof *j + (size_t)src->code_len + src->cdata_size + 16);
     uint8_t *d = j->data;
     j->kind = 3; j->cont = -7; memcpy(j->key1, key, 16);
     job_copy_src(j, &d, 1, src);
     EnterCriticalSection(&g_sh_lock);
+    if (!g_m4_on || g_m4_quit || g_display_close) { LeaveCriticalSection(&g_sh_lock); free(j); return; }
     job_push_front(j);
     LeaveCriticalSection(&g_sh_lock);
 }
@@ -2024,9 +2028,9 @@ static DWORD WINAPI pw_main(void *arg) {
         /* session 10: a preparation job may be taken when nothing else waits; in a fight by at most g_prep_fight_cap workers */
 #define PQ_OK (g_pq_head && g_pq_running < (g_prep_urgent ? 64 : fight_recent() ? g_prep_fight_cap : g_prep_cap))
         while (!g_jq_head && !g_bq_head && !PQ_OK && !g_m4_quit) SleepConditionVariableCS(&g_jq_cv, &g_sh_lock, g_pq_head ? 50 : INFINITE);
-        Job *j = g_jq_head;
+        Job *j = NULL;
         int bg = 0;
-        if (j) { g_jq_head = j->next; if (!g_jq_head) g_jq_tail = NULL; }
+        if (!g_m4_quit && (j = g_jq_head) != NULL) { g_jq_head = j->next; if (!g_jq_head) g_jq_tail = NULL; }
         else if (!g_m4_quit && (j = g_bq_head) != NULL) { g_bq_head = j->next; if (!g_bq_head) g_bq_tail = NULL; bg = 1; }      /* at exit the background work is left undone */
         else if (!g_m4_quit && PQ_OK) { j = g_pq_head; g_pq_head = j->next; if (!g_pq_head) g_pq_tail = NULL; bg = 2; g_pq_running++; }
         Pipe *p = NULL;
@@ -2099,7 +2103,7 @@ static void stage_copy(Stage *st, int s) {
 void nvn_vk_program_set(void *prog) {
     Prog *p = prog;
     SSrc s[3];
-    if (!g_m4_on) return;
+    if (!g_m4_on || g_m4_quit || g_display_close) return;
     if (p->st[2].state || p->st[3].state || p->st[4].state) {
         static const uint32_t zero[4];
         SSrc es;
@@ -2143,17 +2147,21 @@ void nvn_vk_program_set(void *prog) {
     nvn_setsh_part[5] += tb - ta;
     EnterCriticalSection(&g_sh_lock);
     nvn_setsh_part[6] += tk() - tb;
+    if (!g_m4_on || g_m4_quit || g_display_close) { LeaveCriticalSection(&g_sh_lock); free(j); return; }
     if (holdlog_on()) for (int i = 0; i < 2; i++) if (has[i]) ho_note(hn[i], 0);
     job_push(j);
     /* session 6: outside a fight (no compute dispatch in the last frame) the caller is also held while the container scan
      * still has work: loading ends when everything the container holds is ready */
     int fr = fight_recent();
+    /* Games without an offline container store (e.g. LM3) register all shaders during boot before frame 1: queue them
+     * without blocking the guest thread so the render thread knows the full count and shows the shader progress screen. */
+    int boot_defer = nvn_front_frame_next() <= 1 && !g_prep_nfiles && !g_boot_shaders_done && g_jq_queued - g_jq_done < 16384;
     /* session 7: in a fight the caller (the game's main thread) is not held at all: a draw that needs the program waits for it
      * on the render thread, a program not drawn in this frame costs nothing */
-    if (!fr && (g_jq_queued - g_jq_done > g_pw_nthread || g_bq_queued > g_bq_done)) {
+    if (!fr && !boot_defer && (g_jq_queued - g_jq_done > g_pw_nthread || g_bq_queued > g_bq_done)) {
         LONG64 t0 = tk();
         LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
-        while ((g_jq_queued - g_jq_done > g_pw_nthread || g_bq_queued > g_bq_done) && tk() - t0 < 30 * fq.QuadPart) WD_SLEEP(&g_sh_cv, &g_sh_lock, 100);
+        while (!g_m4_quit && !g_display_close && (g_jq_queued - g_jq_done > g_pw_nthread || g_bq_queued > g_bq_done) && tk() - t0 < 30 * fq.QuadPart) WD_SLEEP(&g_sh_cv, &g_sh_lock, 100);
         g_set_held++; g_set_held_tk += tk() - t0;
         nvn_setsh_part[7] += tk() - t0;
     }
@@ -2473,11 +2481,17 @@ static void m4_stop(void) {
     EnterCriticalSection(&g_sh_lock);
     g_m4_on = 0; g_m4_quit = 1;
     WakeAllConditionVariable(&g_jq_cv);
+    WakeAllConditionVariable(&g_sh_cv);
     LeaveCriticalSection(&g_sh_lock);
     WaitForMultipleObjects((DWORD)g_pw_nthread, g_pw_thread, TRUE, 60000);
     for (int i = 0; i < g_pw_nthread; i++) CloseHandle(g_pw_thread[i]);
     g_pw_nthread = 0;
     if (g_prep_thread) { WaitForSingleObject(g_prep_thread, 30000); CloseHandle(g_prep_thread); g_prep_thread = NULL; }
+    EnterCriticalSection(&g_sh_lock);
+    while (g_jq_head) { Job *n = g_jq_head->next; free(g_jq_head); g_jq_head = n; } g_jq_tail = NULL;
+    while (g_bq_head) { Job *n = g_bq_head->next; free(g_bq_head); g_bq_head = n; } g_bq_tail = NULL;
+    while (g_pq_head) { Job *n = g_pq_head->next; free(g_pq_head); g_pq_head = n; } g_pq_tail = NULL;
+    LeaveCriticalSection(&g_sh_lock);
     if (g_warm_thread) { WaitForSingleObject(g_warm_thread, 30000); CloseHandle(g_warm_thread); g_warm_thread = NULL; }      /* [witchtime] it ends after the stage it is at */
     if (g_rs_thread) {
         EnterCriticalSection(&g_rs_lock); WakeAllConditionVariable(&g_rs_cv); LeaveCriticalSection(&g_rs_lock);
@@ -2502,6 +2516,16 @@ static volatile LONG64 g_gap_prev, g_gap_max;      /* nvn_vk_draw.c vk_present2:
 static int g_prep_limited;                         /* HL_VK_PREP_LIMIT (test): not the whole game: no marker */
 static HANDLE g_pcw_thread;
 typedef struct { void *data; size_t n; int marker, where, one_call, prio; LONG64 t_get, t_q; } PcWrite;
+static void prep_marker_write(long long nstages) {
+    if (g_prep_limited || !g_prep_marker[0]) return;
+    FILE *mf = fopen(g_prep_marker, "wb");
+    if (mf) {
+        fprintf(mf, "%d containers, %lld variations\n", g_prep_nfiles, nstages);
+        fclose(mf);
+        printf("nvn_vk_prep: marker %s written: the next start skips the preparation\n", g_prep_marker);
+        fflush(stdout);
+    }
+}
 static void pcache_write(PcWrite *w) {
     LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
     char tmp[176];
@@ -2517,10 +2541,7 @@ static void pcache_write(PcWrite *w) {
            w->where == 0 ? "on the exit path" : w->where == 1 ? "by the render thread inside a held loading screen" : "BY THE PREPARATION THREAD DURING PLAY (HL_VK_PCSAVE=prep: the behaviour before session 12)",
            (double)w->t_get * 1000.0 / (double)fq.QuadPart, w->one_call ? "one call" : "two calls: size, then data", w->prio, (double)(t1 - t0) * 1000.0 / (double)fq.QuadPart, w->where == 1 ? " by a thread of its own" : "",
            (double)g_gap_max * 1000.0 / (double)fq.QuadPart, (long long)nvn_front_frame_next(), g_in_fight ? "IN A FIGHT" : "no fight");
-    if (ok && w->marker && !g_prep_limited && g_prep_marker[0]) {
-        FILE *mf = fopen(g_prep_marker, "wb");
-        if (mf) { fprintf(mf, "%d containers, %lld variations\n", g_prep_nfiles, (long long)g_prep_vars); fclose(mf); printf("nvn_vk_prep: marker %s written with the pipeline cache: the next start skips the preparation\n", g_prep_marker); }
-    }
+    if (ok && w->marker) prep_marker_write(g_prep_nfiles ? (long long)g_prep_vars : (long long)g_jq_done);
     fflush(stdout);
     free(w->data);
 }
@@ -2587,7 +2608,10 @@ static void pcache_save_at(int where, int marker) {
     }
     if (!data) {
         n = 0;
-        if (vkGetPipelineCacheData(V.device, g_pcache, &n, NULL) != VK_SUCCESS || !n) return;
+        if (vkGetPipelineCacheData(V.device, g_pcache, &n, NULL) != VK_SUCCESS || !n) {
+            if (marker) prep_marker_write(g_prep_nfiles ? (long long)g_prep_vars : (long long)g_jq_done);
+            return;
+        }
         if (!(data = malloc(n))) return;
         if (vkGetPipelineCacheData(V.device, g_pcache, &n, data) != VK_SUCCESS) { free(data); return; }
     }
