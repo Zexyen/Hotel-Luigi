@@ -50,6 +50,7 @@ typedef struct {
     char guid[40], name[80];
     Uint16 rl, rh, rwant_l, rwant_h; int rpend; ULONGLONG rsent;
     int armed;                          /* [witchtime] stick axes (bit i = LX LY RX RY) of an unmapped joystick seen near the centre */
+    uint64_t handover_btn;              /* #38: button state snapshot while player 1 has no pad (rising-edge handover) */
 } Dev;
 
 static const char *const g_pro[16] = {"A", "B", "X", "Y", "STICK_L", "STICK_R", "L", "R", "ZL", "ZR", "PLUS", "MINUS", "LEFT", "UP", "RIGHT", "DOWN"};
@@ -82,6 +83,7 @@ static int g_kb_shared;                     /* [Recomps#1] pads may take the key
 static ULONGLONG g_init_ms;
 static LARGE_INTEGER g_qpf, g_last_poll;
 static ULONGLONG g_last_cfg_check, g_last_scan_ms;
+static int g_p1_empty;                      /* #38: slot 0 had no pad on the previous poll (handover baseline armed) */
 
 static void lock(void) { if (!g_cs_ready) { if (InterlockedCompareExchange(&g_cs_ready, 2, 0) == 0) { InitializeCriticalSection(&g_cs); g_cs_ready = 1; } while (g_cs_ready != 1) Sleep(0); } EnterCriticalSection(&g_cs); }
 static void unlock(void) { LeaveCriticalSection(&g_cs); }
@@ -618,6 +620,7 @@ static void dev_rumble_flush(Dev *d, ULONGLONG now) {                          /
     }
     dev_rumble_send(d, rl, rh, now);
 }
+static uint64_t dev_buttons(const Dev *d);
 static void poll_devices(int scan_hotplug) {      /* lock held */
     ULONGLONG now = GetTickCount64();
     SDL_UpdateJoysticks();
@@ -644,6 +647,38 @@ static void poll_devices(int scan_hotplug) {      /* lock held */
             g_dev[i].slot = assign_slot(&g_dev[i]);
             if (g_dev[i].slot >= 0) { remember(g_dev[i].guid, g_dev[i].slot); apply_player_index(&g_dev[i]); say("nn::pad: \"%s\" -> player %d\n", g_dev[i].name, g_dev[i].slot + 1); }
         }
+    }
+    /* #38: player 1's pad is gone (battery dead, switched off) while another pad is still connected as a later player: the
+     * first of those to newly press a button becomes player 1, as on the console, instead of player 1 waiting for a NEW device.
+     * Runs outside the 250 ms hot-plug scan so short button taps are not missed; skips when [players] pins player 1 to a device
+     * or to nobody, or when the pressing pad is pinned to its own slot. Rising-edge baseline prevents a held/stuck button or
+     * resting trigger from hijacking player 1 on the disconnect tick. */
+    if (!slot_taken(0) && !g_cfg.pnone[0] && !g_cfg.pguid[0][0] && (g_kb_slot != 0 || g_kb_shared)) {
+        if (!g_p1_empty) {
+            g_p1_empty = 1;
+            for (int i = 0; i < MAXDEV; i++) {
+                Dev *d = &g_dev[i];
+                if (d->used && !d->ignored && d->slot > 0 && !d->dropped) d->handover_btn = dev_buttons(d);
+            }
+        } else {
+            for (int i = 0; i < MAXDEV; i++) {
+                Dev *d = &g_dev[i];
+                if (!d->used || d->ignored || d->slot <= 0 || d->dropped) continue;
+                if (g_cfg.pguid[d->slot][0] && !_stricmp(g_cfg.pguid[d->slot], d->guid)) continue;      /* pinned to its slot */
+                uint64_t btn = dev_buttons(d);
+                uint64_t newly = btn & ~d->handover_btn;
+                d->handover_btn = btn;
+                if (!newly) continue;
+                say("nn::pad: player 1 has no pad; \"%s\" pressed a button: player %d -> player 1\n", d->name, d->slot + 1);
+                if (d->rl || d->rh) dev_rumble_send(d, 0, 0, now);
+                d->rpend = 0;
+                d->slot = 0; remember(d->guid, 0); apply_player_index(d);
+                g_p1_empty = 0;
+                break;
+            }
+        }
+    } else {
+        g_p1_empty = 0;
     }
     for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && !g_dev[i].ignored) dev_rumble_flush(&g_dev[i], now);
     /* Switch Pro / Joy-Con hot-plug: if the initial EnableIMU subcommand dropped during Bluetooth/USB handshake, SDL
@@ -700,6 +735,7 @@ void nnpad_shutdown(void) {
     lock();
     if (g_sdl_ok) {
         g_sdl_ok = 0;
+        g_p1_empty = 0;
         for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used) dev_remove(&g_dev[i]);
     }
     unlock();
@@ -793,13 +829,11 @@ static void sensors(Dev *d, NnPadState *o) {
     o->accel[0] = -a[0] / SDL_STANDARD_GRAVITY; o->accel[1] = a[2] / SDL_STANDARD_GRAVITY; o->accel[2] = -a[1] / SDL_STANDARD_GRAVITY;
     o->gyro[0] = g[0] / 6.2831853f; o->gyro[1] = -g[2] / 6.2831853f; o->gyro[2] = g[1] / 6.2831853f;
 }
-static void dev_state(Dev *d, NnPadState *o) {            /* lock held */
-    float dz = EFF(d, dz), outer = EFF(d, outer), trig = EFF(d, trig);
+static uint64_t dev_buttons(const Dev *d) {               /* lock held */
+    float trig = EFF(d, trig);
     const DevCfg *dc = dev_cfg(d);
     int labels = eff_layout(d);
-    float v[4];
-    memset(o, 0, sizeof *o);
-    o->wired = !d->wireless;
+    uint64_t buttons = 0;
     for (int b = 0; b < 16; b++) {
         Src s[4]; int n;
         if (dc && dc->nmap[b] >= 0) { n = dc->nmap[b]; memcpy(s, dc->map[b], sizeof s); } else n = def_map(d, labels, b, s);
@@ -807,9 +841,18 @@ static void dev_state(Dev *d, NnPadState *o) {            /* lock held */
             float x = src_val(d, s[k]);
             int axis = s[k].kind == SK_AXP || s[k].kind == SK_AXN || s[k].kind == SK_AXF;
             float thr = axis && (b == 8 || b == 9 || (!s[k].raw && s[k].idx >= 4)) ? trig : 0.5f;
-            if (x > 0 && x >= thr) o->buttons |= 1ull << b;
+            if (x > 0 && x >= thr) buttons |= 1ull << b;
         }
     }
+    return buttons;
+}
+static void dev_state(Dev *d, NnPadState *o) {            /* lock held */
+    float dz = EFF(d, dz), outer = EFF(d, outer);
+    const DevCfg *dc = dev_cfg(d);
+    float v[4];
+    memset(o, 0, sizeof *o);
+    o->wired = !d->wireless;
+    o->buttons = dev_buttons(d);
     for (int i = 0; i < 4; i++) {
         Src s;
         v[i] = stick_src(d, i, &s) ? src_val(d, s) : 0;
@@ -1491,6 +1534,29 @@ int nnpad_selftest(const NnHidHooks *h) {
         h->state(5, &btn, st, &attr); ok = btn & 1; h->state(2, &btn, st, &attr); ok = ok && !(btn & 1) && h->style(2) == 0;
         SDL_SetJoystickVirtualButton(js[5], SDL_GAMEPAD_BUTTON_EAST, false);
         check(ok, "pad 6 replugged while player 3 is also free: it returns to ITS slot (player 6), not the first free one");
+        /* #38: player 1's pad goes away; another connected pad takes player 1 with a new button press, not only a new device */
+        vj_clear(js[1], SDL_GAMEPAD_BUTTON_COUNT, 6);
+        SDL_SetJoystickVirtualButton(js[1], SDL_GAMEPAD_BUTTON_SOUTH, true); settle();      /* held BEFORE player 1 unplugs */
+        h->vibrate(1, 0.5f, 0.25f);
+        SDL_CloseJoystick(js[0]); SDL_DetachVirtualJoystick(id[0]); settle();
+        check(h->style(0) == 0 && h->style(1) == 1, "player 1 unplugged while pad 2 already holds a button: no spurious hijack, player 1 stays empty");
+        SDL_SetJoystickVirtualButton(js[1], SDL_GAMEPAD_BUTTON_SOUTH, false); settle();
+        check(h->style(0) == 0 && h->style(1) == 1, "player 1 unplugged, nothing pressed: player 1 stays empty, pad 2 stays player 2");
+        SDL_SetJoystickVirtualButton(js[1], SDL_GAMEPAD_BUTTON_EAST, true); Sleep(6); nnpad_poll(0); /* non-forced 4 ms poll (not waiting 250 ms hot-plug scan) */
+        h->state(0, &btn, st, &attr);
+        ok = (btn & 1) && h->style(1) == 0 && g_vj[1].pidx == 0 && g_vj[1].led_b == 255 && g_vj[1].lo == 0 && g_vj[1].hi == 0;
+        SDL_SetJoystickVirtualButton(js[1], SDL_GAMEPAD_BUTTON_EAST, false); settle();
+        check(ok, "player 1 empty: pad 2 presses A -> becomes player 1 on 4 ms poll (LED/index updated, old rumble stopped, player 2 empty)");
+        id[0] = vj_make(0, 0x100, 1, 1); settle(); js[0] = SDL_OpenJoystick(id[0]);
+        check(h->style(1) == 1 && h->style(0) == 1, "the old player 1 pad comes back: player 1 is taken, it gets the free player 2");
+        SDL_CloseJoystick(js[1]); SDL_DetachVirtualJoystick(id[1]); settle();      /* back to pad 1 = player 1, pad 2 = player 2 for the tests below */
+        vj_clear(js[0], SDL_GAMEPAD_BUTTON_COUNT, 6); SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_EAST, true); settle();
+        SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_EAST, false); settle();
+        id[1] = vj_make(1, 0x101, 1, 0); settle(); js[1] = SDL_OpenJoystick(id[1]);
+        lock(); { Dev *a = dev_of(0), *b = dev_of(1); char ga[40], gb[40];
+            SDL_GUIDToString(SDL_GetJoystickGUIDForID(id[0]), ga, sizeof ga); SDL_GUIDToString(SDL_GetJoystickGUIDForID(id[1]), gb, sizeof gb);
+            ok = a && b && !_stricmp(a->guid, ga) && !_stricmp(b->guid, gb); } unlock();
+        check(ok, "and back: pad 1 presses A while player 1 is empty -> player 1; pad 2 returns as player 2");
     }
 
     /* ---- remap from the ini, layout labels, hot reload */
@@ -1563,6 +1629,14 @@ int nnpad_selftest(const NnHidHooks *h) {
             SDL_SetJoystickVirtualButton(js[3], SDL_GAMEPAD_BUTTON_EAST, true); settle(); h->state(0, &btn, st, &attr);
             check((btn & 1) == 1 && h->style(1) == 0, "[players]: player1 = <GUID of pad 4> puts that pad on player 1; player2 = none leaves slot 2 empty");
             SDL_SetJoystickVirtualButton(js[3], SDL_GAMEPAD_BUTTON_EAST, false);
+            /* #38: pinned player 1 or player1 = none must NOT hand over player 1 to another pad */
+            SDL_CloseJoystick(js[3]); SDL_DetachVirtualJoystick(id[3]); settle();
+            vj_clear(js[0], SDL_GAMEPAD_BUTTON_COUNT, 6);
+            SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_EAST, true); settle();
+            int pinned_ok = h->style(0) == 0;
+            SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_EAST, false); settle();
+            id[3] = vj_make(3, 0x103, 1, 0); settle(); js[3] = SDL_OpenJoystick(id[3]);
+            check(pinned_ok && h->style(0) == 1, "[players] player1 = <GUID>: unplugging pinned pad does NOT hand player 1 to another pad; replugging restores it");
         }
     }
 
