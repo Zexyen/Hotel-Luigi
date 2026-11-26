@@ -633,7 +633,7 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
             if (devices_live()) {
                 if (ps.buttons || abs(ps.lx) > STICK_MAX / 2 || abs(ps.ly) > STICK_MAX / 2 || abs(ps.rx) > STICK_MAX / 2 || abs(ps.ry) > STICK_MAX / 2) prompts_used = 0;   /* a drifting stick is not use */
                 static uint8_t swap[8];                      /* in menus only; a held A or B keeps its meaning across the menu closing or opening */
-                if (!(ps.buttons & 3)) swap[id & 7] = !strcmp(nnpad_menu_swap_setting(), "on") && !prompts_in_play();      /* the setting itself, not nnpad_menu_swapped: that one follows the device last used, a poll late */
+                if (!(ps.buttons & 3)) swap[id & 7] = !strcmp(nnpad_menu_swap_setting(), "on") && (g_pad_test || !prompts_in_play());      /* the setting itself, not nnpad_menu_swapped: that one follows the device last used, a poll late */
                 buttons |= swap[id & 7] ? AB_SWAPPED(ps.buttons) : ps.buttons;
                 if (ps.lx || ps.ly) { lx = ps.lx; ly = ps.ly; }
                 if (ps.rx || ps.ry || (!rx && !ry)) { rx = ps.rx; ry = ps.ry; }      /* [witchtime] was !rx: a vertical-only mouse move was lost */
@@ -661,7 +661,7 @@ static void fill_pad(uint64_t out, uint32_t id, int style_is_fullkey) {
         static int polls;
         int changed = prompts_used >= 0 && prompts_used != g_used;
         if (changed) { g_used = prompts_used; nnpad_prompts_used(g_used); }
-        if (changed || !(++polls & 15)) prompts_tick();
+        if (!g_pad_test && (changed || !(++polls & 15))) prompts_tick();
     }
     if (id == 0) record_or_replay(&buttons, &lx, &ly);
     if (lx < -STICK_MAX / 2) buttons |= 1ull << BTN_SL_LEFT;
