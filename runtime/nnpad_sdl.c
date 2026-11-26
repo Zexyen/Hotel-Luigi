@@ -48,7 +48,7 @@ typedef struct {
     int motion_live, sensor_retries;
     ULONGLONG added_ms, sensor_retry_ms;
     char guid[40], name[80];
-    Uint16 rl, rh; ULONGLONG rsent;
+    Uint16 rl, rh, rwant_l, rwant_h; int rpend; ULONGLONG rsent;
     int armed;                          /* [witchtime] stick axes (bit i = LX LY RX RY) of an unmapped joystick seen near the centre */
 } Dev;
 
@@ -81,7 +81,7 @@ static int g_kb_slot = -3;                  /* resolved lazily */
 static int g_kb_shared;                     /* [Recomps#1] pads may take the keyboard's slot too (merged; finding 106) */
 static ULONGLONG g_init_ms;
 static LARGE_INTEGER g_qpf, g_last_poll;
-static ULONGLONG g_last_cfg_check;
+static ULONGLONG g_last_cfg_check, g_last_scan_ms;
 
 static void lock(void) { if (!g_cs_ready) { if (InterlockedCompareExchange(&g_cs_ready, 2, 0) == 0) { InitializeCriticalSection(&g_cs); g_cs_ready = 1; } while (g_cs_ready != 1) Sleep(0); } EnterCriticalSection(&g_cs); }
 static void unlock(void) { LeaveCriticalSection(&g_cs); }
@@ -597,31 +597,58 @@ static void reassign_all(void) {                  /* [players] changed in the fi
         say("nn::pad: \"%s\" -> player %d\n", g_dev[i].name, g_dev[i].slot + 1);
     }
 }
-static void poll_devices(void) {                  /* lock held */
-    int n = 0;
+#define RUMBLE_MIN_MS   40                        /* <= 25 Hz: LM3 sends HD rumble at 200 Hz x 2 actuators; Steam Deck's HIDAPI driver sends synchronous USB EP0 HIDIOCSFEATURE reports */
+#define RUMBLE_DEADBAND 512                       /* ~0.8% of 65535: skip tiny 5 ms waveform jitter while motors are already running */
+static int rumble_diff(Uint16 a, Uint16 b) { return a > b ? (int)(a - b) : (int)(b - a); }
+static void dev_rumble_send(Dev *d, Uint16 rl, Uint16 rh, ULONGLONG now) {     /* lock held */
+    d->rl = rl; d->rh = rh; d->rpend = 0; d->rsent = now;
+    if (d->gp) SDL_RumbleGamepad(d->gp, rl, rh, rl || rh ? 30000 : 0);
+    else if (d->js) SDL_RumbleJoystick(d->js, rl, rh, rl || rh ? 30000 : 0);
+}
+static void dev_rumble_flush(Dev *d, ULONGLONG now) {                          /* lock held */
+    if (!d->rpend || (!d->gp && !d->js) || g_cfg.input == 1) return;
+    if (now - d->rsent < RUMBLE_MIN_MS) return;
+    Uint16 rl = d->rwant_l, rh = d->rwant_h;
+    int active = rl || rh, was = d->rl || d->rh;
+    if (!active && !was) { d->rpend = 0; return; }
+    if (active && was && rumble_diff(rl, d->rl) < RUMBLE_DEADBAND && rumble_diff(rh, d->rh) < RUMBLE_DEADBAND) {
+        if (now - d->rsent > 20000) dev_rumble_send(d, rl, rh, now);
+        else d->rpend = 0;
+        return;
+    }
+    dev_rumble_send(d, rl, rh, now);
+}
+static void poll_devices(int scan_hotplug) {      /* lock held */
+    ULONGLONG now = GetTickCount64();
     SDL_UpdateJoysticks();
     SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
-    SDL_JoystickID *ids = SDL_GetJoysticks(&n);
-    for (int i = 0; i < MAXDEV; i++) {
-        int alive = 0;
-        if (!g_dev[i].used) continue;
-        for (int k = 0; k < n && ids; k++) if (ids[k] == g_dev[i].id) alive = 1;
-        if (!alive) dev_remove(&g_dev[i]);
+    int any_dev = 0;
+    for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && !g_dev[i].ignored) { any_dev = 1; break; }
+    if (scan_hotplug || !any_dev || now - g_last_scan_ms >= 250) {
+        int n = 0;
+        g_last_scan_ms = now;
+        SDL_JoystickID *ids = SDL_GetJoysticks(&n);
+        for (int i = 0; i < MAXDEV; i++) {
+            int alive = 0;
+            if (!g_dev[i].used) continue;
+            for (int k = 0; k < n && ids; k++) if (ids[k] == g_dev[i].id) alive = 1;
+            if (!alive) dev_remove(&g_dev[i]);
+        }
+        for (int k = 0; k < n && ids; k++) {
+            int have = 0;
+            for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && g_dev[i].id == ids[k]) have = 1;
+            if (!have) dev_add(ids[k]);
+        }
+        SDL_free(ids);
+        for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && !g_dev[i].ignored && g_dev[i].slot < 0) {      /* a slot may have been freed */
+            g_dev[i].slot = assign_slot(&g_dev[i]);
+            if (g_dev[i].slot >= 0) { remember(g_dev[i].guid, g_dev[i].slot); apply_player_index(&g_dev[i]); say("nn::pad: \"%s\" -> player %d\n", g_dev[i].name, g_dev[i].slot + 1); }
+        }
     }
-    for (int k = 0; k < n && ids; k++) {
-        int have = 0;
-        for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && g_dev[i].id == ids[k]) have = 1;
-        if (!have) dev_add(ids[k]);
-    }
-    SDL_free(ids);
-    for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && !g_dev[i].ignored && g_dev[i].slot < 0) {      /* a slot may have been freed */
-        g_dev[i].slot = assign_slot(&g_dev[i]);
-        if (g_dev[i].slot >= 0) { remember(g_dev[i].guid, g_dev[i].slot); apply_player_index(&g_dev[i]); say("nn::pad: \"%s\" -> player %d\n", g_dev[i].name, g_dev[i].slot + 1); }
-    }
+    for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && !g_dev[i].ignored) dev_rumble_flush(&g_dev[i], now);
     /* Switch Pro / Joy-Con hot-plug: if the initial EnableIMU subcommand dropped during Bluetooth/USB handshake, SDL
      * considers the sensor enabled while GetGamepadSensorData keeps returning {0,0,0}. Toggling false->true forces
      * SDL's Switch driver to resend UpdateInputMode + SetIMUEnabled. */
-    ULONGLONG now = GetTickCount64();
     for (int i = 0; i < MAXDEV; i++) {
         Dev *d = &g_dev[i];
         if (!d->used || d->ignored || !d->gp || d->virt || d->motion_live || d->sensor_retries >= 8) continue;
@@ -663,7 +690,7 @@ int nnpad_init(void) {
     if (!SDL_Init(SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK | SDL_INIT_EVENTS)) { printf("nn::pad: SDL_Init failed: %s\n", SDL_GetError()); unlock(); return 0; }
     SDL_SetJoystickEventsEnabled(false); SDL_SetGamepadEventsEnabled(false);       /* state is read directly; events would only fill a queue */
     g_sdl_ok = 1;
-    poll_devices();
+    poll_devices(1);
     say("nn::pad: SDL %d.%d.%d ready (no video); %s\n", SDL_GetVersion() / 1000000, SDL_GetVersion() / 1000 % 1000, SDL_GetVersion() % 1000, g_cfg.path);
     unlock();
     return 1;
@@ -681,10 +708,10 @@ void nnpad_poll(int force) {
     LARGE_INTEGER t;
     if (!g_sdl_ok) return;
     QueryPerformanceCounter(&t);
-    if (!force && (t.QuadPart - g_last_poll.QuadPart) * 1000 < g_qpf.QuadPart) return;
+    if (!force && (t.QuadPart - g_last_poll.QuadPart) * 250 < g_qpf.QuadPart) return;      /* 4 ms (250 Hz): matches Steam Deck HID cadence and cuts SDL_UpdateJoysticks contention */
     lock();
     g_last_poll = t;
-    if (g_cfg.input != 1) poll_devices();
+    if (g_cfg.input != 1) poll_devices(force);
     check_config(force);
     unlock();
 }
@@ -834,7 +861,7 @@ int nnpad_get(int player, NnPadState *out) {
 void nnpad_disconnect(int player) {
     Dev *d;
     lock();
-    if ((d = dev_of(player)) != NULL) { d->dropped = 1; if (d->gp) SDL_RumbleGamepad(d->gp, 0, 0, 0); d->rl = d->rh = 0; }
+    if ((d = dev_of(player)) != NULL) { d->dropped = 1; if (d->gp) SDL_RumbleGamepad(d->gp, 0, 0, 0); d->rl = d->rh = 0; d->rpend = 0; }
     unlock();
 }
 void nnpad_rumble(int player, float low, float high) {
@@ -846,9 +873,18 @@ void nnpad_rumble(int player, float low, float high) {
         float l = low * s, h = high * s;
         Uint16 rl = (Uint16)(l >= 1 ? 65535 : l <= 0 ? 0 : (int)(l * 65535.0f)), rh = (Uint16)(h >= 1 ? 65535 : h <= 0 ? 0 : (int)(h * 65535.0f));
         ULONGLONG now = GetTickCount64();
-        if (rl != d->rl || rh != d->rh || ((rl || rh) && now - d->rsent > 20000)) {
-            d->rl = rl; d->rh = rh; d->rsent = now;
-            if (d->gp) SDL_RumbleGamepad(d->gp, rl, rh, rl || rh ? 30000 : 0); else SDL_RumbleJoystick(d->js, rl, rh, rl || rh ? 30000 : 0);
+        int active = rl || rh, was = d->rl || d->rh;
+        if (!active) {
+            d->rpend = 0;
+            if (was) dev_rumble_send(d, 0, 0, now);                                    /* stop immediately */
+        } else if (!was || now - d->rsent > 20000) {
+            dev_rumble_send(d, rl, rh, now);                                           /* start from rest or keep-alive immediately */
+        } else if (now - d->rsent >= RUMBLE_MIN_MS) {
+            if (rumble_diff(rl, d->rl) >= RUMBLE_DEADBAND || rumble_diff(rh, d->rh) >= RUMBLE_DEADBAND)
+                dev_rumble_send(d, rl, rh, now);
+            else d->rpend = 0;
+        } else {
+            d->rwant_l = rl; d->rwant_h = rh; d->rpend = 1;                            /* coalesce rapid HD-rumble updates until the window elapses */
         }
     }
     unlock();
@@ -1311,8 +1347,17 @@ int nnpad_selftest(const NnHidHooks *h) {
     {
         h->vibrate(0, 0.5f, 0.25f);
         check(g_vj[0].calls > 0 && near_(g_vj[0].lo, 32767, 2) && near_(g_vj[0].hi, 16383, 2), "rumble: the game's low band 0.5 / high band 0.25 reach the pad as 32767 / 16383");
+        {   /* issue #65: rapid 200 Hz HD rumble updates coalesce instead of flooding synchronous HID feature reports; deferred latest value flushes after the window; stop is immediate */
+            int c0 = g_vj[0].calls;
+            for (int k = 1; k <= 10; k++) h->vibrate(0, 0.5f + 0.03f * k, 0.25f + 0.02f * k);
+            int coalesced = g_vj[0].calls == c0;
+            Sleep(RUMBLE_MIN_MS + 10);
+            nnpad_poll(1);
+            int flushed = g_vj[0].calls == c0 + 1 && near_(g_vj[0].lo, (int)(0.8f * 65535.0f), 4) && near_(g_vj[0].hi, (int)(0.45f * 65535.0f), 4);
+            check(coalesced && flushed, "rumble rate-limit: rapid updates within 40 ms coalesce and the latest value flushes once the window elapses");
+        }
         h->vibrate(0, 0, 0);
-        check(g_vj[0].lo == 0 && g_vj[0].hi == 0, "rumble stop reaches the pad");
+        check(g_vj[0].lo == 0 && g_vj[0].hi == 0, "rumble stop reaches the pad immediately");
         float a[3] = {9, 9, 9}, g[3] = {9, 9, 9}; int rest = 0;
         float acc[3] = {0, SDL_STANDARD_GRAVITY, 0}, gy[3] = {0, 0, 0};
         SDL_SendJoystickVirtualSensorData(js[0], SDL_SENSOR_ACCEL, SDL_GetTicksNS(), acc, 3);
