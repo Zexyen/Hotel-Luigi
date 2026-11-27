@@ -203,8 +203,8 @@ void lm3_image_options(void) {
     const char *e = getenv("RECOMPS_ASPECT");      /* gfx_options.c: aspect_ratio, when it is not 16:9 */
     float a = e ? (float)atof(e) : 0.0f;
     const char *ft = getenv("LM3_FRAME_MS");        /* test: the game's own frame time target, whatever frame_rate says */
-    if (ft || gfx_options()->frame_rate >= 60) set_const(0x13c94dc, 100.0f / 3.0f, ft ? (float)atof(ft) : 1000.0f / (float)gfx_options()->frame_rate, "frame_rate, the frame time in ms");
-    if (gfx_options()->frame_rate >= 60 && !getenv("LM3_KEEP_LIMITER")) set_const(0x13c8e64, 350.0f, 0.0f, "frame_rate, the longest wait of the game's own limiter in ms");
+    if (ft || gfx_options()->frame_rate > 30) set_const(0x13c94dc, 100.0f / 3.0f, ft ? (float)atof(ft) : 1000.0f / (float)gfx_options()->frame_rate, "frame_rate, the frame time in ms");
+    if (gfx_options()->frame_rate > 30 && !getenv("LM3_KEEP_LIMITER")) set_const(0x13c8e64, 350.0f, 0.0f, "frame_rate, the longest wait of the game's own limiter in ms");
     if (a > 0.0f) set_const(0x13c96fc, 16.0f / 9.0f, a, "aspect_ratio, the screen's width / height");
     lm3_hook_flashlight_morph_job();
     lm3_debug_boot();

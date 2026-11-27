@@ -7,13 +7,14 @@
 #include <sys/stat.h>
 
 volatile LONG g_guest_frozen, g_display_close;
-static int g_vsync_applied, g_win_applied;
+static int g_vsync_applied, g_win_applied, g_quit_called;
 void nnhid_menu_read(uint64_t *b, int *lx, int *ly, int swap_ab) { (void)swap_ab; *b = 0; *lx = *ly = 0; }
 int nnhid_menu_key(int vk) { (void)vk; return 0; }
 int nvn_front_post_pcmenu(void) { return 1; }
 int nvn_vk_hdr_on(void) { return 0; }
 void display_vsync_apply(void) { g_vsync_applied++; }
 int display_window_apply(void) { g_win_applied++; return 1; }
+void display_quit(void) { g_quit_called++; }
 void display_mouse_want(int on) { (void)on; }
 int nnpad_mouse_cfg(float *s, int *i) { (void)s; (void)i; return 0; }
 static const char *g_prompts = "playstation";
@@ -28,6 +29,10 @@ const char *nnpad_layout_setting(void) { return g_layout; }
 int nnpad_layout_set(const char *val) { g_layout = val; return 1; }
 int nnpad_button_prompts(void) { return 3; }
 int nnpad_prompts_by_letter(void) { return 1; }
+static int g_bind_on;
+static unsigned char g_bind_buf[16];
+int nnpad_bind_get(unsigned char *out) { if (!g_bind_on) return 0; if (out) memcpy(out, g_bind_buf, 16); return 1; }
+int nnpad_bind_set(const unsigned char *b) { if (!b) { g_bind_on = 0; return 1; } memcpy(g_bind_buf, b, 16); g_bind_on = 1; return 1; }
 static uint32_t g_pad;
 static int row_of(const char *key) { for (int i = 0; i < NROW; i++) if (!strcmp(k_rows[i].key, key)) return i; return -1; }
 uint32_t nnhid_menu_pad(void) { return g_pad; }
@@ -178,6 +183,20 @@ int main(int argc, char **argv) {
         change(lr, 1, 0);                                          /* es -> es-419 */
         assert(!strcmp(k_rows[lr].val[g_cur[lr]], "es-419") && row_restart(lr));
         assert(gfx_ini_get("language", buf, sizeof buf) && !strcmp(buf, "es-419"));
+    }
+    {   /* upscaling, frame generation, Controls page, and Quit to desktop */
+        int up = row_of("upscaler"), sh = row_of("sharpness"), fg = row_of("frame_generation"), ctl = row_of("controls"), qt = row_of("quit"), b0 = row_of("bind_strobulb"), bp = row_of("bind_preset");
+        assert(up >= 0 && row_count(up) == 16 && sh >= 0 && fg >= 0 && ctl >= 0 && qt >= 0 && b0 >= 0 && bp >= 0);
+        assert(activate(qt, 1) == 1 && g_quit_ask == 1 && g_quit_called == 0);
+        assert(activate(qt, 1) == 1 && g_quit_called == 1);
+        g_quit_ask = 0;
+        assert(activate(ctl, 1) == 1 && g_page == 1);
+        change(b0, 1, 0);                                          /* Strobulb A -> B (swaps B -> A) */
+        assert(g_bind_on && g_bind_buf[RB_A] == RB_B && g_bind_buf[RB_B] == RB_A && g_cur[bp] == -1);
+        set_value(bp, 0);                                          /* reset back to Default */
+        assert(!g_bind_on && g_cur[bp] == 0 && g_cur[b0] == RB_A);
+        page_go(0, 1);
+        assert(g_page == 0 && g_sel == ctl);
     }
     printf("pcmenu self-test: all checks passed\n");
     return 0;

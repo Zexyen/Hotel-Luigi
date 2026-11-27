@@ -49,6 +49,7 @@ body {
 @keyframes stair-in-r1 { 0% { opacity: 0; transform: translateX(48dp); } 40% { opacity: 0; transform: translateX(48dp); } 100% { opacity: 1; transform: translateX(0); } }
 @keyframes stair-in-r2 { 0% { opacity: 0; transform: translateX(48dp); } 40% { opacity: 0; transform: translateX(48dp); } 100% { opacity: 1; transform: translateX(0); } }
 @keyframes stair-in-r3 { 0% { opacity: 0; transform: translateX(48dp); } 40% { opacity: 0; transform: translateX(48dp); } 100% { opacity: 1; transform: translateX(0); } }
+@keyframes stair-in-r4 { 0% { opacity: 0; transform: translateX(48dp); } 40% { opacity: 0; transform: translateX(48dp); } 100% { opacity: 1; transform: translateX(0); } }
 @keyframes stair-out { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(-40dp); } }
 @keyframes stair-out-r { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(40dp); } }
 /* a value that changed nudges the way it went (two names a direction: a second change the same way starts it again) */
@@ -219,7 +220,7 @@ scrollbarvertical sliderarrowdec, scrollbarvertical sliderarrowinc { width: 0; h
 .tabs { left: 0; top: 78dp; width: 1280dp; display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 18dp; }
 .tabs.left { justify-content: flex-start; padding-left: 96dp; }
 /* Q / E (the shoulders) and a click change the section; the arrows stay on the rows */
-.tab { position: relative; height: 50dp; line-height: 42dp; padding: 0 34dp; border: 3dp #3fe048; background-color: #26a02eb3; color: #04300a;
+.tab { position: relative; height: 50dp; line-height: 42dp; padding: 0 24dp; border: 3dp #3fe048; background-color: #26a02eb3; color: #04300a;
 	font-family: "Russo One"; font-size: 23dp; white-space: nowrap; transform: skewX(-8deg); }
 .tab div { position: relative; }
 .tab:hover { color: #ffffff; }

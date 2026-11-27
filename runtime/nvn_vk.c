@@ -125,6 +125,7 @@ static struct {
     VkSurfaceFormatKHR format;
     VkPresentModeKHR mode;
     VkExtent2D extent;
+    uint32_t win_w, win_h;                /* client pixel size at swapchain creation (Wayland resize tracking) */
     VkImage images[16];
     uint32_t image_count;
     VkCommandPool pool;
@@ -230,14 +231,24 @@ static void swapchain_destroy(void) {
     vkDestroySwapchainKHR(V.device, V.swapchain, NULL);
     V.swapchain = NULL; V.image_count = 0;
 }
+/* Recreate the swapchain when the window's client pixel size changes: on Wayland (caps.currentExtent == 0xffffffff),
+ * Vulkan WSI never returns VK_ERROR_OUT_OF_DATE_KHR or VK_SUBOPTIMAL_KHR on resize or fullscreen transitions. */
+static int swapchain_resized(void) {
+    if (!V.swapchain) return 0;
+    RECT rc;
+    if (!GetClientRect(V.hwnd, &rc) || rc.right <= 0 || rc.bottom <= 0) return 0;
+    return (uint32_t)rc.right != V.win_w || (uint32_t)rc.bottom != V.win_h;
+}
 /* Returns 0 when there is nothing to present to (a minimised window has a zero-sized surface). */
 static int g_sc_src;                                  /* [witchtime] the swapchain images can be read (TRANSFER_SRC): HL_PCMENU_SHOT */
 static int swapchain_create(void) {
     VkSurfaceCapabilitiesKHR caps;
     VkResult r = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(V.gpu, V.surface, &caps);
     if (r != VK_SUCCESS) vk_fatal("vkGetPhysicalDeviceSurfaceCapabilitiesKHR", r);
+    RECT rc = {0, 0, 0, 0};
+    int have_rc = GetClientRect(V.hwnd, &rc) && rc.right > 0 && rc.bottom > 0;
     VkExtent2D ext = caps.currentExtent;
-    if (ext.width == 0xffffffffu) { RECT rc; GetClientRect(V.hwnd, &rc); ext.width = (uint32_t)rc.right; ext.height = (uint32_t)rc.bottom; }
+    if (ext.width == 0xffffffffu) { ext.width = have_rc ? (uint32_t)rc.right : 0; ext.height = have_rc ? (uint32_t)rc.bottom : 0; }
     if (ext.width < caps.minImageExtent.width) ext.width = caps.minImageExtent.width;
     if (ext.height < caps.minImageExtent.height) ext.height = caps.minImageExtent.height;
     if (caps.maxImageExtent.width && ext.width > caps.maxImageExtent.width) ext.width = caps.maxImageExtent.width;
@@ -267,8 +278,13 @@ static int swapchain_create(void) {
     V.image_count = 16;
     r = vkGetSwapchainImagesKHR(V.device, V.swapchain, &V.image_count, V.images);
     if (r != VK_SUCCESS && r != VK_INCOMPLETE) vk_fatal("vkGetSwapchainImagesKHR", r);
+    uint32_t prev_w = V.extent.width, prev_h = V.extent.height;
     V.extent = ext;
+    V.win_w = have_rc ? (uint32_t)rc.right : ext.width;
+    V.win_h = have_rc ? (uint32_t)rc.bottom : ext.height;
     V.hdr = hdr;
+    if (prev_w && (prev_w != ext.width || prev_h != ext.height))
+        printf("nvn_vk: swapchain resized %ux%u -> %ux%u\n", (unsigned)prev_w, (unsigned)prev_h, (unsigned)ext.width, (unsigned)ext.height);
     if (hdr) hdr_views(1);
     return 1;
 }
@@ -550,6 +566,7 @@ static void wait_last_submit(void) {
 static void present_colour(const float rgba[4]) {
     if (!V.alive) return;
     wait_last_submit();
+    if (swapchain_resized()) { swapchain_destroy(); InterlockedIncrement64(&g_vk_recreated); }
     if (!V.swapchain && !swapchain_create()) { InterlockedIncrement64(&g_vk_skipped); return; }
     uint32_t index = 0;
     VkResult r = vkAcquireNextImageKHR(V.device, V.swapchain, 1000000000ull, V.acquired, NULL, &index);
@@ -681,3 +698,6 @@ int nvn_vk_hdr_on(void) { return V.hdr != 0; }             /* [witchtime] pcmenu
 #include "nvn_vk_draw.c"                                   /* everything that draws (session 2): not a build unit of its own */
 #include "nvn_vk_pcmenu.c"                                 /* [witchtime] the PC settings menu on the screen */
 #include "nvn_vk_fsr.c"                                    /* [witchtime] issue 118: FSR 3.1 as anti-aliasing */
+#include "nvn_vk_dlss.c"                                   /* [hotelluigi] issue 190: DLSS / DLAA (nvngx_dlss.dll) in FSR 3.1's place */
+#include "nvn_vk_fsr4.c"                                   /* [hotelluigi] issue 190: FSR 4 (amd_fidelityfx_upscaler_dx12.dll + vk) in FSR 3.1's place */
+#include "nvn_vk_fg.c"                                     /* [hotelluigi] issue 119: frame generation (AMD FSR and DLSS-G) */

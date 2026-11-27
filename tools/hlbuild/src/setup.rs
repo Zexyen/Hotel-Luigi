@@ -709,6 +709,17 @@ fn exefs_source(dump: &Path, targets: &Path) -> PathBuf {
     }
 }
 
+/// A copy that is either whole or not there. Windows gives the target its full size before the data is written, so a
+/// copy that is cut short (the build closed, the PC switched off) left a file of the right size with an empty tail,
+/// and the size check below never copied it again.
+fn copy_whole(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut part = to.as_os_str().to_owned();
+    part.push(".part");
+    let part = PathBuf::from(part);
+    fs::copy(from, &part)?;
+    fs::rename(&part, to)
+}
+
 /// dst = a real folder with the files of src, so the build folder holds the game on its own (portable): moved when
 /// `mv`, else hard-linked (same drive: no extra space, the dump stays whole) or copied. A file already in dst with
 /// the same size is kept, so an interrupted run resumes; a symbolic link or junction at dst (older setups) is replaced.
@@ -731,7 +742,7 @@ fn place_folder(dst: &Path, src: &Path, mv: bool) -> Result<String, Fail> {
             let _ = fs::remove_file(&to);
             let done = if mv { fs::rename(from, &to) } else { fs::hard_link(from, &to).map(|_| linked += 1) };
             if done.is_err() {
-                fs::copy(from, &to).map_err(|e| Fail(format!("{} -> {}: {}", from.display(), to.display(), e)))?; // another drive
+                copy_whole(from, &to).map_err(|e| Fail(format!("{} -> {}: {}", from.display(), to.display(), e)))?; // another drive
             }
             placed += 1;
         }
@@ -1241,6 +1252,20 @@ mod tests {
         assert_eq!(fs::read(dst.join("movie").join("b.webm")).unwrap(), b"b");
         assert_eq!(fs::read(dst.join("a.pkz")).unwrap(), b"aa");
         assert!(place_folder(&dst, &src, true).is_ok()); // moved before: in place
+        fs::remove_dir_all(&t).unwrap();
+    }
+
+    #[test]
+    fn copy_whole_leaves_the_file_or_nothing() {
+        let t = std::env::temp_dir().join(format!("hlbuild_copy_whole_{}", std::process::id()));
+        fs::create_dir_all(&t).unwrap();
+        fs::write(t.join("a.pkz"), b"aa").unwrap();
+        fs::write(t.join("b.pkz.part"), b"cut short").unwrap(); // left by a copy that was interrupted
+        copy_whole(&t.join("a.pkz"), &t.join("b.pkz")).unwrap();
+        assert_eq!(fs::read(t.join("b.pkz")).unwrap(), b"aa");
+        assert!(!t.join("b.pkz.part").exists());
+        assert!(copy_whole(&t.join("none.pkz"), &t.join("c.pkz")).is_err());
+        assert!(!t.join("c.pkz").exists());
         fs::remove_dir_all(&t).unwrap();
     }
 

@@ -7,7 +7,7 @@ name: hlbuild
 on:
   pull_request:
     paths: ['tools/hlbuild/**', 'lifter/**', 'games/**', 'runtime/gen_static/**', 'runtime/freestanding/**',
-            'runtime/*.h', 'runtime/mx_translate.c', 'runtime/tex_decode.c', 'runtime/tex_pack.c', 'tests/bc7_encode_test.c', 'tests/tex_pack_test.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/mx_quad_test.c', 'tests/mx_prev_test.c', 'tests/mv_match_test.c', 'tests/language_pick_test.c', 'tools/lifter-check/**', '.gitattributes', '.github/workflows/hlbuild.yml']
+            'runtime/*.h', 'runtime/mx_translate.c', 'runtime/tex_decode.c', 'runtime/tex_pack.c', 'tests/bc7_encode_test.c', 'tests/tex_pack_test.c', 'tests/plat_hash_test.c', 'tests/mx_loop_guard_test.c', 'tests/mx_quad_test.c', 'tests/mx_prev_test.c', 'tests/mv_match_test.c', 'tests/language_pick_test.c', 'tests/rebind_test.c', 'tools/lifter-check/**', '.gitattributes', '.github/workflows/hlbuild.yml']
   workflow_dispatch:
 
 jobs:
@@ -78,6 +78,11 @@ jobs:
         run: |
           clang -O2 -Wall -I games/lm3/runtime tests/language_pick_test.c -o "$RUNNER_TEMP/language_pick_test"
           "$RUNNER_TEMP/language_pick_test"
+
+      - name: Gameplay controller button rebinding (runtime/rebind.h)
+        run: |
+          clang -O2 -Wall -Wextra -I runtime tests/rebind_test.c -o "$RUNNER_TEMP/rebind_test"
+          "$RUNNER_TEMP/rebind_test"
 
   lifter-check:
     # the shipped lifter against Unicorn: random words of the forms added to the lifter, run in Unicorn and as their lifted C

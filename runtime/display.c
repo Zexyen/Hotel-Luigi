@@ -243,7 +243,8 @@ static void pace_options(void) {
     g_pace_hz = gfx_pace_rate();
     printf("display: pacing: %s %d Hz%s; a finished frame is presented %s%s%c", g_pace_want ? "locked to the display when its refresh rate is k x" : "our own clock at",
            g_pace_hz, g_pace_want ? " within 1.1 % (vsync = display / auto), else our own clock" : " (vsync = clock)", g_hold_on ? "at the next tick (steady cadence)" : "as soon as it is ready",
-           g_pace_hz > 60 ? "; frame_rate above 60: the game is released on these ticks and its interval 0 is one tick, the guest's vsync event stays at 60 Hz" : "", 10);
+           g_pace_hz > 60 ? "; frame_rate above 60: the game is released on these ticks and its interval 0 is one tick, the guest's vsync event stays at 60 Hz"
+           : g_pace_hz < 60 ? "; frame_rate below 60: the game is released on these ticks, the guest's vsync event stays at 60 Hz" : "", 10);
 }
 /* [witchtime] vsync changed in the PC menu (pcmenu.c): the pacing is chosen again (nvn_vk makes the swapchain again for the present
  * mode). A display lock is let go when it is no longer wanted; one is taken while the game runs only if none was tried yet. */
@@ -461,6 +462,7 @@ static DWORD WINAPI window_thread(LPVOID arg) {
 }
 
 int display_window_apply(void) { return 0; }      /* [witchtime] Windows: the PC menu's window changes apply at the next start (pcmenu.c says so) */
+void display_quit(void) { if (g_hwnd) PostMessageA(g_hwnd, WM_CLOSE, 0, 0); }      /* [witchtime] Quit to desktop */
 #else
 /* Linux: an SDL3 window with Vulkan (X11 or Wayland), its handle where the HWND goes (nvn_gl.c, nvn_vk.c), and the window
  * calls those files make on it (posix/win32_absent.h). Borderless and fullscreen are SDL's desktop fullscreen. Keys and
@@ -740,6 +742,11 @@ static void window_event(SDL_Window *w, const SDL_Event *ev) {
         }
     }
 }
+void display_quit(void) {
+    SDL_Event e;
+    memset(&e, 0, sizeof e); e.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&e);
+}
 #ifdef __APPLE__
 /* macOS: the window's events while the program's first thread waits for the thread `t` (boot.c, in place of
  * WaitForSingleObject): WAIT_OBJECT_0 when it has ended, WAIT_TIMEOUT after `ms` */
@@ -890,7 +897,7 @@ static DWORD WINAPI vsync_thread(LPVOID arg) {
             }
             {   /* [Recomps#1] the guest's vsync event at 60 per second whatever the tick rate (its VSync Count Thread counts them) */
                 static LONG64 sig60 = -1;
-                LONG64 c60 = g_pace_hz > 60 ? n * 60 / g_pace_hz : n;
+                LONG64 c60 = g_pace_hz != 60 ? n * 60 / g_pace_hz : n;
                 if (g_vsync_event && c60 != sig60) { os_signal_event(g_vsync_event); InterlockedIncrement64(&g_vsync_signals); }
                 sig60 = c60;
             }
@@ -958,12 +965,20 @@ void display_init(void) {
 
 /* Called after every presented frame (nvn_gl.c has already put it in the window): holds the caller to 60 Hz. */
 static volatile LONG g_interval = 1;         /* nvnWindowSetPresentInterval: display refreshes per presented frame (0 = do not wait) */
-/* [lm3] frame_rate = 60 and above: the game asks for every second refresh (its one nvnWindowSetPresentInterval call, main 0xb7add8); it gets every one */
-void display_set_interval(int n) { if (n > 1 && gfx_options()->frame_rate >= 60) n = 1; InterlockedExchange(&g_interval, n < 0 ? 0 : n > 5 ? 5 : n); }
+/* [lm3] frame_rate above 30: the game asks for every second refresh (its one nvnWindowSetPresentInterval call, main 0xb7add8); it gets every one */
+void display_set_interval(int n) { if (n > 1 && gfx_options()->frame_rate > 30) n = 1; InterlockedExchange(&g_interval, n < 0 ? 0 : n > 5 ? 5 : n); }
 int display_interval(void) { return (int)g_interval; }
 /* [Recomps#1] the interval the pacing uses: above 60 fps the lifted frame-rate patch asks for 0 (do not wait) at every
  * present; when display.c paces at frame_rate (g_pace_hz > 60) that is one of its ticks */
 static LONG64 eff_interval(void) { LONG iv = g_interval; return iv ? iv : g_pace_hz > 60 ? 1 : 0; }
+static LONG64 next_due_tick(LONG64 prev, LONG64 iv) {
+    if (g_pace_hz == 60 || iv <= 1) return prev + iv;
+    LONG64 hz = iv == 2 ? (g_pace_hz > 60 ? 60 : 30) : 60 / iv;
+    if (hz < 1) hz = 1;
+    if (hz >= g_pace_hz) return prev + 1;
+    LONG64 c = prev * hz / g_pace_hz + 1;
+    return (c * g_pace_hz + hz - 1) / hz;
+}
 void nvn_pf_pace(LONG64 ticks);            /* nvn_gl.c: timing scopes */
 /* HL_CLOCKSTAT=1: per 600 presented frames, the real time, the vsync signals sent, the refreshes the game counted
  * (600 = one step per presented frame) and the refreshes this thread slept through. */
@@ -1007,9 +1022,9 @@ static void frame_queued(void) {
         LONG64 held = InterlockedExchange64(&g_hold_ticks, 0);
         if (held) nvn_pf_pace(held);                               /* the hold of the finished frame is pacing time (it replaces the wait after the present) */
     } else {
-    LONG64 at = g_vsync_n + 1, iv = eff_interval();
+    LONG64 at = g_vsync_n + 1, iv = eff_interval(), due = next_due_tick(g_latch, iv);
     if (!iv) at = g_vsync_n;                                       /* interval 0: shown at once, nobody waits */
-    else if (at < g_latch + iv) at = g_latch + iv;
+    else if (at < due) at = due;
     g_latch = at;
     InterlockedExchange(&g_latch_pending, iv != 0);
     }
@@ -1235,17 +1250,17 @@ static void l1_report(FILE *out) {
 void display_present_plan(int vulkan) {
     if (!vulkan || old_pacing()) return;
     pace_options();
-    LONG64 now_n = g_vsync_n, iv = eff_interval(), prev = g_latch, at = now_n + 1;
-    int on_time = iv && now_n < prev + iv && prev + iv - now_n <= 6;
+    LONG64 now_n = g_vsync_n, iv = eff_interval(), prev = g_latch, due = next_due_tick(prev, iv), at = now_n + 1;
+    int on_time = iv && now_n < due && due - now_n <= 6;
     static int late_go = -1;
     if (late_go < 0) late_go = !(getenv("HL_PACE_LATE") && !atoi(getenv("HL_PACE_LATE")));
     if (!iv) at = now_n;
-    else if (at < prev + iv) at = prev + iv;
-    else if (late_go && now_n >= prev + iv) at = now_n;      /* issue 257: a late frame does not wait for one more tick (see the comment above) */
+    else if (at < due) at = due;
+    else if (late_go && now_n >= due) at = now_n;      /* issue 257: a late frame does not wait for one more tick (see the comment above) */
     g_latch = at;
     InterlockedExchange(&g_latch_pending, iv != 0);
     if (iv && !on_time) g_hold_late++;
-    l1_plan(iv && !on_time && now_n > prev + iv);      /* L1 (a frame queued after the tick it was due at = late) */
+    l1_plan(iv && !on_time && now_n > due);      /* L1 (a frame queued after the tick it was due at = late) */
     InterlockedExchange64(&g_hold_target, on_time && g_hold_on && !g_lockstep ? at : 0);
     InterlockedExchange(&g_planned, 1);
 }
@@ -1269,6 +1284,7 @@ int display_present_defer(void) {
 }
 /* Render thread, after it has stored the kept present: 1 = the tick came meanwhile, present now. (The vsync thread looks
  * at g_defer_target AFTER it has published the tick, this looks at the tick AFTER the target is set: one of the two sees it.) */
+double display_refresh_hz(void) { return g_vb_state == 2 && g_vb_period > 0 ? (double)g_freq.QuadPart / g_vb_period : 0.0; }      /* [witchtime] nvn_vk_fg.c: the display's measured rate, 0 = not known */
 int display_present_due(void) { LONG64 t = g_defer_target; return t && g_vsync_n >= t; }
 void display_present_flushed(void) { InterlockedExchange64(&g_defer_target, 0); }
 /* Render thread, right after vkQueuePresentKHR returned: what the screen gets (see the comment at the top). */

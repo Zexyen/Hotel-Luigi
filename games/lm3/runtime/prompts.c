@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "nnpad.h"
+#include "rebind.h"
 #include "hostrt.h"
 #define SS 12                                               /* the game's prompts are 68 texels across: 3.7 subsamples a texel */
 #include "prompt_art.h"
@@ -183,16 +184,45 @@ static void keys(uint8_t *s, int first) {                   /* the first letters
     keycap(s, t);
 }
 
-/* every live page from the game's own blocks: family 2 playstation, 3 xbox, 4 keyboard; else as the game made it */
-static void paint(int family, int by_letter, int ab) {
+static const uint8_t g_pro_glyph[16] = {G_A, G_B, G_X, G_Y, G_PRESS_L, G_PRESS_R, G_L, G_R, G_ZL, G_ZR, G_PLUS, G_MINUS, G_LEFT, G_UP, G_RIGHT, G_DOWN};
+static void paint_pad_glyph(uint8_t *s, int g, int p, int family, int by_letter, int ab) {
     typedef void Face(uint8_t *);
+    if (family == 1) {
+        if (p == 0 && ab) p = 1; else if (p == 1 && ab) p = 0;
+        if (g != g_pro_glyph[p]) copy(g, g_pro_glyph[p]);
+        return;
+    }
+    if (family == 2) {
+        if (p < 4) {
+            Face *f[4] = {ab ? ps_cross : ps_circle, ab ? ps_circle : ps_cross, by_letter ? ps_square : ps_triangle, by_letter ? ps_triangle : ps_square};
+            memset(s, 0, S * S); f[p](s); draw(g, s);
+        } else if (p == RB_L || p == RB_R) { memset(s, 0, S * S); bumper(s, p == RB_L ? "L1" : "R1"); draw(g, s); }
+        else if (p == RB_ZL || p == RB_ZR) { memset(s, 0, S * S); trigger(s, p == RB_ZL ? "L2" : "R2"); draw(g, s); }
+        else if (p == RB_PLUS) { memset(s, 0, S * S); bars_across(s); draw(g, s); }
+        else if (p == RB_MINUS) { memset(s, 0, S * S); bars_up(s); draw(g, s); }
+        else if (g != g_pro_glyph[p]) copy(g, g_pro_glyph[p]);
+        return;
+    }
+    if (family == 3) {
+        if (p < 4) {
+            int src = p == 0 ? (ab ? G_A : G_B) : p == 1 ? (ab ? G_B : G_A) : p == 2 ? (by_letter ? G_X : G_Y) : (by_letter ? G_Y : G_X);
+            if (g != src) copy(g, src);
+        } else if (p == RB_L || p == RB_R) { memset(s, 0, S * S); bumper(s, p == RB_L ? "LB" : "RB"); draw(g, s); }
+        else if (p == RB_ZL || p == RB_ZR) { memset(s, 0, S * S); trigger(s, p == RB_ZL ? "LT" : "RT"); draw(g, s); }
+        else if (p == RB_PLUS) { memset(s, 0, S * S); bars_across(s); draw(g, s); }
+        else if (p == RB_MINUS) { memset(s, 0, S * S); view(s); draw(g, s); }
+        else if (g != g_pro_glyph[p]) copy(g, g_pro_glyph[p]);
+    }
+}
+/* every live page from the game's own blocks: family 2 playstation, 3 xbox, 4 keyboard; else as the game made it */
+static void paint(int family, int by_letter, int ab, const uint8_t *rb) {
     uint8_t *s = malloc(S * S);
     for (Live *l = g_live; l < g_live + LIVE_MAX; l++) {
         if (!l->mem) continue;
         size_t n = bytes_of(l->p);
         int blocks = l->p->size / 4;
         memcpy(l->shown, l->orig, n);
-        l->rgba = family > 1 || ab ? malloc(n * 4 * 2 + n / 16) : NULL;
+        l->rgba = family > 1 || ab || rb ? malloc(n * 4 * 2 + n / 16) : NULL;
         if (!l->rgba) continue;
         l->was = l->rgba + n * 4; l->touched = l->was + n * 4;
         tex_bl_to_linear(l->rgba, l->orig, blocks * 16, blocks, 1, tex_rule_block_height_log2(blocks), 0);      /* its blocks in rows, for the decode */
@@ -201,7 +231,7 @@ static void paint(int family, int by_letter, int ab) {
         memset(l->touched, 0, n / 16);
     }
     #define PIC(g, picture) (memset(s, 0, S * S), picture, draw(g, s))
-    if (!s) family = 1, ab = 0;
+    if (!s) family = 1, ab = 0, rb = NULL;
     if (family == 4) {
         static const int pad[][2] = {{G_A, 0}, {G_B, 1}, {G_X, 2}, {G_Y, 3}, {DOT_R, 0}, {DOT_B, 1}, {DOT_T, 2}, {DOT_L, 3}, {G_PRESS_L, 4}, {G_PRESS_R, 5}, {G_L, 6}, {G_R, 7},
             {G_ZL, 8}, {G_ZR, 9}, {G_PLUS, 10}, {G_PLUS2, 10}, {G_MINUS, 11}, {G_MINUS2, 11}, {G_LEFT, 12}, {G_UP, 13}, {G_RIGHT, 14}, {G_DOWN, 15}};
@@ -209,21 +239,23 @@ static void paint(int family, int by_letter, int ab) {
         PIC(G_DPAD, keys(s, 12));
         PIC(G_STICK_L, keys(s, 16));
         PIC(G_STICK_R, nnpad_mouse_cfg(NULL, NULL) ? mouse(s, 0) : keys(s, 20));
-    } else if (family == 2) {
-        Face *a = ab ? ps_cross : ps_circle, *b = ab ? ps_circle : ps_cross;
-        Face *x = by_letter ? ps_square : ps_triangle, *y = by_letter ? ps_triangle : ps_square;
-        PIC(G_A, a(s)); PIC(G_B, b(s)); PIC(G_X, x(s)); PIC(G_Y, y(s));
-        PIC(G_PLUS, bars_across(s)); PIC(G_PLUS2, bars_across(s)); PIC(G_MINUS, bars_up(s)); PIC(G_MINUS2, bars_up(s));
-        PIC(G_L, bumper(s, "L1")); PIC(G_R, bumper(s, "R1")); PIC(G_ZL, trigger(s, "L2")); PIC(G_ZR, trigger(s, "R2"));
-    } else if (family == 3) {
-        if (!ab) { copy(G_A, G_B); copy(G_B, G_A); }
-        if (!by_letter) { copy(G_X, G_Y); copy(G_Y, G_X); }      /* else the game's letters are already right */
-        PIC(G_PLUS, bars_across(s)); PIC(G_PLUS2, bars_across(s)); PIC(G_MINUS, view(s)); PIC(G_MINUS2, view(s));
-        PIC(G_L, bumper(s, "LB")); PIC(G_R, bumper(s, "RB")); PIC(G_ZL, trigger(s, "LT")); PIC(G_ZR, trigger(s, "RT"));
+    } else if (family >= 1 && family <= 3) {
+        for (int b = 0; b < 16; b++) {
+            int p = rb ? rb_physical_of(rb, b) : b;
+            paint_pad_glyph(s, g_pro_glyph[b], p, family, by_letter, ab);
+            if (b == RB_PLUS) paint_pad_glyph(s, G_PLUS2, p, family, by_letter, ab);
+            if (b == RB_MINUS) paint_pad_glyph(s, G_MINUS2, p, family, by_letter, ab);
+        }
+        static const int dots[4] = {DOT_R, DOT_B, DOT_T, DOT_L};
+        for (int b = 0; b < 4; b++) {
+            int p = rb ? rb_physical_of(rb, b) : b;
+            if (p < 4) {
+                if (ab && p < 2) p ^= 1;
+                if (by_letter && p >= 2) p ^= 1;
+                if (p != b) copy(dots[b], dots[p]);
+            }
+        }
     }
-    if (family == 1 && ab) { copy(G_A, G_B); copy(G_B, G_A); }      /* a Switch pad's bottom button says B */
-    if (ab) { copy(DOT_R, DOT_B); copy(DOT_B, DOT_R); }
-    if (by_letter) { copy(DOT_T, DOT_L); copy(DOT_L, DOT_T); }
     free(s);
     for (Live *l = g_live; l < g_live + LIVE_MAX; l++) {
         if (!l->mem) continue;
@@ -359,25 +391,39 @@ static int astc_ok(void) {
     return ok;
 }
 /* what stands for glyph g: s = 1 everywhere, 0 where the symbol is; 0 = the game's own letter stays */
-static int symbol(uint8_t *s, int g, int family, int by_letter, int ab) {
-    static const uint8_t ids[] = {G_A, G_B, G_X, G_Y, G_L, G_ZL, G_ZR, G_PLUS, G_MINUS};
-    static const char *const ps[] = {0, 0, 0, 0, "L1", "L2", "R2"}, *const xbox[] = {"B", "A", "Y", "X", "LB", "LT", "RT"};
-    static const int kb[] = {0, 1, 2, 3, 6, 8, 9, 10, 11};
+static int symbol(uint8_t *s, int g, int family, int by_letter, int ab, const uint8_t *rb) {
+    static const char *const sw_txt[16] = {"A", "B", "X", "Y", "L3", "R3", "L", "R", "ZL", "ZR", "+", "-", "LFT", "UP", "RGT", "DWN"};
+    static const char *const ps_txt[16] = {0, 0, 0, 0, "L3", "R3", "L1", "R1", "L2", "R2", 0, 0, "LFT", "UP", "RGT", "DWN"};
+    static const char *const xb_txt[16] = {"B", "A", "Y", "X", "LS", "RS", "LB", "RB", "LT", "RT", 0, 0, "LFT", "UP", "RGT", "DWN"};
     typedef void Face(uint8_t *);
-    int i = 0;
-    while (i < (int)sizeof ids && ids[i] != g) i++;
-    if (i == (int)sizeof ids || (family == 1 && i >= 2)) return 0;      /* family 1 comes here for swap_confirm: A and B only */
+    int b = -1;
+    for (int k = 0; k < 16; k++) if (g_pro_glyph[k] == g) { b = k; break; }
+    if (b < 0) return 0;
+    int p = rb && family != 4 ? rb_physical_of(rb, b) : b;
     memset(s, 1, S * S);
     if (family == 4) {
-        int vk = bound(kb[i]);
+        int vk = bound(b);
         char t[4];
         if (vk == 1 || vk == 2 || vk == 4) snprintf(t, sizeof t, "M%d", vk == 4 ? 3 : vk); else key_label(vk, t);
         if (!t[0]) return 0;
         text(s, t);
-    } else if (i >= 7) (i == 7 ? bars_across : family == 2 ? bars_up : view)(s);
-    else if (family == 2 && i < 4) ((Face *[]){ab ? ps_cross : ps_circle, ab ? ps_circle : ps_cross, by_letter ? ps_square : ps_triangle, by_letter ? ps_triangle : ps_square})[i](s);
-    else if (family == 3 && i < 4 && (i < 2 ? ab : by_letter)) return 0;
-    else text(s, family == 2 ? ps[i] : xbox[i]);
+    } else if (family == 1) {
+        int sp = p < 2 && ab ? p ^ 1 : p;
+        if (sp == b) return 0;
+        text(s, sw_txt[sp]);
+    } else if (p == RB_PLUS) {
+        bars_across(s);
+    } else if (p == RB_MINUS) {
+        (family == 2 ? bars_up : view)(s);
+    } else if (family == 2 && p < 4) {
+        ((Face *[]){ab ? ps_cross : ps_circle, ab ? ps_circle : ps_cross, by_letter ? ps_square : ps_triangle, by_letter ? ps_triangle : ps_square})[p](s);
+    } else if (family == 3 && p < 4) {
+        const char *lbl = (p < 2 ? ab : by_letter) ? sw_txt[p] : xb_txt[p];
+        if (p == b && (p < 2 ? ab : by_letter)) return 0;
+        text(s, lbl);
+    } else {
+        text(s, family == 2 ? ps_txt[p] : xb_txt[p]);
+    }
     return 1;
 }
 /* the symbol in the letter's box of an image w wide (was: as the game made it): the cap's shade row by row, the letter's
@@ -424,8 +470,8 @@ static void stamp(uint8_t *rgba, const uint8_t *was, int w, int h, const Icon *i
     #undef LUM
 }
 /* every live picture from the game's own blocks, like paint(); all = 0: only the ones that came since the last paint */
-static void paint_icons(int family, int by_letter, int ab, int all) {
-    uint8_t *s = (family > 1 || ab) && astc_ok() ? malloc(S * S) : NULL;
+static void paint_icons(int family, int by_letter, int ab, const uint8_t *rb, int all) {
+    uint8_t *s = (family > 1 || ab || rb) && astc_ok() ? malloc(S * S) : NULL;
     for (LiveIcon *l = g_icon; l < g_icon + ICON_MAX; l++) {
         if (!l->mem || (l->done && !all)) continue;
         l->done = 1;
@@ -439,7 +485,7 @@ static void paint_icons(int family, int by_letter, int ab, int all) {
             tex_deswizzle_level(L, 0, l->orig, lin);
             tex_decode_rgba8(L->format, lin, w, h, was);
             memcpy(rgba, was, n);
-            for (const Icon *ic = l->first; ic < ICONS + ICON_N && ic->hash == l->first->hash; ic++) if (symbol(s, ic->g, family, by_letter, ab))
+            for (const Icon *ic = l->first; ic < ICONS + ICON_N && ic->hash == l->first->hash; ic++) if (symbol(s, ic->g, family, by_letter, ab, rb))
                 stamp(rgba, was, w, h, ic, s, box);
             int x0 = box[0], y0 = box[1], x1 = box[2], y1 = box[3], bw = tex_format(L->format)->bw, bh = tex_format(L->format)->bh;
             for (int lv = 0; x1 > x0 && lv < L->levels; lv++) {      /* the blocks under the letters, at every level; rgba halves in place */
@@ -484,14 +530,15 @@ int prompts_in_play(void) {
  * whenever player 1 went from pad to mouse or back (issue 38). So it runs beside the game, the lock held.
  * shortcut: a texture the game makes or frees during those 0.6 s waits for the lock; paint texture by texture, the
  * lock dropped in between, if a device change during a loading screen is seen to stall it. */
-typedef struct { int family, by_letter, ab; uint64_t sig; } Want;
+typedef struct { int family, by_letter, ab, has_rb; uint8_t rb[16]; uint64_t sig; } Want;
 static Want g_want;
 static volatile LONG g_busy;
 static void repaint(void) {                                    /* lock held */
-    paint(g_want.family, g_want.by_letter, g_want.ab);
-    paint_icons(g_want.family, g_want.by_letter, g_want.ab, 1);
+    const uint8_t *rb = g_want.has_rb ? g_want.rb : NULL;
+    paint(g_want.family, g_want.by_letter, g_want.ab, rb);
+    paint_icons(g_want.family, g_want.by_letter, g_want.ab, rb, 1);
     g_family = g_want.family; g_sig = g_want.sig; g_dirty = g_dirty_pages = 0;
-    printf("button prompts: %s%s%s\n", g_family == 2 ? "PlayStation" : g_family == 3 ? "Xbox" : g_family == 4 ? "keyboard" : "Switch", g_want.by_letter ? ", face buttons by printed letter" : "", g_want.ab != g_want.by_letter ? ", A and B swapped" : "");
+    printf("button prompts: %s%s%s%s\n", g_family == 2 ? "PlayStation" : g_family == 3 ? "Xbox" : g_family == 4 ? "keyboard" : "Switch", g_want.by_letter ? ", face buttons by printed letter" : "", g_want.ab != g_want.by_letter ? ", A and B swapped" : "", g_want.has_rb ? ", custom controls" : "");
 }
 static DWORD WINAPI repaint_thread(void *p) {
     (void)p;
@@ -503,9 +550,13 @@ static DWORD WINAPI repaint_thread(void *p) {
 }
 /* From player 1's pad poll: repaint when the device in use, the bindings or the settings change, or a page came. */
 void prompts_tick(void) {
+    int in_play = prompts_in_play();
     int family = nnpad_button_prompts(), by_letter = family > 1 && family < 4 && nnpad_prompts_by_letter(), any = 0;
-    int ab = by_letter ^ (nnpad_menu_swapped() && !prompts_in_play());      /* (never with the keyboard's prompts: nnpad_menu_swapped) */
-    uint64_t sig = (uint64_t)(by_letter + ab * 2) + 1;
+    int ab = by_letter ^ (nnpad_menu_swapped() && !in_play);      /* (never with the keyboard's prompts: nnpad_menu_swapped) */
+    uint8_t rb[16];
+    int has_rb = family != 4 && in_play && nnpad_bind_live() && nnpad_bind_get(rb) && rb_valid(rb) && !rb_is_default(rb);
+    uint64_t sig = (uint64_t)(by_letter + ab * 2 + has_rb * 4) + 1;
+    if (has_rb) for (int i = 0; i < 16; i++) sig = sig * 31 + rb[i];
     if (family == 4) { for (int i = 0; i < KB_N; i++) sig = sig * 31 + (uint64_t)nnpad_kb_vk(i); sig = sig * 2 + (uint64_t)nnpad_mouse_cfg(NULL, NULL); }
     if (g_busy) return;                                        /* the repaint has the lock; the next poll looks again */
     AcquireSRWLockExclusive(&g_lock);
@@ -518,12 +569,13 @@ void prompts_tick(void) {
         any |= l->mem != NULL;
     }
     if (any && (family != g_family || sig != g_sig)) {         /* another family: everything again, on a thread of its own */
-        g_want = (Want){family, by_letter, ab, sig};
+        g_want.family = family; g_want.by_letter = by_letter; g_want.ab = ab; g_want.has_rb = has_rb; g_want.sig = sig;
+        if (has_rb) memcpy(g_want.rb, rb, 16);
         HANDLE h = CreateThread(NULL, 0, repaint_thread, NULL, 0, NULL);
         if (h) { g_busy = 1; CloseHandle(h); } else repaint();
     } else if (any && g_dirty) {                               /* new textures, at once: they are right when first drawn */
-        if (g_dirty_pages) paint(family, by_letter, ab);
-        paint_icons(family, by_letter, ab, 0);
+        if (g_dirty_pages) paint(family, by_letter, ab, has_rb ? rb : NULL);
+        paint_icons(family, by_letter, ab, has_rb ? rb : NULL, 0);
         g_dirty = g_dirty_pages = 0;
     }
     ReleaseSRWLockExclusive(&g_lock);

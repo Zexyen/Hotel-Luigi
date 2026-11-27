@@ -18,14 +18,12 @@ typedef struct {
     int shader_prepare;     /* track V session 14 (appended: older objects keep their offsets): 0 first_run (the game is held at its first frame until every shader of the game's data is prepared, once per GPU + driver), 1 background (as before), 2 off;  env HL_VK_PREPARE wins */
     int aspect_stretch;     /* [Recomps#1] aspect = keep (0, default: the picture keeps its shape, black bars on a wider or taller
                                window, e.g. an ultrawide monitor) | stretch (1: it fills the window); nvn_vk_draw.c present (Vulkan) */
-    int frame_rate;         /* [lm3] frame_rate = 30 (the game as made) | 60 .. 120 (the 60 FPS mod built in, above 60 paced by gfx_pace_rate: lm3_imports.c lm3_image_options, display.c display_set_interval) */
+    int frame_rate;         /* [lm3] frame_rate = 30 .. 960 (30 = the game as made; above 30 paced by gfx_pace_rate: lm3_imports.c lm3_image_options, display.c display_set_interval) */
     int hdr;                /* [Recomps#1] hdr = auto (0: HDR output while Windows HDR is on for the window's monitor) | off (1) | on (2: always);
                                nvn_vk_draw.c hdr_* (Vulkan on Windows; finding 147) */
     int hdr_scrgb;          /* [Recomps#1] hdr_format = hdr10 (0: 10-bit PQ, BT.2020) | scrgb (1: 16-bit floating point, linear) */
     float hdr_paper_white;  /* [Recomps#1] hdr_paper_white: the game's white in nits (80 .. 1000); 0 = auto: Windows' SDR content brightness */
     int hdr_srgb;           /* [Recomps#1] hdr_gamma = 2.2 (0: the game's values read as an SDR monitor shows them) | srgb (1: as Windows shows SDR apps) */
-    int cutscene_fps;       /* [witchtime] cutscene_fps = 30 (the game's 30 fps mode on the title, in menus and cutscenes, as on the console) | 60;
-                             * env HL_CUTSCENE_FPS wins; read by game_shim_eh.c h_fps_mode_set through that variable */
     float texture_lod_bias; /* [witchtime] the mip bias, -1 (0 = the game's own; no key since 2026-11-10); added to every sampler that uses
                              * mip maps (nvn_vk_draw.c sampler_get); env HL_TEXTURE_LOD_BIAS wins */
     int model_lod_high;     /* [witchtime] model_lod = game (0) | highest (1); game_shim_eh.c h_model_lod through HL_MODEL_LOD */
@@ -34,8 +32,12 @@ typedef struct {
                              * RECOMPS_ASPECT (game_shim_eh.c, r2_imports.c, nvn_vk_draw.c rs_xstretch), which wins when set */
     int hud_centre;         /* [witchtime] hud_area = screen (0: wider than 16:9 the HUD's corners go to the screen's edges) | 16:9 (1: kept in the middle);
                              * handed on as RECOMPS_HUD_CENTRE=1 (game_shim_eh.c h_ui_element) */
-    int upscaler;           /* [witchtime] issue 118: upscaler = off (0) | fsr3 (1: FSR 3.1 as anti-aliasing, nvn_vk_fsr.c) | fsr3_quality (2) | fsr3_balanced (3)
-                               | fsr3_performance (4) | fsr3_ultra_performance (5): FSR 3.1 upscaling to the internal resolution; env HL_UPSCALER wins */
+    int upscaler;           /* [witchtime] issue 118: upscaler = off (0) | 1..5 FSR 3.1 (native AA .. ultra performance) | 6..10 DLSS (DLAA .. ultra performance)
+                               | 11..15 FSR 4 (native AA .. ultra performance); env HL_UPSCALER wins */
+    float sharpness;        /* [witchtime] sharpness = 0 .. 100 (0 = off; RCAS after any upscaler, nvn_vk_fsr.c); env HL_SHARPNESS wins */
+    int frame_gen_no_hud;   /* [witchtime] frame_generation_hud = on | off: off = generator is not given the picture without the HUD (nvn_vk_fg.c fg_draw) */
+    int frame_gen_on, frame_gen_kind;      /* [witchtime] the file's frame_generation = off | on and frame_generator = fsr (1) | dlss (2) */
+    int frame_gen;          /* [witchtime] what runs: 0 off | 1 fsr | 2 dlss (nvn_vk_fg.c); env HL_FRAMEGEN = off | on | fsr | dlss | test (3) wins */
     float hdr_peak;         /* [witchtime] hdr_peak: the scene's brightest parts in nits with HDR on (80 .. 10000); 0 = auto (nvn_vk_draw.c hdr_var) */
     char language[16];      /* [lm3] language = auto ("") | en-US | en-GB | es | es-419 | fr | fr-CA | de | it | nl | ja | ko | zh-Hans | zh-Hant;
                              * env HL_LANGUAGE wins; read by nnmisc.c desired_language */
