@@ -12,14 +12,36 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 
 /* test aid: LAUNCHER_SLOWMO=<n> slows every animation n times (RmlUi's clock), so frames of a 0.3 s motion can be grabbed */
 struct SlowSystem : SystemInterface_SDL
 {
 	double slow = 1;
-	explicit SlowSystem(SDL_Window* w) : SystemInterface_SDL(w) { if (const char* e = std::getenv("LAUNCHER_SLOWMO")) slow = std::max(1.0, std::atof(e)); }
+	std::FILE* log_file = nullptr;
+	std::string last_error;
+	explicit SlowSystem(SDL_Window* w, std::FILE* log = nullptr) : SystemInterface_SDL(w), log_file(log)
+	{
+		if (const char* e = std::getenv("LAUNCHER_SLOWMO"))
+			slow = std::max(1.0, std::atof(e));
+	}
 	double GetElapsedTime() override { return SystemInterface_SDL::GetElapsedTime() / slow; }
+	bool LogMessage(Rml::Log::Type type, const Rml::String& message) override
+	{
+		if (type == Rml::Log::LT_ERROR || type == Rml::Log::LT_ASSERT || type == Rml::Log::LT_WARNING)
+		{
+			if (log_file)
+			{
+				const char* tag = type == Rml::Log::LT_WARNING ? "warn" : "error";
+				std::fprintf(log_file, "rmlui [%s]: %s\n", tag, message.c_str());
+				std::fflush(log_file);
+			}
+			if (type == Rml::Log::LT_ERROR || type == Rml::Log::LT_ASSERT)
+				last_error = message;
+		}
+		return SystemInterface_SDL::LogMessage(type, message);
+	}
 	// RmlUi's own drops a query (it rebuilds the path from the URL's parts); ui_render.cpp reads a picture's "?a=" alpha
 	void JoinPath(Rml::String& out, const Rml::String& document, const Rml::String& path) override
 	{
@@ -42,11 +64,17 @@ int prepare_build(const char* argv0, const std::vector<std::string>& args);
 
 class App {
 public:
+	~App();
 	bool init(int argc, char** argv);
 	int run();
 
 private:
 	Paths paths;
+	std::FILE* log_file = nullptr;
+	std::string log_path;
+	bool gpu_claimed = false;
+	bool rml_inited = false;
+	bool draw_err_logged = false;
 	SDL_Window* window = nullptr;
 	SDL_GPUDevice* gpu = nullptr;
 	std::unique_ptr<UiRender> render;
@@ -120,6 +148,10 @@ private:
 	int update_seen = 0;               // the update's state and line as the title last showed them
 	Rml::String update_message;
 
+	void open_log();
+	void close_log();
+	void log_line(const char* fmt, ...);
+	void fail(const std::string& message);
 	bool create_window();
 	bool create_ui();
 	void bind_model();
