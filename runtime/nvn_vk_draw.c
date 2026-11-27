@@ -5841,7 +5841,7 @@ static void exec(const Cmd *m, int depth) {
         unsigned type = (unsigned)a[0];
         if (type < 32 && !InterlockedExchange(&said[type], 1)) printf("nvn_vk: nvnCommandBuffer%sCounter type %u (first use)\n", m->op == OP_COUNTER_RESET ? "Reset" : "Report", type);
         if (type > 1) { static char msg[80]; snprintf(msg, sizeof msg, "nvnCommandBuffer%sCounter of counter type %u (needs a GPU query)", m->op == OP_COUNTER_RESET ? "Reset" : "Report", type); nvn_vk_missing(msg); break; }
-        if (type == 1) {
+        if (type == 1 && (m->op == OP_COUNTER_RESET || g_oq_on)) {
             if (!R.recording) cmd_begin();
             int in_pass = R.in_pass;
             oq_end();
@@ -6179,12 +6179,12 @@ static void replay(uint64_t handle, int depth) {
 
 /* ---------------------------------------------------------------- the RBackend members */
 static void prewarm_wait(void);
-static void boot_shaders_hold(void);
+static void boot_shaders_hold(int at_present);
 static void vk_submit(void *arg) {
     SubmitJob *j = arg;
     if (!V.alive) return;                          /* after the shutdown at exit: the device is gone */
     prewarm_wait();
-    boot_shaders_hold();
+    boot_shaders_hold(0);
     if (!V.alive || g_display_close || g_m4_quit) return;
     LONG64 t0 = tk();
     if (!cb_defer_pending()) cb_sync();            /* what the last batch's dispatches wrote is in guest memory before this batch reads it (keep mode: cb_defer_pending) */
@@ -6229,7 +6229,8 @@ static void vk_fence(void *arg) { SyncJob *j = arg; if (j->o->dead || !V.alive) 
 static void vk_sync_wait(void *arg) {
     SyncJob *j = arg;
     uint64_t want = (uint64_t)(uintptr_t)j->o->s;
-    if (!want || !V.alive) { j->result = 3; return; }       /* never fenced */
+    if (!V.alive) { j->result = 0; return; }                /* shutdown already tore the device down: do not fail a guest wait during report_and_exit */
+    if (!want) { j->result = 3; return; }                   /* never fenced */
     want--;
     gcp_settle_done();                             /* [witchtime] the game reads what GPU copies wrote once its fence is signalled */
     if (want <= R.done) { j->result = 0; return; }
@@ -6244,7 +6245,7 @@ static void vk_sync_wait(void *arg) {
     }
     j->result = 0;                                  /* its command buffer was reused: finished long ago */
 }
-static void vk_server_wait(void *arg) { SyncJob *j = arg; j->timeout = ~0ull; if (j->o->s) vk_sync_wait(j); j->result = j->o->s != NULL; }
+static void vk_server_wait(void *arg) { SyncJob *j = arg; j->timeout = ~0ull; if (!V.alive) { j->result = 1; return; } if (j->o->s) vk_sync_wait(j); j->result = j->o->s != NULL; }
 static void vk_sync_drop(void *arg) { SyncObj *o = arg; o->s = NULL; }
 static void vk_reset_status(void *arg) { *(int *)arg = 0; }       /* NVN_QUEUE_GET_ERROR_RESULT_GPU_NO_ERROR: a lost device ends the process with its own message */
 static void vk_no_grid(void *arg) { nvn_vk_missing("nvnMultisampleStateGetSampleLocationsGrid"); ((int *)arg)[0] = ((int *)arg)[1] = 1; }
@@ -6928,7 +6929,7 @@ extern volatile LONG g_display_close;              /* display.c */
  * over all ~5,300 programs via nvnProgramSetShaders before frame 1). nvn_vk_program_set defers blocking during boot so
  * the full count is already queued when the first draw batch arrives; the render thread then displays the same
  * "Preparing shaders" screen as Witch Time's prep_first_hold while the workers drain the queue. */
-static void boot_shaders_hold(void) {
+static void boot_shaders_hold(int at_present) {
     static int done, mode = -1;
     if (done || !g_m4_on || !g_pw_nthread) return;
     LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
@@ -6941,6 +6942,7 @@ static void boot_shaders_hold(void) {
     LONG64 dn = g_jq_done + g_bq_done, tot = g_jq_queued + g_bq_queued;
     LeaveCriticalSection(&g_sh_lock);
     if (tot <= 0) return;
+    if (!at_present && tot < 64) return;
     done = 1;
     InterlockedExchange(&g_boot_shaders_done, 1);
     if (mode < 0) { const char *e = getenv("HL_VK_PREPARE"); mode = e ? (!_stricmp(e, "background") ? 1 : !_stricmp(e, "off") ? 2 : 0) : gfx_options()->shader_prepare; }
@@ -7087,7 +7089,7 @@ static void vk_present2(void *arg, int progress) {
     g_ovl.bar_arg = arg;
     g_wd_where = 1;
     m4_barrier(frame, R.frame_draws);
-    boot_shaders_hold();
+    boot_shaders_hold(1);
     prep_first_hold(frame);                        /* session 14: the first-run preparation screen (returns at once on every later present) */
     if (pcmenu_kind() == 2) pcm_debug_present();   /* [lm3] a debug list (pcmenu.c pcmenu_debug_list): its pixels when they changed */
     g_wd_where = 0;
