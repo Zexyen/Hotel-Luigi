@@ -3,6 +3,7 @@
  * nro_catch_call for the functions that have a catch handler. The host finds game_eh_bind with GetProcAddress
  * (nncxxrt.c), so an exe works with either kind of DLL. */
 #include "game_shim.c"
+#include <stdlib.h>
 
 typedef struct { uint64_t lp; void (*fn)(Ctx *, uint64_t); } NroResume;
 extern const NroResume resume_table_main[];
