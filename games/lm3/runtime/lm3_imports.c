@@ -115,6 +115,90 @@ static void set_const(uint64_t off, float was, float now, const char *what) {
     if (!getenv("HL_NO_PROTECT")) plat_protect(page, 0x1000, PLAT_RO);
     printf("lm3: %s: main+0x%llx %g -> %g\n", what, (unsigned long long)off, was, now);
 }
+/* Retail Luigi's Mansion 3 (v1.4.0) asset bug workaround (GitHub issue #67):
+ * Luigi's Prologue handheld flashlight submesh (1091 verts, 1548 tris, all bound 100% to bone 25) is stored in
+ * global.data (block #54, uncompressed 0x399a7a0..0x39b9630) with all 1091 base vertices collapsed to a ~0.1 mm point
+ * at (-2.137, 0.179, 0.699) so the flashlight hides when Luigi equips the Poltergust (morph weight = 0). When Luigi
+ * holds the flashlight in the Prologue (morph weight -> 1), 23 of its 24 connected components (1065 verts) expand to
+ * the flashlight body in his hand (bind-space x in [-2.506, -2.122]), but one stray 26-vertex, 32-triangle component
+ * (vertices 879..904, morph indices 880..905) has retail morph deltas around (+1.87, -0.18, -0.30), placing it 2.24 m
+ * away at (-0.259, 0.030, 0.431), roughly 2.1 m below the floor and 0.75 m behind Luigi. Because it sits under the floor,
+ * its back faces fail depth in the character pass, stamp the occluded-character stencil bit (0x04), expand Luigi's
+ * skinned AABB downward, and cause SilhouettePost to draw a dark speck near the bottom of the screen whenever Luigi
+ * moves near the top of a room before obtaining the Poltergust.
+ *
+ * The 1-morph-target CPU skinning job (main+0x4dffd0) is only invoked indirectly via its vtable slot (main+0x16be958).
+ * Wrapping that slot lets us recognize the exact retail global.data morph delta buffer on its first skinning pass and
+ * zero the position deltas of entries 880..905 in place so those 26 stray vertices remain collapsed at their 0.1 mm
+ * base-mesh point inside the flashlight tail cap (matching the unequipped state). Set LM3_KEEP_FLASHLIGHT_SPECK=1 to
+ * keep retail behavior. */
+#define LM3_SKIN_MORPH_VTABLE_OFF 0x16be958ULL
+#define LM3_SKIN_MORPH_FN_OFF     0x4dffd0ULL
+
+static SRWLOCK g_fl_morph_lock = SRWLOCK_INIT;
+
+static int lm3_fix_flashlight_morph_deltas(uint32_t *del) {
+    /* Fast lock-free check on entry 880's X delta (+1.869874f = 0x3fef5809) before taking the lock. */
+    if (*(const volatile uint32_t *)(del + 880 * 12) != 0x3fef5809u) return 0;
+    int patched = 0;
+    AcquireSRWLockExclusive(&g_fl_morph_lock);
+    /* Verify the exact retail global.data fingerprint: zero sentinel del[0], body vert del[1], and stray endpoints del[880] & del[905]. */
+    if (del[0] == 0u && del[1] == 0u && del[2] == 0u &&
+        del[1 * 12 + 0] == 0xbeb9f278u && del[1 * 12 + 1] == 0xbd043e88u && del[1 * 12 + 2] == 0xbec0a425u &&
+        del[880 * 12 + 0] == 0x3fef5809u && del[880 * 12 + 1] == 0xbe368f8fu && del[880 * 12 + 2] == 0xbe9a5ee7u &&
+        del[905 * 12 + 0] == 0x3ff34580u && del[905 * 12 + 1] == 0xbe111441u && del[905 * 12 + 2] == 0xbe8c614eu) {
+        /* Clear 881..905 first and 880 last so a concurrent lock-free reader never skips a partially patched buffer. */
+        for (int i = 881; i <= 905; i++) {
+            del[i * 12 + 0] = 0u;
+            del[i * 12 + 1] = 0u;
+            del[i * 12 + 2] = 0u;
+        }
+        del[880 * 12 + 1] = 0u;
+        del[880 * 12 + 2] = 0u;
+        *(volatile uint32_t *)(del + 880 * 12 + 0) = 0u;
+        patched = 1;
+    }
+    ReleaseSRWLockExclusive(&g_fl_morph_lock);
+    if (patched)
+        printf("lm3: issue #67 workaround (retail global.data asset bug): collapsed 26 stray Prologue flashlight morph vertices (879..904)\n");
+    return patched;
+}
+
+static void lm3_skin_morph_job(Ctx *c) {
+    uint64_t arg = c->x[0];
+    if (arg) {
+        uint64_t job = *(const uint64_t *)(uintptr_t)(arg + 16);
+        if (job) {
+            const uint16_t *cnt = *(const uint16_t *const *)(uintptr_t)(job + 160);
+            if (cnt && cnt[0] == 1091u && cnt[1] == 0u && cnt[2] == 0u && cnt[3] == 0u) {
+                uint64_t morph = *(const uint64_t *)(uintptr_t)(job + 80);
+                if (morph) {
+                    const uint16_t *midx = *(const uint16_t *const *)(uintptr_t)(morph + 0);
+                    uint32_t *del = *(uint32_t *const *)(uintptr_t)(morph + 8);
+                    /* Verify midx[0..1090] maps through 1..1091 before indexing del[880..905], so any
+                     * other 1091-vertex mesh with a smaller morph delta table is never read out of bounds. */
+                    if (midx && del &&
+                        midx[0] == 1u && midx[879] == 880u && midx[904] == 905u && midx[1090] == 1091u)
+                        lm3_fix_flashlight_morph_deltas(del);
+                }
+            }
+        }
+    }
+    call_guest(c, GUEST_BASE + LM3_SKIN_MORPH_FN_OFF);
+}
+
+static void lm3_hook_flashlight_morph_job(void) {
+    if (getenv("LM3_KEEP_FLASHLIGHT_SPECK")) return;
+    uint64_t *slot = (uint64_t *)(uintptr_t)(GUEST_BASE + LM3_SKIN_MORPH_VTABLE_OFF);
+    uint64_t want = GUEST_BASE + LM3_SKIN_MORPH_FN_OFF;
+    if (*slot != want) {
+        printf("lm3: flashlight morph workaround: main+0x%llx is 0x%llx, not 0x%llx: left alone\n",
+               (unsigned long long)LM3_SKIN_MORPH_VTABLE_OFF, (unsigned long long)*slot, (unsigned long long)want);
+        return;
+    }
+    *slot = hostfn_address("lm3_skin_morph_job", lm3_skin_morph_job);
+}
+
 void lm3_image_options(void) {
     const char *e = getenv("RECOMPS_ASPECT");      /* gfx_options.c: aspect_ratio, when it is not 16:9 */
     float a = e ? (float)atof(e) : 0.0f;
@@ -122,6 +206,7 @@ void lm3_image_options(void) {
     if (ft || gfx_options()->frame_rate >= 60) set_const(0x13c94dc, 100.0f / 3.0f, ft ? (float)atof(ft) : 1000.0f / (float)gfx_options()->frame_rate, "frame_rate, the frame time in ms");
     if (gfx_options()->frame_rate >= 60 && !getenv("LM3_KEEP_LIMITER")) set_const(0x13c8e64, 350.0f, 0.0f, "frame_rate, the longest wait of the game's own limiter in ms");
     if (a > 0.0f) set_const(0x13c96fc, 16.0f / 9.0f, a, "aspect_ratio, the screen's width / height");
+    lm3_hook_flashlight_morph_job();
     lm3_debug_boot();
 }
 
