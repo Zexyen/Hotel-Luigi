@@ -12,6 +12,9 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <crt_externs.h>
+#endif
 #endif
 
 namespace {
@@ -188,7 +191,12 @@ void run_in_process(GameStart& start, const Paths& paths, SDL_Window* window, bo
 	auto exit_hook = static_cast<void (**)(int)>(dlsym(start.host, "plat_exit_hook"));
 	g_display_close = static_cast<volatile int32_t*>(dlsym(start.host, "g_display_close"));
 	g_self = paths.self;
-	for (char** e = environ; e && *e; e++)
+#ifdef __APPLE__
+	char** env = *_NSGetEnviron();
+#else
+	char** env = environ;
+#endif
+	for (char** e = env; e && *e; e++)
 		g_env.emplace_back(*e);
 	for (std::string& e : g_env)
 		g_envp.push_back(e.data());

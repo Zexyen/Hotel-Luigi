@@ -327,7 +327,7 @@ DWORD FlsAlloc(void (*dtor)(PVOID)) { pthread_key_t k; return pthread_key_create
 typedef struct { uint64_t x[12], sp, d[8]; } FiberCtx;      /* x19..x28, x29, x30 */
 void hl_fiber_swap(FiberCtx *from, const FiberCtx *to);
 void hl_fiber_start(void);
-__asm__(".text\n.p2align 2\n.globl _wt_fiber_swap\n_wt_fiber_swap:\n"
+__asm__(".text\n.p2align 2\n.globl _hl_fiber_swap\n_hl_fiber_swap:\n"
         "  stp x19, x20, [x0, #0]\n  stp x21, x22, [x0, #16]\n  stp x23, x24, [x0, #32]\n  stp x25, x26, [x0, #48]\n"
         "  stp x27, x28, [x0, #64]\n  stp x29, x30, [x0, #80]\n  mov x9, sp\n  str x9, [x0, #96]\n"
         "  stp d8, d9, [x0, #104]\n  stp d10, d11, [x0, #120]\n  stp d12, d13, [x0, #136]\n  stp d14, d15, [x0, #152]\n"
@@ -335,7 +335,7 @@ __asm__(".text\n.p2align 2\n.globl _wt_fiber_swap\n_wt_fiber_swap:\n"
         "  ldp x27, x28, [x1, #64]\n  ldp x29, x30, [x1, #80]\n  ldr x9, [x1, #96]\n  mov sp, x9\n"
         "  ldp d8, d9, [x1, #104]\n  ldp d10, d11, [x1, #120]\n  ldp d12, d13, [x1, #136]\n  ldp d14, d15, [x1, #152]\n"
         "  ret\n"
-        ".globl _wt_fiber_start\n_wt_fiber_start:\n  mov x0, x19\n  bl _wt_fiber_run\n  brk #1\n");
+        ".globl _hl_fiber_start\n_hl_fiber_start:\n  mov x0, x19\n  bl _hl_fiber_run\n  brk #1\n");
 typedef struct Fiber { FiberCtx uc; LPFIBER_START_ROUTINE fn; void *arg, *stack; size_t stack_size; } Fiber;
 static __thread Fiber *t_fiber;
 void hl_fiber_run(Fiber *f) { f->fn(f->arg); _exit(70); }   /* a fiber function never returns (Windows ends the thread) */
