@@ -48,6 +48,7 @@ body {
 @keyframes stair-in-r0 { 0% { opacity: 0; transform: translateX(48dp); } 40% { opacity: 0; transform: translateX(48dp); } 100% { opacity: 1; transform: translateX(0); } }
 @keyframes stair-in-r1 { 0% { opacity: 0; transform: translateX(48dp); } 40% { opacity: 0; transform: translateX(48dp); } 100% { opacity: 1; transform: translateX(0); } }
 @keyframes stair-in-r2 { 0% { opacity: 0; transform: translateX(48dp); } 40% { opacity: 0; transform: translateX(48dp); } 100% { opacity: 1; transform: translateX(0); } }
+@keyframes stair-in-r3 { 0% { opacity: 0; transform: translateX(48dp); } 40% { opacity: 0; transform: translateX(48dp); } 100% { opacity: 1; transform: translateX(0); } }
 @keyframes stair-out { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(-40dp); } }
 @keyframes stair-out-r { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(40dp); } }
 /* a value that changed nudges the way it went (two names a direction: a second change the same way starts it again) */

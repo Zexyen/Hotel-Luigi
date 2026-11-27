@@ -65,7 +65,7 @@ int nnpad_prompts_by_letter(void);
 
 /* A_PROMPTS, A_MENU_SWAP, A_LAYOUT: keys of controllers.ini. A game adds its own settings as rows of k_rows */
 enum { A_LIVE, A_VSYNC, A_WINDOW, A_SIZE, A_SCALE, A_RESTART, A_PROMPTS, A_MENU_SWAP, A_LAYOUT };
-#define ROW_VALUES 12
+#define ROW_VALUES 16
 typedef struct {
     const char *key, *label, *help, *env, *dflt;           /* dflt: the reader's value when the key is not in the file */
     int apply, optional;
@@ -101,6 +101,9 @@ static const Row k_rows[] = {
      {"off", "on"}, {"Off", "On"}},
     {"layout", "Face buttons", "Position: the right button acts as A, as on a Switch. Printed letter: the button marked A, Cross as A on PlayStation pads. Prompts follow.", NULL, "auto", A_LAYOUT, 0,
      {"auto", "positional", "labels"}, {"Auto", "Position", "Printed letter"}},
+    {"language", "Language", "The game's language. Auto follows your system display language. Applies at the next start.", "HL_LANGUAGE", "auto", A_RESTART, 0,
+     {"auto", "en-US", "en-GB", "es", "es-419", "fr", "fr-CA", "de", "it", "nl", "ja", "ko", "zh-Hans", "zh-Hant"},
+     {"Auto", "English (US)", "English (UK)", "Spanish (Spain)", "Spanish (LatAm)", "French", "French (Canada)", "German", "Italian", "Dutch", "Japanese", "Korean", "Chinese (Simp.)", "Chinese (Trad.)"}},
 };
 #define NROW ((int)(sizeof k_rows / sizeof k_rows[0]))
 
