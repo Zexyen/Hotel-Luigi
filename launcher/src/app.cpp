@@ -4,6 +4,7 @@
 #include "ui_render.h"
 #include "update.h"
 #include <algorithm>
+#include <cstdarg>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -263,9 +264,79 @@ int prepare_build(const char* argv0, const std::vector<std::string>& args)
 }
 
 // ---------------------------------------------------------------------------------------------------- start and loop
+App::~App()
+{
+	release_window();
+	if (window)
+	{
+		SDL_DestroyWindow(window);
+		window = nullptr;
+	}
+	close_log();
+}
+
+void App::open_log()
+{
+	std::error_code ec;
+	std::filesystem::create_directories(paths.run, ec);
+	log_path = paths.run + "/launcher.log";
+	log_file = std::fopen(log_path.c_str(), "wb");
+	const int v = SDL_GetVersion();
+	log_line("launcher: %s (SDL %d.%d.%d)", HL_VERSION, SDL_VERSIONNUM_MAJOR(v), SDL_VERSIONNUM_MINOR(v), SDL_VERSIONNUM_MICRO(v));
+	log_line("launcher: repo=%s data=%s", paths.repo.c_str(), paths.data.c_str());
+}
+
+void App::close_log()
+{
+	if (system)
+		system->log_file = nullptr;
+	if (log_file)
+	{
+		std::fclose(log_file);
+		log_file = nullptr;
+	}
+}
+
+void App::log_line(const char* fmt, ...)
+{
+	char buf[1024];
+	va_list ap;
+	va_start(ap, fmt);
+	std::vsnprintf(buf, sizeof buf, fmt, ap);
+	va_end(ap);
+	if (log_file)
+	{
+		std::fprintf(log_file, "%s\n", buf);
+		std::fflush(log_file);
+	}
+}
+
+void App::fail(const std::string& message)
+{
+	std::fprintf(stderr, "launcher: %s\n", message.c_str());
+	log_line("launcher: ERROR: %s", message.c_str());
+	release_window();
+	if (window)
+	{
+		SDL_DestroyWindow(window);
+		window = nullptr;
+	}
+	close_log();
+#ifdef _WIN32
+	if (!std::getenv("LAUNCHER_NO_DIALOG"))
+	{
+		std::string body = message;
+		if (!log_path.empty())
+			body += "\n\nLog: " + log_path;
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, APP_NAME, body.c_str(), nullptr);
+	}
+#endif
+}
+
 bool App::init(int argc, char** argv)
 {
 	paths = Paths::find(argv[0]);
+	open_log();
 	for (int i = 1; i < argc; i++)
 		if (!std::strcmp(argv[i], "--returned") && i + 1 < argc)
 			returned_code = std::atoi(argv[i + 1]);
@@ -280,11 +351,16 @@ bool App::init(int argc, char** argv)
 	SDL_SetAppMetadata(APP_NAME, nullptr, APP_ID);
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
 	{
-		std::fprintf(stderr, "launcher: SDL cannot start: %s\n", SDL_GetError());
+		fail(std::string("SDL cannot start: ") + SDL_GetError());
 		return false;
 	}
+	const char* vdrv = SDL_GetCurrentVideoDriver();
+	log_line("launcher: video driver=%s", vdrv ? vdrv : "(none)");
 	if (!create_window() || !create_ui())
+	{
+		SDL_Quit();
 		return false;
+	}
 	SetupState st = SetupState::read(paths.build);
 	dump = st.dump;
 	model.DirtyVariable("dump");            // (the folder box was made when the model was, still empty)
@@ -295,6 +371,8 @@ bool App::init(int argc, char** argv)
 		tab = std::atoi(t) % 5;
 	if (const char* s = std::getenv("LAUNCHER_SCREEN"))    // test aid: start on another screen (setup, build, mods, settings)
 		go(s);
+	SDL_ShowWindow(window);
+	rescale();
 	return true;
 }
 
@@ -316,14 +394,17 @@ bool App::create_window()
 	// macOS: the screens are drawn with Metal (SDL's GPU API has no Vulkan there), and the game makes a window of its own
 	const SDL_WindowFlags api = SDL_WINDOW_METAL;
 	const SDL_GPUShaderFormat shaders = SDL_GPU_SHADERFORMAT_MSL;
+	const char* api_name = "Metal";
 #else
 	const SDL_WindowFlags api = SDL_WINDOW_VULKAN;
 	const SDL_GPUShaderFormat shaders = SDL_GPU_SHADERFORMAT_SPIRV;
+	const char* api_name = "Vulkan";
 #endif
-	window = SDL_CreateWindow(APP_NAME, w, h, api | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+	// hidden until the GPU device and UI are ready, so a startup error never flashes a black window before exiting
+	window = SDL_CreateWindow(APP_NAME, w, h, api | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN);
 	if (!window)
 	{
-		std::fprintf(stderr, "launcher: no window: %s\n", SDL_GetError());
+		fail(std::string("no window: ") + SDL_GetError());
 		return false;
 	}
 	SDL_SetWindowMinimumSize(window, 640, 400);
@@ -333,22 +414,39 @@ bool App::create_window()
 		SDL_DestroySurface(icon);
 	}
 	gpu = SDL_CreateGPUDevice(shaders, false, nullptr);
-	if (!gpu || !SDL_ClaimWindowForGPUDevice(gpu, window))
+	if (!gpu)
 	{
-		std::fprintf(stderr, "launcher: no Vulkan device for the launcher's screens: %s\n", SDL_GetError());
+		fail(std::string("no ") + api_name + " device for the launcher's screens: " + SDL_GetError() +
+			"\n\nMake sure your graphics driver is up to date and supports " + api_name + ".");
 		return false;
 	}
+	const char* gdrv = SDL_GetGPUDeviceDriver(gpu);
+	log_line("launcher: GPU driver=%s", gdrv ? gdrv : "(none)");
+	if (!SDL_ClaimWindowForGPUDevice(gpu, window))
+	{
+		fail(std::string("cannot attach the launcher window to ") + api_name + ": " + SDL_GetError() +
+			"\n\nMake sure your graphics driver is up to date and supports " + api_name + ".");
+		return false;
+	}
+	gpu_claimed = true;
 	return true;
 }
 
 bool App::create_ui()
 {
-	render = std::make_unique<UiRender>(gpu, window);
-	system = std::make_unique<SlowSystem>(window);
+	// system interface first so shader/pipeline errors inside UiRender reach launcher.log
+	system = std::make_unique<SlowSystem>(window, log_file);
 	Rml::SetSystemInterface(system.get());
+	render = std::make_unique<UiRender>(gpu, window);
+	if (!system->last_error.empty())
+	{
+		fail("renderer init failed: " + system->last_error);
+		return false;
+	}
 	Rml::SetRenderInterface(render.get());
 	Rml::SetTextInputHandler(&ime);
 	Rml::Initialise();
+	rml_inited = true;
 	// by file, with the family named here: the files of one family do not all carry the same family name
 	struct Font { const char *file, *family; Rml::Style::FontStyle style; int weight; };
 	const Font fonts[] = {
@@ -363,6 +461,7 @@ bool App::create_ui()
 		if (!bytes)
 		{
 			std::fprintf(stderr, "launcher: font %s missing\n", f.file);
+			log_line("launcher: font %s missing", f.file);
 			continue;
 		}
 		font_data.emplace_back(static_cast<Rml::byte*>(bytes), static_cast<Rml::byte*>(bytes) + size);   // RmlUi keeps using it
@@ -371,14 +470,19 @@ bool App::create_ui()
 	}
 	int pw = 0, ph = 0;
 	SDL_GetWindowSizeInPixels(window, &pw, &ph);
-	ctx = Rml::CreateContext("main", {pw, ph});
+	if (pw <= 0 || ph <= 0)
+		SDL_GetWindowSize(window, &pw, &ph);
+	ctx = Rml::CreateContext("main", {std::max(pw, 1), std::max(ph, 1)});
 	if (!ctx)
+	{
+		fail("cannot create RmlUi context");
 		return false;
+	}
 	bind_model();
 	Rml::ElementDocument* doc = ctx->LoadDocument(paths.ui + "/launcher.rml");
 	if (!doc)
 	{
-		std::fprintf(stderr, "launcher: cannot load %s/launcher.rml\n", paths.ui.c_str());
+		fail("cannot load " + paths.ui + "/launcher.rml");
 		return false;
 	}
 	doc->Show();
@@ -588,7 +692,12 @@ int App::run()
 	if (runner.running())
 		runner.stop();                       // the build resumes from this step next time
 	release_window();
-	SDL_DestroyWindow(window);
+	if (window)
+	{
+		SDL_DestroyWindow(window);
+		window = nullptr;
+	}
+	close_log();
 	SDL_Quit();
 	std::string tag, message;
 	if (update::state(tag, message) == update::State::done)
@@ -622,11 +731,24 @@ void App::draw()
 	}
 	SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(gpu);
 	if (!cmd)
+	{
+		if (!draw_err_logged)
+		{
+			draw_err_logged = true;
+			log_line("launcher: SDL_AcquireGPUCommandBuffer failed: %s", SDL_GetError());
+		}
 		return;
+	}
 	SDL_GPUTexture* target = nullptr;
 	Uint32 w = 0, h = 0;
-	if (!SDL_WaitAndAcquireGPUSwapchainTexture(cmd, window, &target, &w, &h) || !target)
+	const bool ok = SDL_WaitAndAcquireGPUSwapchainTexture(cmd, window, &target, &w, &h);
+	if (!ok || !target)
 	{
+		if (!ok && !draw_err_logged)
+		{
+			draw_err_logged = true;
+			log_line("launcher: SDL_WaitAndAcquireGPUSwapchainTexture failed: %s", SDL_GetError());
+		}
 		SDL_CancelGPUCommandBuffer(cmd);
 		return;
 	}
@@ -635,7 +757,8 @@ void App::draw()
 	clear.clear_color = {61 / 255.f, 22 / 255.f, 12 / 255.f, 1};   // the lobby's dark, the screens' ground
 	clear.load_op = SDL_GPU_LOADOP_CLEAR;
 	clear.store_op = SDL_GPU_STOREOP_STORE;
-	SDL_EndGPURenderPass(SDL_BeginGPURenderPass(cmd, &clear, 1, nullptr));
+	if (SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &clear, 1, nullptr))
+		SDL_EndGPURenderPass(pass);
 	render->BeginFrame(cmd, target, w, h);
 	ctx->Render();
 	render->EndFrame();
@@ -646,6 +769,8 @@ void App::rescale()
 {
 	int pw = 0, ph = 0;
 	SDL_GetWindowSizeInPixels(window, &pw, &ph);
+	if (pw <= 0 || ph <= 0)
+		return;
 	ctx->SetDimensions({pw, ph});
 	// the screens are laid out for 1280 x 800 dp and grow and shrink with the window, as a game's menus do
 	ctx->SetDensityIndependentPixelRatio(std::max(0.25f, std::min(pw / LAYOUT_W, ph / LAYOUT_H)));
@@ -988,7 +1113,8 @@ void App::refresh_title()
 		struct stat st;
 		char when[64] = "";
 		if (stat((paths.build + "/" + GAME_LIB).c_str(), &st) == 0)
-			std::strftime(when, sizeof when, "%e %b", std::localtime(&st.st_mtime));
+			if (const std::tm* tm = std::localtime(&st.st_mtime))
+				std::strftime(when, sizeof when, "%e %b", tm);
 		when_built = when[0] == ' ' ? when + 1 : when;
 	}
 	if (us == update::State::working)
@@ -1549,17 +1675,32 @@ void App::tick()
 
 void App::release_window()
 {
-	if (!gpu)
-		return;
-	SDL_StopTextInput(window);
+	if (window)
+		SDL_StopTextInput(window);
 	ctx = nullptr;
-	Rml::Shutdown();
-	render->Shutdown();
-	render.reset();
-	system.reset();
-	SDL_ReleaseWindowFromGPUDevice(gpu, window);
-	SDL_DestroyGPUDevice(gpu);
-	gpu = nullptr;
+	if (rml_inited)
+	{
+		Rml::Shutdown();
+		rml_inited = false;
+	}
+	if (render)
+	{
+		render->Shutdown();
+		render.reset();
+	}
+	if (system)
+	{
+		Rml::SetSystemInterface(nullptr);
+		system.reset();
+	}
+	if (gpu)
+	{
+		if (gpu_claimed && window)
+			SDL_ReleaseWindowFromGPUDevice(gpu, window);
+		gpu_claimed = false;
+		SDL_DestroyGPUDevice(gpu);
+		gpu = nullptr;
+	}
 	for (SDL_Gamepad* p : pads)
 		SDL_CloseGamepad(p);
 	pads.clear();
@@ -1614,6 +1755,7 @@ void App::play()
 	if (g.in_process)
 	{
 		release_window();
+		close_log();
 		run_in_process(g, paths, window, !play_only);    // does not come back
 	}
 	returned_code = run_child(paths, window, program);
