@@ -201,7 +201,7 @@
 			</div>
 		</div>
 		<div class="line l0" data-if="tab == 1">{{ tex_note }}</div>
-		<div class="line l1">{{ tab == 0 ? 'The window, the display and the frame rate.' : tab == 1 ? 'What the game draws and how sharply.' : tab == 2 ? 'FSR 3.1, DLSS, FSR 4, sharpening and frame generation.' : tab == 3 ? 'Prompts, face buttons, menu confirm and stick dead zone.' : 'Game language and launcher options.' }} Changes are saved as you make them.</div>
+		<div class="line l1">{{ tab == 0 ? 'The window, the display and the frame rate.' : tab == 1 ? 'What the game draws and how sharply.' : tab == 2 ? 'FSR 3.1, DLSS, FSR 4, sharpening and frame generation.' : tab == 3 ? 'Prompts, face buttons, menu confirm, dead zone and camera invert.' : 'Game language and launcher options.' }} Changes are saved as you make them.</div>
 		<div class="line l2">The game's PC Settings panel (F1, or Start + Select) has these settings too, and more.</div>
 	</div>
 	<div class="foot">

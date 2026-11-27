@@ -24,6 +24,7 @@ typedef struct {
     int layout;                 /* -1 unset, 0 positional, 1 labels, 2 auto */
     float dz, outer, trig, rstr;/* < 0 = unset */
     int rumble;                 /* -1 unset */
+    int inv_cam_x, inv_cam_y;   /* -1 unset, 0 off, 1 on */
     int inv[4];
     Src axis[4]; char has_axis[4];
     Src map[16][4]; int nmap[16];       /* -1 = unset: the default for this device */
@@ -161,6 +162,9 @@ static const char *const g_default_ini =
 "; zone full deflection; the stick is rescaled in between and its length is limited to 1 (circular gate).\r\n"
 "deadzone = 0.10\r\n"
 "outer_zone = 0.98\r\n"
+"; Invert the controller's right stick (camera / aiming) axes: on / off. (Mouse camera has mouse_invert_y under [keyboard].)\r\n"
+"invert_camera_x = off\r\n"
+"invert_camera_y = off\r\n"
 "; Trigger travel (0..1) from which ZL / ZR (or any axis mapped to a button) counts as pressed.\r\n"
 "trigger_threshold = 0.33\r\n"
 "; Vibration: on / off and a strength factor (0..2)\r\n"
@@ -238,6 +242,8 @@ static const char *const g_default_ini =
 "; layout = labels            ; positional | labels | auto\r\n"
 "; deadzone = 0.15\r\n"
 "; outer_zone = 0.95\r\n"
+"; invert_camera_x = off\r\n"
+"; invert_camera_y = off\r\n"
 "; trigger_threshold = 0.5\r\n"
 "; rumble = off\r\n"
 "; rumble_strength = 0.6\r\n"
@@ -251,12 +257,14 @@ static int prompts_value(const char *val) { for (int i = 1; i < 5; i++) if (!_st
 static void cfg_init_dev(DevCfg *d) {
     memset(d, 0, sizeof *d);
     d->layout = -1; d->dz = d->outer = d->trig = d->rstr = -1.0f; d->rumble = -1;
+    d->inv_cam_x = d->inv_cam_y = -1;
     for (int i = 0; i < 16; i++) d->nmap[i] = -1;
 }
 static void cfg_defaults(Cfg *c) {
     memset(c, 0, sizeof *c);
     cfg_init_dev(&c->def);
     c->def.layout = 2; c->def.dz = 0.10f; c->def.outer = 0.98f; c->def.trig = 0.33f; c->def.rstr = 1.0f; c->def.rumble = 1;
+    c->def.inv_cam_x = 0; c->def.inv_cam_y = 0;
     c->kb_player = -2;
     memcpy(c->kb_vk, g_kb_default, sizeof c->kb_vk);
     c->mouse_cam = 1; c->mouse_sens = 1.0f;
@@ -356,6 +364,8 @@ static void cfg_set(Cfg *c, DevCfg *d, int in_dev, const char *key, char *val) {
     else if (!_stricmp(key, "trigger_threshold")) d->trig = (float)atof(val);
     else if (!_stricmp(key, "rumble")) d->rumble = parse_bool(val);
     else if (!_stricmp(key, "rumble_strength")) d->rstr = (float)atof(val);
+    else if (!_stricmp(key, "invert_camera_x")) d->inv_cam_x = parse_bool(val);
+    else if (!_stricmp(key, "invert_camera_y")) d->inv_cam_y = parse_bool(val);
     else if (in_dev && !_stricmp(key, "name")) snprintf(d->name, sizeof d->name, "%s", val);
     else if (in_dev && !_strnicmp(key, "invert.", 7)) { for (int i = 0; i < 4; i++) if (!_stricmp(key + 7, g_stk[i])) d->inv[i] = parse_bool(val); }
     else if (in_dev && !_strnicmp(key, "axis.", 5)) { for (int i = 0; i < 4; i++) if (!_stricmp(key + 5, g_stk[i]) && src_parse(val, &d->axis[i])) d->has_axis[i] = d->axis[i].kind != SK_NONE; }
@@ -538,6 +548,8 @@ static int eff_layout(const Dev *d) {
     return l;
 }
 static int eff_rumble(const Dev *d) { const DevCfg *c = dev_cfg(d); return c && c->rumble >= 0 ? c->rumble : g_cfg.def.rumble; }
+static int eff_inv_cam_x(const Dev *d) { const DevCfg *c = dev_cfg(d); return c && c->inv_cam_x >= 0 ? c->inv_cam_x : g_cfg.def.inv_cam_x; }
+static int eff_inv_cam_y(const Dev *d) { const DevCfg *c = dev_cfg(d); return c && c->inv_cam_y >= 0 ? c->inv_cam_y : g_cfg.def.inv_cam_y; }
 
 static int slot_usable(int p, const char *guid) {            /* configured reservations */
     if (g_cfg.pnone[p]) return 0;
@@ -919,6 +931,7 @@ static void dev_state(Dev *d, NnPadState *o) {            /* lock held */
         if (!d->gp) { if (fabsf(v[i]) < 0.25f) d->armed |= 1 << i; if (!(d->armed >> i & 1)) v[i] = 0; }
         if (i & 1) v[i] = -v[i];                             /* SDL: down is positive; the Npad: up is positive */
         if (dc && dc->inv[i]) v[i] = -v[i];
+        if ((i == 2 && eff_inv_cam_x(d)) || (i == 3 && eff_inv_cam_y(d))) v[i] = -v[i];
         if (v[i] > 1) v[i] = 1; if (v[i] < -1) v[i] = -1;
     }
     for (int st = 0; st < 2; st++) {
@@ -1109,6 +1122,33 @@ int nnpad_deadzone_set(const char *val) {
     lock();
     int ok = cfg_key_set("deadzone", val);
     if (ok) g_cfg.def.dz = dz;
+    unlock();
+    return ok;
+}
+/* [lm3] invert_camera_x / invert_camera_y ([general] right-stick camera inversion), same cfg_key_set path */
+const char *nnpad_invert_camera_x_setting(void) {
+    lock(); if (!g_cfg.path[0]) cfg_load(1); const char *s = g_cfg.def.inv_cam_x ? "on" : "off"; unlock();
+    return s;
+}
+int nnpad_invert_camera_x_set(const char *val) {
+    if (!val || (_stricmp(val, "on") && _stricmp(val, "off"))) return 0;
+    int on = !_stricmp(val, "on");
+    lock();
+    int ok = cfg_key_set("invert_camera_x", on ? "on" : "off");
+    if (ok) g_cfg.def.inv_cam_x = on;
+    unlock();
+    return ok;
+}
+const char *nnpad_invert_camera_y_setting(void) {
+    lock(); if (!g_cfg.path[0]) cfg_load(1); const char *s = g_cfg.def.inv_cam_y ? "on" : "off"; unlock();
+    return s;
+}
+int nnpad_invert_camera_y_set(const char *val) {
+    if (!val || (_stricmp(val, "on") && _stricmp(val, "off"))) return 0;
+    int on = !_stricmp(val, "on");
+    lock();
+    int ok = cfg_key_set("invert_camera_y", on ? "on" : "off");
+    if (ok) g_cfg.def.inv_cam_y = on;
     unlock();
     return ok;
 }
@@ -1745,6 +1785,28 @@ int nnpad_selftest(const NnHidHooks *h) {
             dz_ok = dz_ok && nnpad_deadzone_set("0.10") && !strcmp(nnpad_deadzone_setting(), "0.10");
             SDL_SetJoystickVirtualAxis(js[0], SDL_GAMEPAD_AXIS_LEFTX, 0);
             check(dz_ok, "deadzone setting validates range, writes [general] deadzone, and cancels stick drift live");
+        }
+        {   /* #89: invert_camera_x / invert_camera_y flip right stick X/Y live, validate values, and write [general] without clobbering [device] */
+            int cam_ok = !strcmp(nnpad_invert_camera_x_setting(), "off") && !strcmp(nnpad_invert_camera_y_setting(), "off") &&
+                         !nnpad_invert_camera_x_set("maybe") && !nnpad_invert_camera_y_set("") && !nnpad_invert_camera_x_set(NULL);
+            vj_clear(js[1], SDL_GAMEPAD_BUTTON_COUNT, 6);
+            SDL_SetJoystickVirtualAxis(js[1], SDL_GAMEPAD_AXIS_LEFTX, 32767);
+            SDL_SetJoystickVirtualAxis(js[1], SDL_GAMEPAD_AXIS_LEFTY, -32768);
+            SDL_SetJoystickVirtualAxis(js[1], SDL_GAMEPAD_AXIS_RIGHTX, 32767);
+            SDL_SetJoystickVirtualAxis(js[1], SDL_GAMEPAD_AXIS_RIGHTY, -32768); settle(); h->state(1, &btn, st, &attr);
+            cam_ok = cam_ok && st[0] > 0 && st[1] > 0 && st[2] > 0 && st[3] > 0;
+            cam_ok = cam_ok && nnpad_invert_camera_x_set("on") && !strcmp(nnpad_invert_camera_x_setting(), "on");
+            settle(); h->state(1, &btn, st, &attr);
+            cam_ok = cam_ok && st[0] > 0 && st[1] > 0 && st[2] < 0 && st[3] > 0;
+            cam_ok = cam_ok && nnpad_invert_camera_y_set("on") && !strcmp(nnpad_invert_camera_y_setting(), "on");
+            settle(); h->state(1, &btn, st, &attr);
+            cam_ok = cam_ok && st[0] > 0 && st[1] > 0 && st[2] < 0 && st[3] < 0;
+            { size_t n = 0; char *t = read_file(g_cfg.path, &n); cam_ok = cam_ok && t && strstr(t, "invert_camera_x = on") && strstr(t, "invert_camera_y = on") && strstr(t, "invert.LY = on"); free(t); }
+            cam_ok = cam_ok && nnpad_invert_camera_x_set("off") && nnpad_invert_camera_y_set("off");
+            settle(); h->state(1, &btn, st, &attr);
+            cam_ok = cam_ok && st[2] > 0 && st[3] > 0;
+            vj_clear(js[1], SDL_GAMEPAD_BUTTON_COUNT, 6);
+            check(cam_ok, "invert_camera_x / invert_camera_y validate values, write [general], and flip right stick X/Y live");
         }
         vj_clear(js[0], SDL_GAMEPAD_BUTTON_COUNT, 6); settle(); h->state(0, &btn, st, &attr);
         SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_SOUTH, true); settle(); h->state(0, &btn, st, &attr);
