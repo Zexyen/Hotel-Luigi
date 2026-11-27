@@ -570,7 +570,6 @@ static void dev_add(SDL_JoystickID id) {
     if (!d) return;
     memset(d, 0, sizeof *d);
     d->used = 1; d->id = id; d->slot = -1;
-    d->added_ms = GetTickCount64();
     d->virt = SDL_IsJoystickVirtual(id);
     SDL_GUIDToString(SDL_GetJoystickGUIDForID(id), d->guid, sizeof d->guid);
     snprintf(d->name, sizeof d->name, "%s", SDL_GetJoystickNameForID(id) ? SDL_GetJoystickNameForID(id) : "?");
@@ -581,10 +580,7 @@ static void dev_add(SDL_JoystickID id) {
     d->nbtn = SDL_GetNumJoystickButtons(d->js); d->naxes = SDL_GetNumJoystickAxes(d->js); d->nhats = SDL_GetNumJoystickHats(d->js);
     for (int i = 0; i < g_cfg.nignore; i++) if (!_stricmp(g_cfg.ignore[i], d->guid)) { d->ignored = 1; say("nn::pad: ignored \"%s\" %s (ignore = in controllers.ini)\n", d->name, d->guid); SDL_CloseJoystick(d->js); if (d->gp) SDL_CloseGamepad(d->gp); d->js = NULL; d->gp = NULL; return; }
     if (!d->gp && (!strncmp(d->name, "0x", 2) || d->naxes < 2 || d->nbtn < 4)) {       /* "0xVID/0xPID" is SDL's name for a HID device without a product string: not a pad */ d->ignored = 1; say("nn::pad: ignored \"%s\" %s: no mapping and only %d axes / %d buttons\n", d->name, d->guid, d->naxes, d->nbtn); SDL_CloseJoystick(d->js); d->js = NULL; return; }
-    if (d->gp) {
-        d->gtype = SDL_GetGamepadType(d->gp);
-        enable_sensors(d, 0);
-    }
+    if (d->gp) d->gtype = SDL_GetGamepadType(d->gp);
     /* When both Steam Virtual Gamepad (0x28de:0x11ff, no IMU) and the physical Steam Deck (0x28de:0x1205, with IMU)
      * are visible to SDL3, keep only the physical Steam Deck so it owns player 1 with native gyro and no phantom 2P. */
     if (is_steam_virtual_pad(d) && !guid_pinned(d->guid)) {
@@ -605,6 +601,8 @@ static void dev_add(SDL_JoystickID id) {
     d->wireless = SDL_GetJoystickConnectionState(d->js) == SDL_JOYSTICK_CONNECTION_WIRELESS;
     d->slot = assign_slot(d);
     if (d->slot >= 0) { remember(d->guid, d->slot); apply_player_index(d); }
+    if (d->gp) enable_sensors(d, 0);                       /* #74: enable IMU after player-LED setup and stamp added_ms once blocking BT open/subcommands finish */
+    d->added_ms = GetTickCount64();
     say("nn::pad: connected \"%s\" (%s, %s%s) GUID %s -> %s", d->name, d->gp ? "gamepad" : "joystick WITHOUT mapping (guessed layout)", d->gp ? type_name(d->gtype) : "raw",
         d->has_gyro ? ", gyro" : "", d->guid, d->slot >= 0 ? "player " : "no free slot\n");
     if (d->slot >= 0) say("%d\n", d->slot + 1);
@@ -708,21 +706,25 @@ static void poll_devices(int scan_hotplug) {      /* lock held */
     for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && !g_dev[i].ignored) dev_rumble_flush(&g_dev[i], now);
     /* Switch Pro / Joy-Con hot-plug: if the initial EnableIMU subcommand dropped during Bluetooth/USB handshake, SDL
      * considers the sensor enabled while GetGamepadSensorData keeps returning {0,0,0}. Toggling false->true forces
-     * SDL's Switch driver to resend UpdateInputMode + SetIMUEnabled. */
+     * SDL's Switch driver to resend UpdateInputMode + SetIMUEnabled. Refresh `now` after dev_add() and guard against
+     * unsigned underflow so a newly connected pad gets its full 500 ms grace window instead of retrying on tick 0 (#74). */
+    now = GetTickCount64();
     for (int i = 0; i < MAXDEV; i++) {
         Dev *d = &g_dev[i];
         if (!d->used || d->ignored || !d->gp || d->virt || d->motion_live || d->sensor_retries >= 8) continue;
         if (!d->has_accel && !d->has_gyro && !is_switch_pad(d->gtype)) continue;
-        if (now - d->added_ms < 500 || (d->sensor_retry_ms && now - d->sensor_retry_ms < 500)) continue;
+        if (now < d->added_ms || now - d->added_ms < 500 || (d->sensor_retry_ms && (now < d->sensor_retry_ms || now - d->sensor_retry_ms < 500))) continue;
         float a[3] = {0, 0, 0};
-        if (d->has_accel && SDL_GetGamepadSensorData(d->gp, SDL_SENSOR_ACCEL, a, 3) && a[0] * a[0] + a[1] * a[1] + a[2] * a[2] > 0.01f) {
+        if (d->has_accel && (!d->has_gyro || SDL_GamepadSensorEnabled(d->gp, SDL_SENSOR_GYRO)) &&
+            SDL_GetGamepadSensorData(d->gp, SDL_SENSOR_ACCEL, a, 3) && a[0] * a[0] + a[1] * a[1] + a[2] * a[2] > 0.01f) {
             d->motion_live = 1;
             continue;
         }
         d->sensor_retries++;
-        d->sensor_retry_ms = now;
         say("nn::pad: \"%s\": no IMU data yet, re-enabling sensors (attempt %d)\n", d->name, d->sensor_retries);
         enable_sensors(d, 1);
+        d->sensor_retry_ms = GetTickCount64();
+        now = d->sensor_retry_ms;
     }
 }
 static void check_config(int force) {             /* lock held */
@@ -1451,6 +1453,30 @@ int nnpad_selftest(const NnHidHooks *h) {
         check(fabsf(a[0]) < 0.01f && fabsf(a[1] + 0.5f) < 0.01f && fabsf(a[2] + 0.8660254f) < 0.01f &&
               fabsf(g[0] - 1.0f) < 0.01f && fabsf(g[1] - 1.0f) < 0.01f && fabsf(g[2] - 1.0f) < 0.01f && !rest,
               "six-axis axes & signs: pitch (+x), roll (-z -> +y), yaw (+y -> +z) and tilted gravity match Nintendo frame");
+        /* #74: IMU sensor retry must NOT underflow (now < added_ms) and fire immediately on connect; only retries after 500 ms with no IMU data */
+        {
+            SDL_JoystickID sid = vj_make(11, 0x501, 1, 1);
+            settle();
+            SDL_Joystick *sjs = SDL_OpenJoystick(sid);
+            int no_underflow = 0, retried_after = 0;
+            lock();
+            Dev *sd = NULL;
+            for (int i = 0; i < MAXDEV; i++) if (g_dev[i].used && !g_dev[i].ignored && g_dev[i].id == sid) { sd = &g_dev[i]; break; }
+            if (sd) {
+                sd->virt = 0;
+                sd->added_ms = GetTickCount64() + 50;             /* simulates dev_add finishing after poll_devices captured `now` */
+                sd->motion_live = 0; sd->sensor_retries = 0; sd->sensor_retry_ms = 0;
+                poll_devices(0);
+                no_underflow = sd->sensor_retries == 0;
+                sd->added_ms = GetTickCount64() - 600;
+                poll_devices(0);
+                retried_after = sd->sensor_retries == 1 && sd->sensor_retry_ms >= sd->added_ms + 500;
+                sd->virt = 1;
+            }
+            unlock();
+            check(no_underflow && retried_after, "IMU sensor retry waits 500 ms after connect (no unsigned underflow when added_ms > now) and retries once elapsed");
+            SDL_CloseJoystick(sjs); SDL_DetachVirtualJoystick(sid); settle();
+        }
     }
     h->vibrate(0, 0, 0);
 
