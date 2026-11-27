@@ -27,6 +27,8 @@ int nnpad_menu_swap_set(const char *v) { (void)v; return 1; }
 int nnpad_menu_swapped(void) { return 0; }
 const char *nnpad_layout_setting(void) { return "auto"; }
 int nnpad_layout_set(const char *v) { (void)v; return 1; }
+const char *nnpad_deadzone_setting(void) { return "0.10"; }
+int nnpad_deadzone_set(const char *v) { (void)v; return 1; }
 int nnpad_button_prompts(void) { return 1; }
 int nnpad_prompts_by_letter(void) { return 0; }
 int nnpad_bind_get(unsigned char *o) { (void)o; return 0; }

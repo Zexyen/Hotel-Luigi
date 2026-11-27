@@ -21,7 +21,7 @@
  * subsets of Russo One and M PLUS Rounded 1c (SIL OFL 1.1, third_party/OFL-*.txt), embedded with #embed; opaque, the
  * whole window: the launcher's look (launcher/ui/launcher.rcss). The same drawing makes the first-start screen
  * (draw_prep) for nvn_vk_draw.c.
- * Some rows are not graphics.ini's: button_prompts, swap_confirm and layout, of controllers.ini.
+ * Some rows are not graphics.ini's: button_prompts, swap_confirm, layout and deadzone, of controllers.ini.
  * Test aids: HL_PCMENU_SHOT=<folder> (nvn_vk_pcmenu.c), HL_PCMENU_OPEN=<seconds> opens it that long after the first pad
  * read (for scripted runs without keys), HL_PCMENU_LOG=1 logs each input step. */
 #include <windows.h>
@@ -62,14 +62,16 @@ int nnpad_menu_swap_set(const char *val);
 int nnpad_menu_swapped(void);
 const char *nnpad_layout_setting(void);
 int nnpad_layout_set(const char *val);
+const char *nnpad_deadzone_setting(void);
+int nnpad_deadzone_set(const char *val);
 int nnpad_button_prompts(void);
 int nnpad_prompts_by_letter(void);
 int nnpad_bind_get(unsigned char *out);
 int nnpad_bind_set(const unsigned char *b);
 
-/* A_PROMPTS, A_MENU_SWAP, A_LAYOUT: keys of controllers.ini. A_PAGE: opens Controls page.
+/* A_PROMPTS, A_MENU_SWAP, A_LAYOUT, A_DEADZONE: keys of controllers.ini. A_PAGE: opens Controls page.
  * A_QUIT: ends the game. A_PRESET / A_BIND: page 1 (Controls) rows. */
-enum { A_LIVE, A_VSYNC, A_WINDOW, A_SIZE, A_SCALE, A_RESTART, A_PROMPTS, A_MENU_SWAP, A_LAYOUT, A_PAGE, A_QUIT, A_PRESET, A_BIND };
+enum { A_LIVE, A_VSYNC, A_WINDOW, A_SIZE, A_SCALE, A_RESTART, A_PROMPTS, A_MENU_SWAP, A_LAYOUT, A_DEADZONE, A_PAGE, A_QUIT, A_PRESET, A_BIND };
 #define ROW_VALUES 16
 typedef struct {
     const char *key, *label, *help, *env, *dflt;           /* dflt: the reader's value when the key is not in the file */
@@ -121,6 +123,9 @@ static const Row k_rows[] = {
      {"off", "on"}, {"Off", "On"}, 0},
     {"layout", "Face buttons", "Position: the right button acts as A, as on a Switch. Printed letter: the button marked A, Cross as A on PlayStation pads. Prompts follow.", NULL, "auto", A_LAYOUT, 0,
      {"auto", "positional", "labels"}, {"Auto", "Position", "Printed letter"}, 0},
+    {"deadzone", "Stick dead zone", "Radial dead zone for both controller sticks, to cancel stick drift. Increase if the character or camera moves on its own.", NULL, "0.10", A_DEADZONE, 0,
+     {"0.00", "0.05", "0.10", "0.15", "0.20", "0.25", "0.30", "0.35", "0.40", "0.45", "0.50"},
+     {"0 %", "5 %", "10 %", "15 %", "20 %", "25 %", "30 %", "35 %", "40 %", "45 %", "50 %"}, 0},
     {"language", "Language", "The game's language. Auto follows your system display language. Applies at the next start.", "HL_LANGUAGE", "auto", A_RESTART, 0,
      {"auto", "en-US", "en-GB", "es", "es-419", "fr", "fr-CA", "de", "it", "nl", "ja", "ko", "zh-Hans", "zh-Hant"},
      {"Auto", "English (US)", "English (UK)", "Spanish (Spain)", "Spanish (LatAm)", "French", "French (Canada)", "German", "Italian", "Dutch", "Japanese", "Korean", "Chinese (Simp.)", "Chinese (Trad.)"}, 0},
@@ -215,11 +220,12 @@ static void menu_init(void) {                              /* the first opening:
     for (int i = 0; i < NROW; i++) {
         const Row *r = &k_rows[i];
         if (r->apply == A_BIND) { g_shown[i] = 1; g_lock_why[i] = 0; continue; }
-        int have = r->apply == A_SIZE || r->apply == A_PROMPTS || r->apply == A_MENU_SWAP || r->apply == A_LAYOUT || r->apply == A_PAGE || r->apply == A_QUIT || r->apply == A_PRESET || gfx_ini_get(r->key, v, sizeof v);
+        int have = r->apply == A_SIZE || r->apply == A_PROMPTS || r->apply == A_MENU_SWAP || r->apply == A_LAYOUT || r->apply == A_DEADZONE || r->apply == A_PAGE || r->apply == A_QUIT || r->apply == A_PRESET || gfx_ini_get(r->key, v, sizeof v);
         if (r->apply == A_SIZE) snprintf(v, sizeof v, "%dx%d", o->width, o->height);      /* HL_WINDOW included */
         else if (r->apply == A_PROMPTS) snprintf(v, sizeof v, "%s", nnpad_prompts_setting());
         else if (r->apply == A_MENU_SWAP) snprintf(v, sizeof v, "%s", nnpad_menu_swap_setting());
         else if (r->apply == A_LAYOUT) snprintf(v, sizeof v, "%s", nnpad_layout_setting());
+        else if (r->apply == A_DEADZONE) snprintf(v, sizeof v, "%s", nnpad_deadzone_setting());
         else if (r->apply == A_PAGE || r->apply == A_QUIT || r->apply == A_PRESET) snprintf(v, sizeof v, "%s", r->dflt);
         else if (!have) snprintf(v, sizeof v, "%s", r->dflt);
         g_shown[i] = !r->optional || have;
@@ -786,6 +792,7 @@ static void set_value(int i, int k) {                    /* value k of row i: wr
     else if (r->apply == A_PROMPTS) { ok = nnpad_prompts_set(r->val[k]); g_fam = nnpad_button_prompts(); g_letter = nnpad_prompts_by_letter(); }      /* the hints and the bind names follow */
     else if (r->apply == A_MENU_SWAP) ok = nnpad_menu_swap_set(r->val[k]);
     else if (r->apply == A_LAYOUT) { ok = nnpad_layout_set(r->val[k]); g_letter = nnpad_prompts_by_letter(); }
+    else if (r->apply == A_DEADZONE) ok = nnpad_deadzone_set(r->val[k]);
     else ok = gfx_option_set(r->key, r->val[k]);
     if (!ok) return;
     g_cur[i] = k;
