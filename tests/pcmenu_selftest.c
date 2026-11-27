@@ -27,6 +27,9 @@ int nnpad_menu_swapped(void) { return !strcmp(g_menu_swap, "on"); }
 static const char *g_layout = "auto";
 const char *nnpad_layout_setting(void) { return g_layout; }
 int nnpad_layout_set(const char *val) { g_layout = val; return 1; }
+static const char *g_deadzone = "0.10";
+const char *nnpad_deadzone_setting(void) { return g_deadzone; }
+int nnpad_deadzone_set(const char *val) { g_deadzone = val; return 1; }
 int nnpad_button_prompts(void) { return 3; }
 int nnpad_prompts_by_letter(void) { return 1; }
 static int g_bind_on;
@@ -197,6 +200,21 @@ int main(int argc, char **argv) {
         assert(!g_bind_on && g_cur[bp] == 0 && g_cur[b0] == RB_A);
         page_go(0, 1);
         assert(g_page == 0 && g_sel == ctl);
+    }
+    {   /* deadzone row: all 11 labels + help render in embedded font subsets, applies live, nearest handles hand-edited values */
+        int dz = row_of("deadzone");
+        assert(dz >= 0 && row_count(dz) == 11 && k_rows[dz].apply == A_DEADZONE);
+        for (int k = 0; k < row_count(dz); k++)
+            for (const char *c = k_rows[dz].name[k]; *c; c++)
+                assert(*c == ' ' || stbtt_FindGlyphIndex(&g_f_head, *c));
+        for (const char *c = k_rows[dz].help; *c; c++)
+            assert(*c == ' ' || stbtt_FindGlyphIndex(&g_f_ui, *c));
+        assert(g_cur[dz] == 2 && !strcmp(k_rows[dz].val[g_cur[dz]], "0.10") && !row_restart(dz));
+        change(dz, 1, 0); change(dz, 1, 0);                        /* 0.10 -> 0.15 -> 0.20 */
+        assert(!strcmp(k_rows[dz].val[g_cur[dz]], "0.20") && !strcmp(g_deadzone, "0.20") && !row_restart(dz));
+        snprintf(g_raw[dz], sizeof g_raw[dz], "0.12");
+        assert(!strcmp(k_rows[dz].val[nearest(dz, -1, 0)], "0.10") && !strcmp(k_rows[dz].val[nearest(dz, 1, 0)], "0.15"));
+        g_raw[dz][0] = 0;
     }
     printf("pcmenu self-test: all checks passed\n");
     return 0;

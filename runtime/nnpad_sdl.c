@@ -351,7 +351,7 @@ static DevCfg *cfg_find(Cfg *c, const char *guid, int create) {
 }
 static void cfg_set(Cfg *c, DevCfg *d, int in_dev, const char *key, char *val) {
     if (!_stricmp(key, "layout")) d->layout = !_stricmp(val, "labels") || !_stricmp(val, "label") ? 1 : !_stricmp(val, "auto") ? 2 : 0;
-    else if (!_stricmp(key, "deadzone")) d->dz = (float)atof(val);
+    else if (!_stricmp(key, "deadzone")) { char *e = NULL; float v = strtof(val, &e); if (e != val && isfinite(v)) d->dz = v < 0.0f ? 0.0f : v > 0.90f ? 0.90f : v; }
     else if (!_stricmp(key, "outer_zone")) d->outer = (float)atof(val);
     else if (!_stricmp(key, "trigger_threshold")) d->trig = (float)atof(val);
     else if (!_stricmp(key, "rumble")) d->rumble = parse_bool(val);
@@ -1035,13 +1035,19 @@ static int cfg_key_set(const char *key, const char *val) {      /* lock held */
     char *b = read_file(g_cfg.path, &len), tmp[MAX_PATH + 8];
     snprintf(tmp, sizeof tmp, "%s.tmp", g_cfg.path);
     FILE *f = fopen(tmp, "wb");
-    int ok = f != NULL;
+    int ok = f != NULL, sect = 0;                                /* 1 = [general]; never clobber a [device ...] override */
     for (size_t s = 0; f && b && s < len; ) {
         size_t e = s, k = s;
         while (e < len && b[e] != '\n') e++;
         if (e < len) e++;
+        if (s == 0 && e - k >= 3 && (unsigned char)b[0] == 0xEF && (unsigned char)b[1] == 0xBB && (unsigned char)b[2] == 0xBF) k += 3;
         while (k < e && (b[k] == ' ' || b[k] == '\t')) k++;
-        if (!done && e - k > kn && !_strnicmp(b + k, key, kn) && (b[k + kn] == ' ' || b[k + kn] == '\t' || b[k + kn] == '=')) {
+        if (k < e && b[k] == '[') {
+            size_t r = k + 1;
+            while (r < e && b[r] != ']') r++;
+            sect = (r < e && r - (k + 1) == 7 && !_strnicmp(b + k + 1, "general", 7)) ? 1 : 0;
+        }
+        if (sect == 1 && e - k > kn && !_strnicmp(b + k, key, kn) && (b[k + kn] == ' ' || b[k + kn] == '\t' || b[k + kn] == '=')) {
             fprintf(f, "%s = %s%s", key, val, b[e - 1] != '\n' ? "" : e - s > 1 && b[e - 2] == '\r' ? "\r\n" : "\n");
             done = 1;
         } else fwrite(b + s, 1, e - s, f);
@@ -1081,6 +1087,28 @@ int nnpad_layout_set(const char *val) {
     lock();
     int ok = cfg_key_set("layout", val);
     if (ok) g_cfg.def.layout = !_stricmp(val, "labels") ? 1 : !_stricmp(val, "auto") ? 2 : 0;
+    unlock();
+    return ok;
+}
+/* [lm3] deadzone ([general] stick dead zone), same cfg_key_set path */
+const char *nnpad_deadzone_setting(void) {
+    static char buf[16];
+    lock();
+    if (!g_cfg.path[0]) cfg_load(1);
+    float dz = g_cfg.def.dz;
+    if (fabsf(dz * 100.0f - roundf(dz * 100.0f)) < 1e-3f) snprintf(buf, sizeof buf, "%.2f", dz);
+    else snprintf(buf, sizeof buf, "%.4g", (double)dz);
+    unlock();
+    return buf;
+}
+int nnpad_deadzone_set(const char *val) {
+    if (!val || !val[0]) return 0;
+    char *e = NULL;
+    float dz = strtof(val, &e);
+    if (e == val || *e || !isfinite(dz) || dz < 0.0f || dz > 0.90f) return 0;
+    lock();
+    int ok = cfg_key_set("deadzone", val);
+    if (ok) g_cfg.def.dz = dz;
     unlock();
     return ok;
 }
@@ -1706,6 +1734,18 @@ int nnpad_selftest(const NnHidHooks *h) {
         int ok = btn == 1ull << 1 && !strcmp(nnpad_menu_swap_setting(), "on") && nnpad_menu_swap_set("off") && !strcmp(nnpad_menu_swap_setting(), "off");
         { size_t n = 0; char *t = read_file(g_cfg.path, &n); ok = ok && t && strstr(t, "swap_confirm = off\r\n[keyboard]") && strstr(t, "deadzone = 0.10\r\n"); free(t); }
         check(ok, "swap_confirm read from the ini: the game gets B for the pad's A; set keeps the file's other lines");
+        {   /* #81: deadzone setting getter/setter applies live, validates range, and updates [general] without clobbering [device] */
+            int dz_ok = !strcmp(nnpad_deadzone_setting(), "0.10") && !nnpad_deadzone_set("-0.05") && !nnpad_deadzone_set("0.95") && !nnpad_deadzone_set("abc");
+            SDL_SetJoystickVirtualAxis(js[0], SDL_GAMEPAD_AXIS_LEFTX, 6553); settle(); h->state(0, &btn, st, &attr);   /* ~0.20 > 0.10 */
+            dz_ok = dz_ok && st[2] > 0;                                                                               /* axis.RX = leftx on pad 0 */
+            dz_ok = dz_ok && nnpad_deadzone_set("0.25") && !strcmp(nnpad_deadzone_setting(), "0.25");
+            settle(); h->state(0, &btn, st, &attr);
+            dz_ok = dz_ok && st[2] == 0;                                                                              /* 0.20 < 0.25 -> zeroed live */
+            { size_t n = 0; char *t = read_file(g_cfg.path, &n); dz_ok = dz_ok && t && strstr(t, "deadzone = 0.25\r\n"); free(t); }
+            dz_ok = dz_ok && nnpad_deadzone_set("0.10") && !strcmp(nnpad_deadzone_setting(), "0.10");
+            SDL_SetJoystickVirtualAxis(js[0], SDL_GAMEPAD_AXIS_LEFTX, 0);
+            check(dz_ok, "deadzone setting validates range, writes [general] deadzone, and cancels stick drift live");
+        }
         vj_clear(js[0], SDL_GAMEPAD_BUTTON_COUNT, 6); settle(); h->state(0, &btn, st, &attr);
         SDL_SetJoystickVirtualButton(js[0], SDL_GAMEPAD_BUTTON_SOUTH, true); settle(); h->state(0, &btn, st, &attr);
         check(before && btn == 1ull << 0, "ini edited while running: reloaded within ~1 s; layout=labels turns south (printed A on this pad) into Pro A");

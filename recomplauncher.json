@@ -322,6 +322,24 @@
       "defaults": { "general/layout": "auto" }
     },
     {
+      "id": "deadzone", "label": "Stick dead zone", "group": "Controls", "in": "controllers",
+      "help": "Radial dead zone for both controller sticks, to cancel stick drift.",
+      "choices": [
+        { "label": "0 %", "set": { "general/deadzone": "0.00" } },
+        { "label": "5 %", "set": { "general/deadzone": "0.05" } },
+        { "label": "10 %", "set": { "general/deadzone": "0.10" } },
+        { "label": "15 %", "set": { "general/deadzone": "0.15" } },
+        { "label": "20 %", "set": { "general/deadzone": "0.20" } },
+        { "label": "25 %", "set": { "general/deadzone": "0.25" } },
+        { "label": "30 %", "set": { "general/deadzone": "0.30" } },
+        { "label": "35 %", "set": { "general/deadzone": "0.35" } },
+        { "label": "40 %", "set": { "general/deadzone": "0.40" } },
+        { "label": "45 %", "set": { "general/deadzone": "0.45" } },
+        { "label": "50 %", "set": { "general/deadzone": "0.50" } }
+      ],
+      "defaults": { "general/deadzone": "0.10" }
+    },
+    {
       "id": "language", "label": "Language", "group": "General",
       "help": "The game's language. Auto follows your system display language.",
       "choices": [
