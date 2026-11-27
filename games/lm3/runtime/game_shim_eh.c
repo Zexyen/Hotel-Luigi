@@ -71,3 +71,39 @@ void h_frame_timer(Ctx *c) {
     t[5] = own + (float)pay;
     t[4] = t[5] * t[3];
 }
+
+/* Gallery / FE synchronous archive unload (Archive::Unload, 0x1e6f0, vtable 0x1692190+0x18): when an entity is marked
+ * for deletion (vtable+0x28, 0x9501e0) it is appended to the circular pending-deletion list rooted at EntityManager+0x10
+ * (EntityManager = *(main+0x1ca4dc8)), which is only drained inside 30 Hz GameSimulation (0x737780 -> 0x94b600).
+ * At frame_rate > 30, FEManager::Update runs every rendered frame while GameSimulation skips 1-3 frames between 30 Hz
+ * steps, so Gallery's one-frame-later synchronous bundle unload (0x68dfc0 with async=0 -> 0x1e6f0 with x1=0) frees the
+ * bundle's skeleton OBJECTS slots before the pending ghost entity is destroyed and unregistered; Rare Ghosts (Group 3)
+ * even unloads on the same frame at 30 fps. RenderManager::RenderFrame (0x464920) then dereferences the freed OBJECTS
+ * slot and crashes. Draining the already-queued deletions right before a synchronous archive unload preserves the game's
+ * 30 Hz simulation timing while guaranteeing no live entity still references assets the unload is about to free. */
+void f_710001e6f0(Ctx *c);
+void h_archive_unload(Ctx *c) {
+    if ((c->x[1] & 1) == 0) {
+        uint64_t mgr = *(const uint64_t *)(uintptr_t)0x7101ca4dc8ULL;
+        if (mgr && *(const uint64_t *)(uintptr_t)(mgr + 16)) {
+            uint64_t a0 = c->x[0], a1 = c->x[1], a2 = c->x[2], a3 = c->x[3], lr = c->x[30];
+            while (*(uint64_t *)(uintptr_t)(mgr + 16)) {
+                uint64_t tail = *(uint64_t *)(uintptr_t)(mgr + 16);
+                *(uint64_t *)(uintptr_t)(mgr + 16) = 0;
+                uint64_t cur = *(uint64_t *)(uintptr_t)(tail + 24);
+                for (;;) {
+                    uint64_t next = *(uint64_t *)(uintptr_t)(cur + 24);
+                    *(uint64_t *)(uintptr_t)(cur + 24) = 0;
+                    uint64_t vt = *(uint64_t *)(uintptr_t)cur;
+                    c->x[0] = cur;
+                    c->x[30] = 0x710094ba64ULL;
+                    call_indirect(c, *(const uint64_t *)(uintptr_t)(vt + 128));
+                    if (cur == tail) break;
+                    cur = next;
+                }
+            }
+            c->x[0] = a0; c->x[1] = a1; c->x[2] = a2; c->x[3] = a3; c->x[30] = lr;
+        }
+    }
+    f_710001e6f0(c);
+}

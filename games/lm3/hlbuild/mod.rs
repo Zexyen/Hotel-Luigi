@@ -53,6 +53,8 @@ pub const HOST_OVERRIDES: &[(i64, &str)] = &[
     (0x7100067be0, "aspect"),
     // FrameTimer::Update (reached through a pointer only): at 60 fps and above the time a hitch takes is still stepped
     (0x710079f320, "frame_timer"),
+    // Archive::Unload (reached through vtable 0x7101692190+0x18 only): drain deferred entity deletions before a synchronous unload frees their assets
+    (0x710001e6f0, "archive_unload"),
 ];
 
 /// instruction patches of main, checked against the words the binary has (im.patches), and its frame counters
