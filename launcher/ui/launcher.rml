@@ -175,6 +175,7 @@
 			<div class="tab" data-class-on="tab == 0" data-event-click="tab(0)"><div>Display</div></div>
 			<div class="tab" data-class-on="tab == 1" data-event-click="tab(1)"><div>Graphics</div></div>
 			<div class="tab" data-class-on="tab == 2" data-event-click="tab(2)"><div>Controls</div></div>
+			<div class="tab" data-class-on="tab == 3" data-event-click="tab(3)"><div>General</div></div>
 			<img class="gl" data-attr-src="glyph_tab_r" data-event-click="tab(tab + 1)"/>
 		</div>
 		<div class="slist">
@@ -192,14 +193,14 @@
 					<div class="btn side" data-if="tex_remove" data-event-click="remove_textures()"><div class="fill"></div><span>Remove</span></div>
 				</span>
 			</div>
-			<div class="srow tex" data-if="tab == 0">
+			<div class="srow tex" data-if="tab == 3">
 				<div class="fill"></div>
 				<div class="k"><div>Desktop shortcut</div><div class="note">{{ shortcut_note }}</div></div>
 				<span class="v"><div class="btn side" data-event-click="create_shortcut()"><div class="fill"></div><span>CREATE</span></div></span>
 			</div>
 		</div>
 		<div class="line l0" data-if="tab == 1">{{ tex_note }}</div>
-		<div class="line l1">{{ tab == 0 ? 'The window, the display and the frame rate.' : tab == 1 ? 'What the game draws and how sharply.' : 'Prompts and menu buttons.' }} Changes are saved as you make them.</div>
+		<div class="line l1">{{ tab == 0 ? 'The window, the display and the frame rate.' : tab == 1 ? 'What the game draws and how sharply.' : tab == 2 ? 'Prompts and menu buttons.' : 'Game language and launcher options.' }} Changes are saved as you make them.</div>
 		<div class="line l2">The game's PC Settings panel (F1, or Start + Select) has these settings too, and more.</div>
 	</div>
 	<div class="foot">

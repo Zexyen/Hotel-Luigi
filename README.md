@@ -26,6 +26,7 @@ menu):
 - **HDR output:** automatic HDR10 / scRGB output following your desktop HDR setting (`hdr`, default `auto`), with configurable white level and peak brightness
 - **Controllers and prompts:** auto-switching Xbox, PlayStation, Switch, and keyboard/mouse prompts (`button_prompts`), menu confirm/back swap (`swap_confirm`), rumble and gyro support, and remappable pads and keys
 - **In-game settings & performance overlay:** press `F1` (or `Start + Select` on controller 1) to adjust settings in-game or toggle the FPS/frame-time overlay (`frame_time_overlay`)
+- **Language selection:** follows your system language by default (`language = auto`), or choose any of the game's 13 supported languages (including Spanish for Spain and Latin America) in the launcher, `F1` settings menu, `config/graphics.ini`, or `HL_LANGUAGE`
 - **Mods:** emulator-style code patches (`.pchtxt`, `.ips`) applied at build time and data mods (`romfs/` folders) loaded at startup
 - **Discord Rich Presence:** shows your current floor, room, and money when Discord is running (`HL_DISCORD=0` disables it; `HL_DISCORD_APP_ID=<id>` uses a custom Discord app)
 

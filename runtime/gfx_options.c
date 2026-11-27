@@ -188,7 +188,12 @@ static const char *const k_default_ini =
 "; hdr_gamma = 2.2 | srgb\r\n"
 ";   How the game's colours are read with HDR on. 2.2: as an SDR monitor shows them (deep blacks). srgb: as Windows\r\n"
 ";   shows SDR programs in HDR (lighter dark parts).\r\n"
-"hdr_gamma = 2.2\r\n";
+"hdr_gamma = 2.2\r\n"
+"\r\n"
+"; language = auto | en-US | en-GB | es | es-419 | fr | fr-CA | de | it | nl | ja | ko | zh-Hans | zh-Hant\r\n"
+";   The game's language. auto follows your system display language. Applies at the next start.\r\n"
+";   The environment variable HL_LANGUAGE=<code> overrides this key.\r\n"
+"language = auto\r\n";
 
 
 #define GFX_LOW_SCALE 0.5f
@@ -303,6 +308,7 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "bc7_textures")) o->bc7_textures = !_stricmp(val, "on");      /* #54 */
         else if (!_stricmp(key, "hud_area")) o->hud_centre = !strcmp(val, "16:9");      /* [witchtime] */
         else if (!_stricmp(key, "aspect_ratio")) { float a, b; int n = sscanf(val, "%f:%f", &a, &b); o->aspect_ratio = !_stricmp(val, "auto") ? -1.0f : n == 2 && b > 0 ? a / b : n == 1 ? a : 0.0f; }      /* [witchtime] */
+        else if (!_stricmp(key, "language")) { if (_stricmp(val, "auto")) snprintf(o->language, sizeof o->language, "%s", val); }      /* [lm3] */
         else unknown++;
     }
     if (f) fclose(f);

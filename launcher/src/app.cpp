@@ -62,7 +62,7 @@ const char* phase_of(const std::string& step)
 struct SettingDef {
 	const char *key, *name, *note;
 	std::vector<std::pair<const char*, const char*>> options;   // value in the file, what the screen shows
-	int tab = 0;                                                // the section of the settings screen: 0 Display, 1 Graphics, 2 Controls
+	int tab = 0;                                                // the section of the settings screen: 0 Display, 1 Graphics, 2 Controls, 3 General
 	const char *dflt = nullptr;                                 // the reader's value when the key is not in the file; else the first option
 	const char *file = "/graphics.ini", *section = "";
 };
@@ -78,8 +78,6 @@ const std::vector<SettingDef>& setting_defs()
 		{"frame_rate", "Frame rate", "30 is the game as made; its speed stays the same",
 			{{"30", "30 fps"}, {"60", "60 fps"}, {"90", "90 fps"}, {"120", "120 fps"}}, 0},
 		{"frame_time_overlay", "Performance overlay", "Frame rate and frame time at the top right of the picture", {{"off", "Off"}, {"on", "On"}}, 0},
-		// the launcher's own (config/launcher.ini; the game never reads it): App::sound
-		{"sounds", "Launcher sounds", "Soft ticks as you move through these screens", {{"on", "On"}, {"off", "Off"}}, 0, nullptr, "/launcher.ini"},
 		{"resolution_scale", "Internal resolution", "What the game renders at, times its own size",
 			{{"0.4", "0.4 ×"}, {"0.5", "0.5 ×"}, {"0.6", "0.6 ×"}, {"0.75", "0.75 ×"}, {"0.8", "0.8 ×"}, {"1.0", "1.0 ×"}, {"1.2", "1.2 ×"}, {"1.6", "1.6 ×"}, {"2.0", "2.0 ×"}, {"2.4", "2.4 ×"}, {"3.0", "3.0 ×"}},
 			1, "1.0"},
@@ -94,6 +92,14 @@ const std::vector<SettingDef>& setting_defs()
 		{"button_prompts", "Button prompts", "Auto follows what you use",
 			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, 2, nullptr, "/controllers.ini", "general"},
 		{"swap_confirm", "Swap Confirm", "The bottom button confirms, the right one goes back", {{"off", "Off"}, {"on", "On"}}, 2, nullptr, "/controllers.ini", "general"},
+		{"language", "Language", "Game language; Auto follows your system language",
+			{{"auto", "Auto"}, {"en-US", "English (US)"}, {"en-GB", "English (UK)"}, {"es", "Spanish (Spain)"},
+			 {"es-419", "Spanish (LatAm)"}, {"fr", "French"}, {"fr-CA", "French (Canada)"}, {"de", "German"},
+			 {"it", "Italian"}, {"nl", "Dutch"}, {"ja", "Japanese"}, {"ko", "Korean"},
+			 {"zh-Hans", "Chinese (Simp.)"}, {"zh-Hant", "Chinese (Trad.)"}},
+			3},
+		// the launcher's own (config/launcher.ini; the game never reads it): App::sound
+		{"sounds", "Launcher sounds", "Soft ticks as you move through these screens", {{"on", "On"}, {"off", "Off"}}, 3, nullptr, "/launcher.ini"},
 	};
 	return d;
 }
@@ -275,7 +281,7 @@ bool App::init(int argc, char** argv)
 	refresh_build();
 	update::check(paths);
 	if (const char* t = std::getenv("LAUNCHER_TAB"))       // test aid: the settings' section
-		tab = std::atoi(t) % 3;
+		tab = std::atoi(t) % 4;
 	if (const char* s = std::getenv("LAUNCHER_SCREEN"))    // test aid: start on another screen (setup, build, mods, settings)
 		go(s);
 	return true;
@@ -1247,7 +1253,7 @@ void App::refresh_settings()
 
 void App::set_tab(int t)
 {
-	tab = (t + 3) % 3;
+	tab = (t + 4) % 4;
 	bump_row = -1;
 	model.DirtyVariable("tab");
 	refresh_settings();

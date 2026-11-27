@@ -165,6 +165,20 @@ int main(int argc, char **argv) {
         assert(lit > 50 && !strcmp(g_perf, "60 fps  16.7 ms"));
         assert(gfx_option_set("frame_time_overlay", "off") && !pcmenu_kind());
     }
+    {   /* language row: all 14 labels render in the embedded font subset, writes to graphics.ini, requires restart */
+        int lr = row_of("language");
+        assert(lr >= 0 && row_count(lr) == 14 && k_rows[lr].apply == A_RESTART);
+        for (int k = 0; k < row_count(lr); k++)
+            for (const char *c = k_rows[lr].name[k]; *c; c++)
+                assert(*c == ' ' || stbtt_FindGlyphIndex(&g_f_head, *c));
+        assert(g_cur[lr] == 0 && !row_restart(lr));
+        change(lr, 1, 0); change(lr, 1, 0); change(lr, 1, 0);      /* auto -> en-US -> en-GB -> es */
+        assert(!strcmp(k_rows[lr].val[g_cur[lr]], "es") && row_restart(lr));
+        assert(gfx_ini_get("language", buf, sizeof buf) && !strcmp(buf, "es"));
+        change(lr, 1, 0);                                          /* es -> es-419 */
+        assert(!strcmp(k_rows[lr].val[g_cur[lr]], "es-419") && row_restart(lr));
+        assert(gfx_ini_get("language", buf, sizeof buf) && !strcmp(buf, "es-419"));
+    }
     printf("pcmenu self-test: all checks passed\n");
     return 0;
 }
