@@ -125,16 +125,10 @@ static const char *const k_default_ini =
 ";   the window title ('.. fps - 16.67 ms per frame') and as a 'frame-time:' line in the log. Also a row of the F1 menu.\r\n"
 "frame_time_overlay = off\r\n"
 "\r\n"
-"; frame_rate = 30 | 60 .. 120\r\n"
-";   30: the game as made. 60: what the 60 FPS mod does, built in: every display refresh gets a frame (the game asks for\r\n"
-";   every second one), its frame time is 16.67 ms and its own limiter is off. Above 60 (90, 120 ...): the same at that\r\n"
-";   rate; the game's speed stays the same. Applies at the next start.\r\n"
+"; frame_rate = 30 .. 960\r\n"
+";   30: the game as made. 40 .. 960: the game's frame time and pacing follow this rate while game speed stays real time\r\n"
+";   (down to 15 fps if hardware falls behind). Applies at the next start.\r\n"
 "frame_rate = 30\r\n"
-"\r\n"
-"; cutscene_fps = 30 | 60\r\n"
-";   30: the game's own 30 fps mode on the title, in menus and in cutscenes, as on the console.\r\n"
-";   60: those run in its 60 fps mode, as gameplay does (timing stays real time). Movies keep their own rate.\r\n"
-"cutscene_fps = 30\r\n"
 "\r\n"
 "; model_lod = game | highest\r\n"
 ";   game: models lose detail with distance and far ones disappear, as on the console. highest: every model with detail\r\n"
@@ -145,15 +139,37 @@ static const char *const k_default_ini =
 ";   on: the game's moving noise over the picture. off: a clean picture; the vignette stays. Applies while the game runs.\r\n"
 "film_grain = on\r\n"
 "\r\n"
-"; upscaler = off | fsr3 | fsr3_quality | fsr3_balanced | fsr3_performance | fsr3_ultra_performance      (Vulkan; experimental)\r\n"
+"; upscaler = off | fsr3 | fsr3_quality | fsr3_balanced | fsr3_performance | fsr3_ultra_performance\r\n"
+";            | dlaa | dlss_quality | dlss_balanced | dlss_performance | dlss_ultra_performance\r\n"
+";            | fsr4 | fsr4_quality | fsr4_balanced | fsr4_performance | fsr4_ultra_performance      (Vulkan; experimental)\r\n"
 ";   fsr3: AMD FSR 3.1 as anti-aliasing at the internal resolution: jagged edges, shimmer and the screen-door of fading\r\n"
 ";   objects are smoothed over frames.\r\n"
-";   Characters and effects that move on their own can leave faint trails. About 0.5 to 2 ms of\r\n"
-";   GPU time a frame, more at higher internal resolutions.\r\n"
 ";   fsr3_quality .. fsr3_ultra_performance: the scene is drawn smaller (1/1.5, 1/1.7, 1/2, 1/3 of the internal resolution\r\n"
 ";   across, never below 900p) and FSR 3.1 upscales it to the internal resolution: faster, a little softer. Above 900p only.\r\n"
+";   dlaa / dlss_*: NVIDIA DLSS (Windows, RTX GPU, requires nvngx_dlss.dll beside hotel-luigi-game.exe; falls back to FSR 3.1).\r\n"
+";   fsr4 / fsr4_*: AMD FSR 4 (Windows, RX 9000+ GPU, requires amd_fidelityfx_loader_vk.dll and amd_fidelityfx_upscaler_vk.dll\r\n"
+";   beside hotel-luigi-game.exe; falls back to FSR 3.1).\r\n"
 ";   Applies when the PC settings panel closes.\r\n"
 "upscaler = off\r\n"
+"\r\n"
+"; sharpness = 0 .. 100      (Vulkan; with upscaler on; at once)\r\n"
+";   RCAS sharpening after the upscaler (FSR 3, DLSS or FSR 4). 0 = off.\r\n"
+"sharpness = 0\r\n"
+"\r\n"
+"; frame_generation = off | on      (Vulkan, Windows; experimental; needs upscaler on)\r\n"
+";   Generates one picture between every two game frames (twice the frame rate on screen). Needs a 120 Hz display (or vsync off)\r\n"
+";   and your own DLLs beside hotel-luigi-game.exe.\r\n"
+"frame_generation = off\r\n"
+"\r\n"
+"; frame_generator = fsr | dlss\r\n"
+";   fsr: AMD FidelityFX Frame Generation (amd_fidelityfx_loader_vk.dll + amd_fidelityfx_framegeneration_vk.dll).\r\n"
+";   dlss: NVIDIA DLSS Frame Generation (nvngx_dlss.dll + nvngx_dlssg.dll, RTX 40 or newer).\r\n"
+"frame_generator = fsr\r\n"
+"\r\n"
+"; frame_generation_hud = on | off\r\n"
+";   on: passes a HUD-less copy of each frame so health bars and prompts stay sharp on generated frames.\r\n"
+";   off: passes the finished frame only (try off if the HUD flickers).\r\n"
+"frame_generation_hud = on\r\n"
 "\r\n"
 "; bc7_textures = off | on      (Vulkan, GPUs without ASTC)\r\n"
 ";   on: the game's ASTC textures come ready-made from build/cache/bc7 instead of being decoded on the CPU as they appear:\r\n"
@@ -242,10 +258,14 @@ static int is_steam_deck(void) {
     return 0;
 }
 static int upscaler_of(const char *v) {      /* [witchtime] issue 118: GfxOptions.upscaler; an unknown value is off */
-    static const char *const k[] = {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance"};
-    for (int i = 1; i < 6; i++) if (!_stricmp(v, k[i])) return i;
+    static const char *const k[] = {"off", "fsr3", "fsr3_quality", "fsr3_balanced", "fsr3_performance", "fsr3_ultra_performance",
+        "dlaa", "dlss_quality", "dlss_balanced", "dlss_performance", "dlss_ultra_performance",
+        "fsr4", "fsr4_quality", "fsr4_balanced", "fsr4_performance", "fsr4_ultra_performance"};
+    for (int i = 1; i < 16; i++) if (!_stricmp(v, k[i])) return i;
     return 0;
 }
+static float sharpness_of(const char *v) { float f = (float)atof(v); return f > 100 ? 100 : f > 0 ? f : 0; }
+static int framegen_of(const char *v) { return !_stricmp(v, "fsr") ? 1 : !_stricmp(v, "dlss") ? 2 : !_stricmp(v, "test") ? 3 : 0; }      /* [witchtime] GfxOptions.frame_gen (test: HL_FRAMEGEN only) */
 static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     (void)once; (void)ctx;
     GfxOptions *o = arg ? (GfxOptions *)arg : &g_opt;      /* [witchtime] arg: gfx_option_set reads the file again into a copy */
@@ -296,15 +316,19 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
         else if (!_stricmp(key, "model_lod")) o->model_lod_high = !_stricmp(val, "highest");      /* [witchtime] issue 86 */
         else if (!_stricmp(key, "film_grain")) o->no_film_grain = !_stricmp(val, "off");      /* [witchtime] issue 86 */
         else if (!_stricmp(key, "upscaler")) o->upscaler = upscaler_of(val);      /* [witchtime] issue 118 */
+        else if (!_stricmp(key, "sharpness")) o->sharpness = sharpness_of(val);
+        else if (!_stricmp(key, "frame_generation_hud")) o->frame_gen_no_hud = !_stricmp(val, "off");
+        else if (!_stricmp(key, "frame_generation")) { int k = framegen_of(val); o->frame_gen_on = !_stricmp(val, "on") || k == 1 || k == 2; if (k == 1 || k == 2) o->frame_gen_kind = k; }
+        else if (!_stricmp(key, "frame_generator")) { int k = framegen_of(val); if (k == 1 || k == 2) o->frame_gen_kind = k; }
         else if (!_stricmp(key, "aspect")) o->aspect_stretch = !_stricmp(val, "stretch");      /* [Recomps#1] */
         else if (!_stricmp(key, "shader_prepare")) o->shader_prepare = !_stricmp(val, "background") ? 1 : !_stricmp(val, "off") ? 2 : 0;
-        else if (!_stricmp(key, "frame_rate")) { int v = atoi(val); o->frame_rate = v < 60 ? 30 : v > 120 ? 120 : v; }      /* [lm3] 30 (the game as made) | 60 .. 120 (lm3_imports.c lm3_image_options, display.c display_set_interval) */
+        else if (!_stricmp(key, "frame_rate")) { int v = atoi(val); o->frame_rate = v < 30 ? 30 : v > 960 ? 960 : v; }      /* [lm3] 30 .. 960 (lm3_imports.c lm3_image_options, display.c display_set_interval) */
         else if (!_stricmp(key, "hdr")) o->hdr = !_stricmp(val, "off") ? 1 : !_stricmp(val, "on") ? 2 : 0;      /* [Recomps#1] finding 147 */
         else if (!_stricmp(key, "hdr_format")) o->hdr_scrgb = !_stricmp(val, "scrgb");
         else if (!_stricmp(key, "hdr_paper_white")) { float v = (float)atof(val); o->hdr_paper_white = v >= 80.0f && v <= 1000.0f ? v : 0.0f; }      /* auto, or a value out of range */
         else if (!_stricmp(key, "hdr_gamma")) o->hdr_srgb = !_stricmp(val, "srgb");
         else if (!_stricmp(key, "hdr_peak")) { float v = (float)atof(val); o->hdr_peak = v >= 80.0f && v <= 10000.0f ? v : 0.0f; }      /* [witchtime] auto, or a value out of range */
-        else if (!_stricmp(key, "cutscene_fps")) o->cutscene_fps = atoi(val) == 60 ? 60 : 30;      /* [witchtime] */
+        else if (!_stricmp(key, "cutscene_fps")) { }      /* older files: unused by LM3 */
         else if (!_stricmp(key, "bc7_textures")) o->bc7_textures = !_stricmp(val, "on");      /* #54 */
         else if (!_stricmp(key, "hud_area")) o->hud_centre = !strcmp(val, "16:9");      /* [witchtime] */
         else if (!_stricmp(key, "aspect_ratio")) { float a, b; int n = sscanf(val, "%f:%f", &a, &b); o->aspect_ratio = !_stricmp(val, "auto") ? -1.0f : n == 2 && b > 0 ? a / b : n == 1 ? a : 0.0f; }      /* [witchtime] */
@@ -314,6 +338,12 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     if (f) fclose(f);
     if (!o->frame_rate) o->frame_rate = 30;
     if (getenv("HL_UPSCALER")) o->upscaler = upscaler_of(getenv("HL_UPSCALER"));      /* [witchtime] issue 118 */
+    if (getenv("HL_SHARPNESS")) o->sharpness = sharpness_of(getenv("HL_SHARPNESS"));
+    {
+        const char *e = getenv("HL_FRAMEGEN");
+        int kind = o->frame_gen_kind ? o->frame_gen_kind : 1;
+        o->frame_gen = e ? (!_stricmp(e, "on") ? kind : framegen_of(e)) : o->frame_gen_on ? kind : 0;
+    }
     {   /* [witchtime] the mip bias: -1, or HL_TEXTURE_LOD_BIAS (-3 .. 3) */
         const char *e = getenv("HL_TEXTURE_LOD_BIAS");
         if (e) o->texture_lod_bias = (float)atof(e);
@@ -331,29 +361,20 @@ static BOOL CALLBACK opt_load(PINIT_ONCE once, PVOID arg, PVOID *ctx) {
     }
     if (!getenv("HL_MODEL_LOD")) _putenv_s("HL_MODEL_LOD", o->model_lod_high ? "highest" : "game");      /* [witchtime] read by the game library */
     else o->model_lod_high = !_stricmp(getenv("HL_MODEL_LOD"), "highest");
-    {   /* [witchtime] cutscene_fps: the game library (game_shim_eh.c) reads HL_CUTSCENE_FPS; a set variable (test runs) wins */
-        const char *e = getenv("HL_CUTSCENE_FPS");
-        if (e) o->cutscene_fps = atoi(e) == 60 ? 60 : 30;
-        else { if (!o->cutscene_fps) o->cutscene_fps = 30; _putenv_s("HL_CUTSCENE_FPS", o->cutscene_fps == 60 ? "60" : "30"); }
-        printf("graphics options: cutscene_fps=%d (%s)%s\n", o->cutscene_fps, e ? "HL_CUTSCENE_FPS" : "graphics.ini",
-               o->cutscene_fps == 60 ? ": the title, menus and cutscenes run at 60 (the game's 60 fps mode; movies keep their own rate)" : ": the title, menus and cutscenes at 30, as on the console");
-    }
     /* [witchtime] aspect_ratio: the game library and the renderer read RECOMPS_ASPECT; a set variable (test runs) wins */
     if (o->aspect_ratio != -1.0f && (!(o->aspect_ratio >= 0.25f && o->aspect_ratio <= 8.0f) || fabsf(o->aspect_ratio - 16.0f / 9.0f) < 0.001f)) o->aspect_ratio = 0.0f;
     if (o->aspect_ratio > 0.0f && !getenv("RECOMPS_ASPECT")) { char n[32]; snprintf(n, sizeof n, "%.6f", o->aspect_ratio); _putenv_s("RECOMPS_ASPECT", n); }
     if (o->hud_centre && !getenv("RECOMPS_HUD_CENTRE")) _putenv_s("RECOMPS_HUD_CENTRE", "1");
     if (getenv("RECOMPS_ASPECT")) printf("graphics options: aspect_ratio %s (the game's screen width / height; experimental, Witch Time's docs/STATUS.md \"Aspect ratios\")\n", getenv("RECOMPS_ASPECT"));
-    /* [Recomps#1] frame_rate above 60: switch on the game library's uncapped clock (game_shim_eh.c h_frame_clock), which reads
-     * RECOMPS_UNCAP with getenv the first time the game's clock runs (after this, at the first frame).
-     * The UCRT environment is one per process, so game.dll sees what is set here. Set variables (test runs) win. */
-    if (o->frame_rate > 60 && !getenv("RECOMPS_UNCAP")) {
+    /* [Recomps#1] frame_rate other than 30 or 60: pace at frame_rate while game speed stays real time. */
+    if (o->frame_rate > 30 && o->frame_rate != 60 && !getenv("RECOMPS_UNCAP")) {
         char n[16]; snprintf(n, sizeof n, "%d", o->frame_rate);
-        const char *pe = getenv("HL_PACE_120");      /* [Recomps#1] long frames at 120: the runtime paces (gfx_pace_rate below), not the lifted limiter */
+        const char *pe = getenv("HL_PACE_120");
         int paced = !(pe && !atoi(pe));
         _putenv_s("RECOMPS_UNCAP", "1");
         if (!getenv("RECOMPS_UNCAP_FPS")) _putenv_s("RECOMPS_UNCAP_FPS", paced ? "0" : n);
-        printf("graphics options: frame_rate=%d: the game's clock measures real time, %s %d fps (experimental; Witch Time's docs/STATUS.md, \"Frame rates above 60\")\n", o->frame_rate,
-               paced ? "the game released and its pictures presented on a steady tick of" : "NOT capped (HL_PACE_120=0; B3 has no lifted limiter), not paced at", o->frame_rate);
+        printf("graphics options: frame_rate=%d: %s %d fps\n", o->frame_rate,
+               paced ? "the game released and its pictures presented on a steady tick of" : "not paced at", o->frame_rate);
     }
     if (o->profile == 1) {       /* the low-end profile wins over the three keys it sets, wherever they stand in the file (values: O1_options.md, session 9) */
         o->scale = GFX_LOW_SCALE; o->aniso = 0; o->texture_lod_bias = 0.0f; o->present = 0;
@@ -386,8 +407,12 @@ int gfx_pace_rate(void) {
     static int r = -1;
     if (r < 0) {
         const GfxOptions *o = gfx_options();
-        const char *e = getenv("HL_PACE_120"), *u = getenv("RECOMPS_UNCAP_FPS");
-        r = o->frame_rate > 60 && !(e && !atoi(e)) && u && !atoi(u) ? o->frame_rate : 60;      /* a test's own limiter rate (RECOMPS_UNCAP_FPS) keeps the old way */
+        const char *pr = getenv("HL_PACE_RATE");
+        if (pr && atoi(pr) >= 15 && atoi(pr) <= 960) r = atoi(pr);
+        else {
+            const char *e = getenv("HL_PACE_120"), *u = getenv("RECOMPS_UNCAP_FPS");
+            r = o->frame_rate > 30 && o->frame_rate != 60 && !(e && !atoi(e)) && (!u || !atoi(u)) ? o->frame_rate : 60;
+        }
     }
     return r;
 }
@@ -537,14 +562,15 @@ int gfx_option_set(const char *key, const char *val) {
     free(b);
     if (fclose(f) || !MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING)) { DeleteFileA(tmp); printf("graphics options: %s = %s NOT written to %s\n", key, val, path); return 0; }
     if (!_stricmp(key, "model_lod")) _putenv_s("HL_MODEL_LOD", val);
-    if (!_stricmp(key, "cutscene_fps")) _putenv_s("HL_CUTSCENE_FPS", val);      /* the reader takes the variable it set itself at start */
     GfxOptions t;
     opt_load(NULL, &t, NULL);
     /* the keys that apply while the game runs (each is acted on by pcmenu.c); a key added later that applies live: one line here */
     g_opt.window_mode = t.window_mode; g_opt.width = t.width; g_opt.height = t.height;
-    g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch; g_opt.cutscene_fps = t.cutscene_fps;
+    g_opt.present = t.present; g_opt.aniso = t.aniso; g_opt.aspect_stretch = t.aspect_stretch;
     g_opt.texture_lod_bias = t.texture_lod_bias; g_opt.scale = t.scale; g_opt.hud_centre = t.hud_centre;
     g_opt.model_lod_high = t.model_lod_high; g_opt.no_film_grain = t.no_film_grain; g_opt.upscaler = t.upscaler;
+    g_opt.sharpness = t.sharpness; g_opt.frame_gen = t.frame_gen; g_opt.frame_gen_on = t.frame_gen_on;
+    g_opt.frame_gen_kind = t.frame_gen_kind; g_opt.frame_gen_no_hud = t.frame_gen_no_hud;
     g_opt.hdr = t.hdr; g_opt.hdr_paper_white = t.hdr_paper_white; g_opt.hdr_peak = t.hdr_peak; g_opt.overlay = t.overlay;      /* [witchtime] nvn_vk_draw.c reads them at every present */
     printf("graphics options: %s = %s written to %s\n", key, val, path);
     fflush(stdout);

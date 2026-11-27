@@ -35,6 +35,7 @@
 
 typedef struct { char name[0x301]; int is_file; int64_t size; } HostEntry;
 typedef struct { uint32_t magic; int count, pos; HostEntry *entries; } HostDir;
+static int entry_cmp(const void *a, const void *b) { return strcmp(((const HostEntry *)a)->name, ((const HostEntry *)b)->name); }
 
 #define FS_DIR_ROOTS 18                                   /* = nnfs.c's: RomFS mods (ROM_MOD_MAX 16) + working + committed folder */
 int fs_dir_roots(const char *guest, char roots[][MAX_PATH], uint32_t *result);   /* nnfs.c: mount table, save data journal, RomFS mods */
@@ -106,6 +107,7 @@ static void fs_OpenDirectory(Ctx *c) {                    /* (DirectoryHandle *o
         for (int k = 0; k < d->count; k++) if (d->entries[k].is_file ? (mode & 2) : (mode & 1)) d->entries[n++] = d->entries[k];
         d->count = n;
     }
+    if (d->count > 1) qsort(d->entries, (size_t)d->count, sizeof(HostEntry), entry_cmp);      /* deterministic order across OSes and mod folders */
 
     trace_printf("     fs OpenDirectory \"%s\" mode %d -> %d entries\n", (const char *)(uintptr_t)A1, mode, d->count);
     wr64(out, P(d));

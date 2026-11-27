@@ -1,6 +1,6 @@
-# Builds the launcher for Linux and Windows and publishes them as a release.
+# Builds the launcher for Linux (x86-64 and AArch64), Windows and macOS (Apple silicon) and publishes them as a release.
 #
-#   git tag v0.1.0 && git push origin v0.1.0     -> builds, then makes the v0.1.0 release with both archives attached
+#   git tag v0.1.0 && git push origin v0.1.0     -> builds, then makes the v0.1.0 release with all archives attached
 #   Actions > Release > Run workflow, or a PR    -> builds only; the archives are kept as workflow artifacts
 #
 # The archive is this repository's source (scripts, runtime, lifter, launcher screens) with:
@@ -15,7 +15,7 @@
 # recomplauncher.json comes with the source, at the top: how RecompLauncher sets the game up and starts it.
 # Nothing derived from the game is in it: the player builds that from their own dump.
 #
-# Linux also gets the same folder as Hotel-Luigi-<tag>-linux-x86_64.AppImage (launcher/linux/AppRun).
+# Linux also gets the same folder as Hotel-Luigi-<tag>-<arch>.AppImage (launcher/linux/AppRun).
 #
 # Windows (job windows, cross-built on Ubuntu with llvm-mingw; job windows-test then runs it on Windows): a .zip with
 #   hotel-luigi-game.exe                   starts build/hotel-luigi-game.exe
@@ -36,7 +36,7 @@ on:
   workflow_dispatch:
   # a pull request that changes what the archive is built from builds it too, as a check
   pull_request:
-    paths: ['launcher/**', 'runtime/**', 'tools/hlbuild/**', 'games/**', '.gitattributes', '.github/workflows/release.yml']
+    paths: ['launcher/**', 'runtime/**', 'tools/hlbuild/**', 'games/**', 'recomplauncher.json', '.gitattributes', '.github/workflows/release.yml']
 
 permissions:
   contents: write
@@ -50,11 +50,19 @@ env:
   VULKAN_HEADERS_TAG: vulkan-sdk-1.4.341.0
   FREETYPE_TAG: VER-2-13-3
   APPIMAGETOOL_TAG: '1.9.1'
+  APPIMAGE_RUNTIME_TAG: '20251108'
 
 jobs:
   linux:
-    # the oldest supported runner, so the binaries run on older glibc too
-    runs-on: ubuntu-22.04
+    # one archive per processor (x86-64 and AArch64), each built on its own kind of runner: the oldest
+    # supported one, so the binaries run on older glibc too
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-22.04, llvm: X64 }
+          - { arch: aarch64, runner: ubuntu-22.04-arm, llvm: ARM64 }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -63,7 +71,7 @@ jobs:
         run: |
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "name=Hotel-Luigi-$v-linux-x86_64" >> "$GITHUB_OUTPUT"
+          echo "name=Hotel-Luigi-$v-linux-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
 
       - name: Packages
         run: |
@@ -81,16 +89,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: deps/llvm
-          key: llvm-${{ env.LLVM_VERSION }}-trim1
+          key: llvm-${{ env.LLVM_VERSION }}-${{ matrix.arch }}-trim1
       - name: LLVM
         if: steps.llvm.outputs.cache-hit != 'true'
         run: |
-          v="$LLVM_VERSION"; major="${v%%.*}"
+          v="$LLVM_VERSION"; major="${v%%.*}"; top="LLVM-$v-Linux-${{ matrix.llvm }}"
           mkdir -p deps/llvm
-          curl -sSfL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$v/LLVM-$v-Linux-X64.tar.xz" |
-            tar -xJ --strip-components=1 -C deps/llvm --wildcards "LLVM-$v-Linux-X64/bin/clang-$major" \
-              "LLVM-$v-Linux-X64/bin/lld" "LLVM-$v-Linux-X64/lib/clang/$major/include/*" \
-              "LLVM-$v-Linux-X64/lib/clang/$major/lib/x86_64-unknown-linux-gnu/libclang_rt.builtins.a"
+          curl -sSfL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$v/$top.tar.xz" |
+            tar -xJ --strip-components=1 -C deps/llvm --wildcards "$top/bin/clang-$major" \
+              "$top/bin/lld" "$top/lib/clang/$major/include/*" \
+              "$top/lib/clang/$major/lib/${{ matrix.arch }}-unknown-linux-gnu/libclang_rt.builtins.a"
           strip deps/llvm/bin/clang-$major deps/llvm/bin/lld
           ln -s clang-$major deps/llvm/bin/clang
           ln -s clang-$major deps/llvm/bin/clang++
@@ -116,7 +124,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/ffmpeg
-          key: ffmpeg-${{ env.FFMPEG_TAG }}-ubuntu-22.04-1
+          key: ffmpeg-${{ env.FFMPEG_TAG }}-${{ matrix.runner }}-1
       - name: FFmpeg
         if: steps.ffmpeg.outputs.cache-hit != 'true'
         run: |
@@ -137,7 +145,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/glslang
-          key: glslang-${{ env.GLSLANG_TAG }}-ubuntu-22.04-1
+          key: glslang-${{ env.GLSLANG_TAG }}-${{ matrix.runner }}-1
       - name: glslang
         if: steps.glslang.outputs.cache-hit != 'true'
         run: |
@@ -217,13 +225,17 @@ jobs:
       # (launcher/linux/AppRun); RecompLauncher unpacks it and plays it from the folder, as the .tar.gz
       - name: AppImage
         run: |
+          arch="${{ matrix.arch }}"
           name="${{ steps.version.outputs.name }}"
-          curl -sSfL -o "$RUNNER_TEMP/appimagetool" "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_TAG/appimagetool-x86_64.AppImage"
+          app="Hotel-Luigi-${{ steps.version.outputs.version }}-$arch.AppImage"
+          curl -sSfL -o "$RUNNER_TEMP/appimagetool" "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_TAG/appimagetool-$arch.AppImage"
+          curl -sSfL -o "$RUNNER_TEMP/runtime-$arch" "https://github.com/AppImage/type2-runtime/releases/download/$APPIMAGE_RUNTIME_TAG/runtime-$arch"
           chmod +x "$RUNNER_TEMP/appimagetool"
-          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$RUNNER_TEMP/appimagetool" --no-appstream "dist/$name" "dist/$name.AppImage"
-          (cd dist && sha256sum "$name.AppImage" > "$name.AppImage.sha256")
+          ARCH="$arch" APPIMAGE_EXTRACT_AND_RUN=1 "$RUNNER_TEMP/appimagetool" --no-appstream --comp zstd \
+            --runtime-file "$RUNNER_TEMP/runtime-$arch" "dist/$name" "dist/$app"
+          (cd dist && sha256sum "$app" > "$app.sha256")
           # it starts from wherever it is unpacked, as RecompLauncher runs it
-          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/dist/$name.AppImage" --appimage-extract >/dev/null && test -x squashfs-root/AppRun && test -f squashfs-root/recomplauncher.json)
+          (cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE/dist/$app" --appimage-extract >/dev/null && test -x squashfs-root/AppRun && test -f squashfs-root/recomplauncher.json)
           ls -la dist
 
       - uses: actions/upload-artifact@v4
@@ -493,4 +505,77 @@ jobs:
           generate_release_notes: true
           files: |
             dist/*.zip
+            dist/*.sha256
+
+  # macOS (experimental, Apple silicon): the launcher, its bundle and the build tool, attached to the release as
+  # Hotel-Luigi-<tag>-macos-arm64.tar.gz (the name the launcher on a Mac looks for). No prebuilt/ and no deps/llvm: the
+  # player's Mac builds the runtime too, with Apple's Command Line Tools against its own Homebrew libraries.
+  macos:
+    # the oldest Apple silicon runner, so the programs start on older macOS too
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "name=Hotel-Luigi-$v-macos-arm64" >> "$GITHUB_OUTPUT"
+
+      - name: Packages
+        run: brew install ninja freetype sdl3 molten-vk vulkan-loader vulkan-headers glslang spirv-tools ffmpeg
+
+      - name: hlbuild
+        run: |
+          cargo build --release --locked --manifest-path tools/hlbuild/Cargo.toml
+          cargo test --release --locked --manifest-path tools/hlbuild/Cargo.toml
+
+      # build/hotel-luigi-game and build/Hotel Luigi.app (launcher/macos/make_app.sh)
+      - name: Launcher
+        run: |
+          cmake -S launcher -B build/launcher -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" -DHL_VERSION="${{ steps.version.outputs.version }}"
+          cmake --build build/launcher
+          otool -L build/hotel-luigi-game
+          codesign --verify --verbose "build/Hotel Luigi.app"
+
+      # nothing is stripped: that would break the ad hoc signatures, without which Apple silicon starts no program
+      - name: Package
+        run: |
+          name="${{ steps.version.outputs.name }}"
+          mkdir -p "dist/$name/build" "dist/$name/licenses"
+          git archive HEAD | tar -x -C "dist/$name"
+          rm -rf "dist/$name/.github"
+          test -f "dist/$name/recomplauncher.json"
+          cp build/hotel-luigi-game tools/hlbuild/target/release/hlbuild "dist/$name/build/"
+          cp -R "build/Hotel Luigi.app" "dist/$name/build/"
+          cp build/launcher/_deps/rmlui-src/LICENSE.txt "dist/$name/licenses/RmlUi.txt"
+          ln -s build/hotel-luigi-game "dist/$name/hotel-luigi-game"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          (cd dist && shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256")
+          ls -la dist
+
+      # the archive as a player unpacks it: the runtime and game.dylib from stand-in modules, built there with Apple's
+      # clang against Homebrew's libraries, run until the image is mapped
+      - name: Smoke test of the link step
+        run: |
+          p="$PWD/dist/${{ steps.version.outputs.name }}"
+          "$p/build/hlbuild" smoke --repo "$p"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version.outputs.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.event.repository.name }} ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
             dist/*.sha256

@@ -17,6 +17,7 @@ int nvn_front_post_pcmenu(void) { return 0; }
 int nvn_vk_hdr_on(void) { return 0; }
 void display_vsync_apply(void) {}
 int display_window_apply(void) { return 1; }
+void display_quit(void) {}
 void display_mouse_want(int on) { (void)on; }
 int nnpad_mouse_cfg(float *s, int *i) { (void)s; (void)i; return 0; }
 const char *nnpad_prompts_setting(void) { return "auto"; }
@@ -28,9 +29,9 @@ const char *nnpad_layout_setting(void) { return "auto"; }
 int nnpad_layout_set(const char *v) { (void)v; return 1; }
 int nnpad_button_prompts(void) { return 1; }
 int nnpad_prompts_by_letter(void) { return 0; }
-int nnpad_bind_get(int ch, unsigned char *o) { (void)ch; (void)o; return 0; }
-int nnpad_bind_set(int ch, const unsigned char *b) { (void)ch; (void)b; return 1; }
-int options_control_type(int ch) { (void)ch; return 0; }
+int nnpad_bind_get(unsigned char *o) { (void)o; return 0; }
+int nnpad_bind_set(const unsigned char *b) { (void)b; return 1; }
+int prompts_control_type(void) { return 0; }
 static void save(const char *path) {
     FILE *f = fopen(path, "wb");
     int w = g_pw, h = g_ph; unsigned off = 54, size = off + (unsigned)w * h * 4;

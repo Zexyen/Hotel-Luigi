@@ -18,6 +18,9 @@ int  nnpad_button_prompts(void);                /* [Recomps#1] [general] button_
 void nnpad_prompts_used(int keyboard);          /* player 1 used a pad (0) or the keyboard / mouse (1): button_prompts = auto follows */
 int  nnpad_prompts_by_letter(void);             /* [Recomps#1] finding 148: player 1's face buttons by printed letter (A = the bottom button) */
 int  nnpad_menu_swapped(void);                  /* [witchtime] [general] swap_confirm, for the device in use: the pad's A and B change places (nnhid.c), prompts and panel follow */
+int  nnpad_bind_get(unsigned char *out);        /* [lm3] [general] bind_controls: fills 16-byte Pro button permutation; 0 = game default */
+int  nnpad_bind_set(const unsigned char *b);    /* [lm3] write bind_controls (NULL = game default) to controllers.ini; 0 = not written */
+int  nnpad_bind_live(void);                     /* [lm3] 1 when a custom gameplay button layout is active for controllers */
 int  nnpad_init(void);                           /* SDL up (no video, no window); 0 = failed. Also loads controllers.ini. */
 void nnpad_shutdown(void);                       /* stop rumble and close open pads on exit */
 void nnpad_poll(int force);                      /* hot-plug, config reload; cheap when called often (at most once per ms) */

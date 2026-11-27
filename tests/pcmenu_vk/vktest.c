@@ -18,6 +18,7 @@
 #include "gfx_options.h"
 typedef struct { int block; uint64_t off, size; void *map; VkDeviceMemory mem; } VMem;
 static struct { VkInstance inst; VkPhysicalDevice pd; VkPhysicalDeviceMemoryProperties mp; VkDevice device; VkQueue queue; uint32_t qf; VkExtent2D extent; int hdr, alive; VkSwapchainKHR swapchain; } V;
+static struct { int use_rp; } D;
 static struct { VkCommandPool pool; VkCommandBuffer cmd; void *pipe_bound; int dyn_dirty, dyn3_dirty, in_pass; } R;
 static void vk_fatal(const char *what, VkResult r) { printf("FATAL %s: %d\n", what, (int)r); exit(2); }
 #define VKC(call) do { VkResult r_ = (call); if (r_ != VK_SUCCESS) vk_fatal(#call, r_); } while (0)
@@ -65,6 +66,7 @@ static VkShaderModule module_from_glsl(int stage, const char *glsl, const char *
     VkShaderModuleCreateInfo ci = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO}; ci.codeSize = n; ci.pCode = w; VkShaderModule m; VKC(vkCreateShaderModule(V.device, &ci, NULL, &m)); free(w); return m;
 }
 static void dsh_forget(void) {}
+static void sampler_table_reset(void) {}
 static int g_nsmp_old, g_nsmp; static VkSampler g_smp_old[4]; static struct { VkSampler s; } g_smp[4];
 const GfxOptions *gfx_options(void);
 static void present_mode_pick(void) {} static void swapchain_destroy(void) {} static LONG64 g_vk_recreated; static void rs_apply(void) {}

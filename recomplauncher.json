@@ -19,7 +19,13 @@
       "optional": true,
       "formats": [{ "type": "file", "extensions": ["nsp"] }]
     },
-    { "id": "keys", "label": "Your console's prod.keys", "role": "key", "shared": "switch.prod-keys" }
+    { "id": "keys", "label": "Your console's prod.keys", "role": "key", "shared": "switch.prod-keys" },
+    {
+      "id": "dlss",
+      "label": "NVIDIA DLSS library (nvngx_dlss.dll, optional; for DLAA / DLSS upscaling on Windows RTX GPUs)",
+      "optional": true,
+      "formats": [{ "type": "file", "extensions": ["dll"] }]
+    }
   ],
   "prepare": {
     "program": ["Hotel-Luigi-x86_64.AppImage", "build/hotel-luigi-game.exe", "build/hotel-luigi-game"],
@@ -98,9 +104,13 @@
       "help": "30 is the game as made. Higher rates keep the game's speed the same.",
       "choices": [
         { "label": "30 fps", "set": { "frame_rate": "30" } },
+        { "label": "40 fps", "set": { "frame_rate": "40" } },
         { "label": "60 fps", "set": { "frame_rate": "60" } },
         { "label": "90 fps", "set": { "frame_rate": "90" } },
-        { "label": "120 fps", "set": { "frame_rate": "120" } }
+        { "label": "120 fps", "set": { "frame_rate": "120" } },
+        { "label": "144 fps", "set": { "frame_rate": "144" } },
+        { "label": "165 fps", "set": { "frame_rate": "165" } },
+        { "label": "240 fps", "set": { "frame_rate": "240" } }
       ],
       "defaults": { "frame_rate": "30" }
     },
@@ -132,17 +142,67 @@
       "defaults": { "resolution_scale": "1.0" }
     },
     {
-      "id": "upscaler", "label": "Upscaling", "group": "Graphics",
-      "help": "FSR 3.1 smooths edges at the internal resolution. Quality to Ultra Performance draw smaller and upscale: faster, a little softer. Experimental.",
+      "id": "upscaler", "label": "Upscaling", "group": "Upscaling",
+      "help": "FSR 3.1, DLSS or FSR 4. Native AA smooths edges; Quality to Ultra Performance upscale to internal resolution (above 900p). DLAA, DLSS and FSR 4 need your own DLLs beside hotel-luigi-game.exe, else FSR 3.1 runs.",
       "choices": [
         { "label": "Off", "set": { "upscaler": "off" } },
-        { "label": "FSR anti-aliasing", "set": { "upscaler": "fsr3" } },
-        { "label": "FSR Quality", "set": { "upscaler": "fsr3_quality" } },
-        { "label": "FSR Balanced", "set": { "upscaler": "fsr3_balanced" } },
-        { "label": "FSR Performance", "set": { "upscaler": "fsr3_performance" } },
-        { "label": "FSR Ultra Performance", "set": { "upscaler": "fsr3_ultra_performance" } }
+        { "label": "FSR 3 Native AA", "set": { "upscaler": "fsr3" } },
+        { "label": "FSR 3 Quality", "set": { "upscaler": "fsr3_quality" } },
+        { "label": "FSR 3 Balanced", "set": { "upscaler": "fsr3_balanced" } },
+        { "label": "FSR 3 Performance", "set": { "upscaler": "fsr3_performance" } },
+        { "label": "FSR 3 Ultra Performance", "set": { "upscaler": "fsr3_ultra_performance" } },
+        { "label": "DLAA", "set": { "upscaler": "dlaa" } },
+        { "label": "DLSS Quality", "set": { "upscaler": "dlss_quality" } },
+        { "label": "DLSS Balanced", "set": { "upscaler": "dlss_balanced" } },
+        { "label": "DLSS Performance", "set": { "upscaler": "dlss_performance" } },
+        { "label": "DLSS Ultra Performance", "set": { "upscaler": "dlss_ultra_performance" } },
+        { "label": "FSR 4 Native AA", "set": { "upscaler": "fsr4" } },
+        { "label": "FSR 4 Quality", "set": { "upscaler": "fsr4_quality" } },
+        { "label": "FSR 4 Balanced", "set": { "upscaler": "fsr4_balanced" } },
+        { "label": "FSR 4 Performance", "set": { "upscaler": "fsr4_performance" } },
+        { "label": "FSR 4 Ultra Performance", "set": { "upscaler": "fsr4_ultra_performance" } }
       ],
       "defaults": { "upscaler": "off" }
+    },
+    {
+      "id": "sharpness", "label": "Sharpness", "group": "Upscaling",
+      "help": "Sharpens the picture after the upscaler. Needs Upscaling on.",
+      "choices": [
+        { "label": "Off", "set": { "sharpness": "0" } },
+        { "label": "20 %", "set": { "sharpness": "20" } },
+        { "label": "40 %", "set": { "sharpness": "40" } },
+        { "label": "60 %", "set": { "sharpness": "60" } },
+        { "label": "80 %", "set": { "sharpness": "80" } },
+        { "label": "100 %", "set": { "sharpness": "100" } }
+      ],
+      "defaults": { "sharpness": "0" }
+    },
+    {
+      "id": "frame_generation", "label": "Frame generation", "group": "Upscaling",
+      "help": "Experimental, Windows. Generates a frame between every two game frames. Needs Upscaling on and your own DLLs beside hotel-luigi-game.exe.",
+      "choices": [
+        { "label": "Off", "set": { "frame_generation": "off" } },
+        { "label": "On", "set": { "frame_generation": "on" } }
+      ],
+      "defaults": { "frame_generation": "off" }
+    },
+    {
+      "id": "frame_generator", "label": "Frame generation: type", "group": "Upscaling",
+      "help": "FSR (AMD FidelityFX DLLs) or DLSS (NVIDIA DLSSG DLL, RTX 40+).",
+      "choices": [
+        { "label": "FSR", "set": { "frame_generator": "fsr" } },
+        { "label": "DLSS", "set": { "frame_generator": "dlss" } }
+      ],
+      "defaults": { "frame_generator": "fsr" }
+    },
+    {
+      "id": "frame_generation_hud", "label": "Frame generation: HUD", "group": "Upscaling",
+      "help": "Passes a HUD-less frame so UI stays sharp on generated frames. Turn off if the HUD flickers.",
+      "choices": [
+        { "label": "On", "set": { "frame_generation_hud": "on" } },
+        { "label": "Off", "set": { "frame_generation_hud": "off" } }
+      ],
+      "defaults": { "frame_generation_hud": "on" }
     },
     {
       "id": "aspect_ratio", "label": "Picture shape", "group": "Graphics",
@@ -163,6 +223,15 @@
         { "label": "Stretch", "set": { "aspect": "stretch" } }
       ],
       "defaults": { "aspect": "keep" }
+    },
+    {
+      "id": "hud_area", "label": "HUD area", "group": "Graphics",
+      "help": "With aspect_ratio wider than 16:9: screen puts the HUD at the edges, 16:9 keeps it in the middle.",
+      "choices": [
+        { "label": "Full screen", "set": { "hud_area": "screen" } },
+        { "label": "Centered (16:9)", "set": { "hud_area": "16:9" } }
+      ],
+      "defaults": { "hud_area": "screen" }
     },
     {
       "id": "model_lod", "label": "Model detail", "group": "Graphics",
@@ -241,6 +310,37 @@
         { "label": "On", "set": { "general/swap_confirm": "on" } }
       ],
       "defaults": { "general/swap_confirm": "off" }
+    },
+    {
+      "id": "layout", "label": "Face buttons", "group": "Controls", "in": "controllers",
+      "help": "Position uses Nintendo positions (right = A). Printed letter uses the controller's own labels.",
+      "choices": [
+        { "label": "Auto", "set": { "general/layout": "auto" } },
+        { "label": "Position", "set": { "general/layout": "positional" } },
+        { "label": "Printed letter", "set": { "general/layout": "labels" } }
+      ],
+      "defaults": { "general/layout": "auto" }
+    },
+    {
+      "id": "language", "label": "Language", "group": "General",
+      "help": "The game's language. Auto follows your system display language.",
+      "choices": [
+        { "label": "Auto", "set": { "language": "auto" } },
+        { "label": "English (US)", "set": { "language": "en-US" } },
+        { "label": "English (UK)", "set": { "language": "en-GB" } },
+        { "label": "Spanish (Spain)", "set": { "language": "es" } },
+        { "label": "Spanish (LatAm)", "set": { "language": "es-419" } },
+        { "label": "French", "set": { "language": "fr" } },
+        { "label": "French (Canada)", "set": { "language": "fr-CA" } },
+        { "label": "German", "set": { "language": "de" } },
+        { "label": "Italian", "set": { "language": "it" } },
+        { "label": "Dutch", "set": { "language": "nl" } },
+        { "label": "Japanese", "set": { "language": "ja" } },
+        { "label": "Korean", "set": { "language": "ko" } },
+        { "label": "Chinese (Simp.)", "set": { "language": "zh-Hans" } },
+        { "label": "Chinese (Trad.)", "set": { "language": "zh-Hant" } }
+      ],
+      "defaults": { "language": "auto" }
     }
   ]
 }

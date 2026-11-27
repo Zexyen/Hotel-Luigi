@@ -40,6 +40,8 @@ typedef struct {
     int prompts;                        /* [Recomps#1] [general] button_prompts: 0 auto, 1 switch, 2 playstation, 3 xbox */
     int menu_swap;                      /* [witchtime] [general] swap_confirm */
     int input;                          /* [Recomps#1] [general] input: 0 both, 1 keyboard (pads unused), 2 controller (keyboard and mouse unused) */
+    int bind_on;                        /* [lm3] [general] bind_controls: 1 = custom gameplay Pro button permutation in bind[16] */
+    unsigned char bind[16];
 } Cfg;
 typedef struct {
     int used, ignored;
@@ -172,6 +174,9 @@ static const char *const g_default_ini =
 ";   play; the button prompts show it; the keyboard keeps its keys. (Bottom and right with layout = positional\r\n"
 ";   above; with labels A is already the bottom button of an Xbox or PlayStation pad, and on moves it to the right.)\r\n"
 "swap_confirm = off\r\n"
+"; Gameplay controller button layout (set from F1 > Controls): game (default), or 16 comma-separated Pro button names\r\n"
+";   in order A B X Y STICK_L STICK_R L R ZL ZR PLUS MINUS LEFT UP RIGHT DOWN. Applies to gameplay and prompts only.\r\n"
+"bind_controls = game\r\n"
 "; Which input the game takes: both (pads and the keyboard + mouse, merged), keyboard (pads are ignored), controller (the\r\n"
 ";   keyboard and mouse are ignored). The keyboard part takes effect when the game starts, the pads part at once.\r\n"
 "input = both\r\n"
@@ -315,6 +320,27 @@ static int parse_vk(const char *t, const char *bind) {           /* [Recomps#1] 
     return parse_vk_tok(b, bind) | parse_vk_tok(c + 1, bind) << 8;
 }
 static int parse_bool(const char *v) { return !(_stricmp(v, "off") && _stricmp(v, "0") && _stricmp(v, "no") && _stricmp(v, "false")) ? 0 : 1; }
+static int parse_bind(const char *val, unsigned char out[16]) {
+    if (!val || !val[0] || !_stricmp(val, "game") || !_stricmp(val, "default")) return 0;
+    unsigned seen = 0;
+    int i = 0;
+    const char *p = val;
+    while (*p && i < 16) {
+        while (*p == ' ' || *p == '\t') p++;
+        const char *q = p;
+        while (*q && *q != ',') q++;
+        const char *e = q;
+        while (e > p && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' || e[-1] == '\n')) e--;
+        int found = -1;
+        for (int b = 0; b < 16; b++)
+            if ((size_t)(e - p) == strlen(g_pro[b]) && !_strnicmp(p, g_pro[b], (size_t)(e - p))) { found = b; break; }
+        if (found < 0 || (seen & (1u << found))) return 0;
+        seen |= 1u << found;
+        out[i++] = (unsigned char)found;
+        p = *q == ',' ? q + 1 : q;
+    }
+    return i == 16 && seen == 0xffffu && !*p;
+}
 
 static DevCfg *cfg_find(Cfg *c, const char *guid, int create) {
     for (int i = 0; i < c->ndev; i++) if (!_stricmp(c->dev[i].guid, guid)) return &c->dev[i];
@@ -379,6 +405,11 @@ static void cfg_parse(Cfg *c, char *text) {
         else if (sect == 1 && !_stricmp(key, "button_prompts"))                                /* [Recomps#1] */
             c->prompts = prompts_value(val);
         else if (sect == 1 && !_stricmp(key, "swap_confirm")) c->menu_swap = !_stricmp(val, "on");
+        else if (sect == 1 && !_stricmp(key, "bind_controls")) {
+            unsigned char tmp[16];
+            if (parse_bind(val, tmp)) { memcpy(c->bind, tmp, 16); c->bind_on = 1; }
+            else c->bind_on = 0;
+        }
         else if (sect == 1 && !_stricmp(key, "ignore")) { if (c->nignore < 16) snprintf(c->ignore[c->nignore++], sizeof c->ignore[0], "%s", val); }
         else if (sect == 1) {
             for (int i = 0; i < KB_N; i++) if (!_stricmp(key, g_kbn[i])) say("nn::pad: [general] \"%s = %s\" belongs under [keyboard], ignored\n", key, val);
@@ -1052,6 +1083,44 @@ int nnpad_layout_set(const char *val) {
     if (ok) g_cfg.def.layout = !_stricmp(val, "labels") ? 1 : !_stricmp(val, "auto") ? 2 : 0;
     unlock();
     return ok;
+}
+/* [lm3] bind_controls (gameplay controller rebinding), same cfg_key_set path */
+int nnpad_bind_get(unsigned char *out) {
+    lock();
+    if (!g_cfg.path[0]) cfg_load(1);
+    int on = g_cfg.bind_on;
+    if (on && out) memcpy(out, g_cfg.bind, 16);
+    unlock();
+    return on;
+}
+int nnpad_bind_set(const unsigned char *b) {
+    char val[256];
+    if (!b) {
+        strcpy(val, "game");
+    } else {
+        unsigned seen = 0;
+        size_t o = 0;
+        for (int i = 0; i < 16; i++) {
+            if (b[i] >= 16 || (seen & (1u << b[i]))) return 0;
+            seen |= 1u << b[i];
+            o += (size_t)snprintf(val + o, sizeof val - o, "%s%s", i ? "," : "", g_pro[b[i]]);
+        }
+    }
+    lock();
+    int ok = cfg_key_set("bind_controls", val);
+    if (ok) {
+        if (b) { memcpy(g_cfg.bind, b, 16); g_cfg.bind_on = 1; }
+        else g_cfg.bind_on = 0;
+    }
+    unlock();
+    return ok;
+}
+int nnpad_bind_live(void) {
+    lock();
+    if (!g_cfg.path[0]) cfg_load(1);
+    int on = g_cfg.bind_on;
+    unlock();
+    return on;
 }
 static volatile int g_prompts_kb;                    /* the last device player 1 used was the keyboard */
 void nnpad_prompts_used(int keyboard) { g_prompts_kb = keyboard; }

@@ -62,7 +62,7 @@ const char* phase_of(const std::string& step)
 struct SettingDef {
 	const char *key, *name, *note;
 	std::vector<std::pair<const char*, const char*>> options;   // value in the file, what the screen shows
-	int tab = 0;                                                // the section of the settings screen: 0 Display, 1 Graphics, 2 Controls, 3 General
+	int tab = 0;                                                // the section of the settings screen: 0 Display, 1 Graphics, 2 Upscaling, 3 Controls, 4 General
 	const char *dflt = nullptr;                                 // the reader's value when the key is not in the file; else the first option
 	const char *file = "/graphics.ini", *section = "";
 };
@@ -76,7 +76,7 @@ const std::vector<SettingDef>& setting_defs()
 		{"vsync", "Vertical sync", "Auto locks to a 60 / 120 / 240 Hz display",
 			{{"auto", "Auto"}, {"display", "Display"}, {"clock", "Clock"}, {"off", "Off"}, {"on", "On"}, {"mailbox", "Mailbox"}}, 0},
 		{"frame_rate", "Frame rate", "30 is the game as made; its speed stays the same",
-			{{"30", "30 fps"}, {"60", "60 fps"}, {"90", "90 fps"}, {"120", "120 fps"}}, 0},
+			{{"30", "30 fps"}, {"40", "40 fps"}, {"60", "60 fps"}, {"90", "90 fps"}, {"120", "120 fps"}, {"144", "144 fps"}, {"165", "165 fps"}, {"240", "240 fps"}}, 0},
 		{"frame_time_overlay", "Performance overlay", "Frame rate and frame time at the top right of the picture", {{"off", "Off"}, {"on", "On"}}, 0},
 		{"resolution_scale", "Internal resolution", "What the game renders at, times its own size",
 			{{"0.4", "0.4 ×"}, {"0.5", "0.5 ×"}, {"0.6", "0.6 ×"}, {"0.75", "0.75 ×"}, {"0.8", "0.8 ×"}, {"1.0", "1.0 ×"}, {"1.2", "1.2 ×"}, {"1.6", "1.6 ×"}, {"2.0", "2.0 ×"}, {"2.4", "2.4 ×"}, {"3.0", "3.0 ×"}},
@@ -89,17 +89,28 @@ const std::vector<SettingDef>& setting_defs()
 		{"aspect_ratio", "Picture shape", "Wider shows more at the sides; Auto is the screen's",
 			{{"16:9", "16:9"}, {"auto", "Auto"}, {"21:9", "21:9"}, {"32:9", "32:9"}}, 1},
 		{"aspect", "Picture fit", "Keep the picture's shape, or fill the window", {{"keep", "Keep shape"}, {"stretch", "Stretch"}}, 1},
+		{"upscaler", "Upscaling", "FSR 3.1, DLSS or FSR 4 (DLSS and FSR 4 need your own DLLs beside the launcher)",
+			{{"off", "Off"}, {"fsr3", "FSR 3 Native AA"}, {"fsr3_quality", "FSR 3 Quality"}, {"fsr3_balanced", "FSR 3 Balanced"}, {"fsr3_performance", "FSR 3 Performance"}, {"fsr3_ultra_performance", "FSR 3 Ultra Performance"},
+			 {"dlaa", "DLAA"}, {"dlss_quality", "DLSS Quality"}, {"dlss_balanced", "DLSS Balanced"}, {"dlss_performance", "DLSS Performance"}, {"dlss_ultra_performance", "DLSS Ultra Performance"},
+			 {"fsr4", "FSR 4 Native AA"}, {"fsr4_quality", "FSR 4 Quality"}, {"fsr4_balanced", "FSR 4 Balanced"}, {"fsr4_performance", "FSR 4 Performance"}, {"fsr4_ultra_performance", "FSR 4 Ultra Performance"}}, 2},
+		{"sharpness", "Sharpness", "Sharpens the picture after the upscaler (needs Upscaling on)",
+			{{"0", "Off"}, {"20", "20 %"}, {"40", "40 %"}, {"60", "60 %"}, {"80", "80 %"}, {"100", "100 %"}}, 2},
+		{"frame_generation", "Frame generation", "Experimental, Windows; twice the frame rate on screen (needs Upscaling on and DLLs)", {{"off", "Off"}, {"on", "On"}}, 2},
+		{"frame_generator", "Frame generation: type", "AMD FidelityFX (FSR) or NVIDIA DLSSG (RTX 40 or newer)", {{"fsr", "FSR"}, {"dlss", "DLSS"}}, 2},
+		{"frame_generation_hud", "Frame generation: HUD", "Keeps HUD and prompts sharp on generated frames (turn off if HUD flickers)", {{"on", "On"}, {"off", "Off"}}, 2},
 		{"button_prompts", "Button prompts", "Auto follows what you use",
-			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, 2, nullptr, "/controllers.ini", "general"},
-		{"swap_confirm", "Swap Confirm", "The bottom button confirms, the right one goes back", {{"off", "Off"}, {"on", "On"}}, 2, nullptr, "/controllers.ini", "general"},
+			{{"auto", "Auto"}, {"playstation", "PlayStation"}, {"xbox", "Xbox"}, {"switch", "Switch"}, {"keyboard", "Keyboard"}}, 3, nullptr, "/controllers.ini", "general"},
+		{"swap_confirm", "Swap Confirm", "The bottom button confirms, the right one goes back", {{"off", "Off"}, {"on", "On"}}, 3, nullptr, "/controllers.ini", "general"},
+		{"layout", "Face buttons", "Position (Nintendo layout) or printed letters on the pad",
+			{{"auto", "Auto"}, {"positional", "Position"}, {"labels", "Printed letter"}}, 3, nullptr, "/controllers.ini", "general"},
 		{"language", "Language", "Game language; Auto follows your system language",
 			{{"auto", "Auto"}, {"en-US", "English (US)"}, {"en-GB", "English (UK)"}, {"es", "Spanish (Spain)"},
 			 {"es-419", "Spanish (LatAm)"}, {"fr", "French"}, {"fr-CA", "French (Canada)"}, {"de", "German"},
 			 {"it", "Italian"}, {"nl", "Dutch"}, {"ja", "Japanese"}, {"ko", "Korean"},
 			 {"zh-Hans", "Chinese (Simp.)"}, {"zh-Hant", "Chinese (Trad.)"}},
-			3},
+			4},
 		// the launcher's own (config/launcher.ini; the game never reads it): App::sound
-		{"sounds", "Launcher sounds", "Soft ticks as you move through these screens", {{"on", "On"}, {"off", "Off"}}, 3, nullptr, "/launcher.ini"},
+		{"sounds", "Launcher sounds", "Soft ticks as you move through these screens", {{"on", "On"}, {"off", "Off"}}, 4, nullptr, "/launcher.ini"},
 	};
 	return d;
 }
@@ -281,7 +292,7 @@ bool App::init(int argc, char** argv)
 	refresh_build();
 	update::check(paths);
 	if (const char* t = std::getenv("LAUNCHER_TAB"))       // test aid: the settings' section
-		tab = std::atoi(t) % 4;
+		tab = std::atoi(t) % 5;
 	if (const char* s = std::getenv("LAUNCHER_SCREEN"))    // test aid: start on another screen (setup, build, mods, settings)
 		go(s);
 	return true;
@@ -965,7 +976,7 @@ void App::refresh_title()
 	std::string built_version;
 	std::getline(std::ifstream(paths.build + "/" BUILT_VERSION), built_version);
 	// the game is built on the player's PC, so new launcher files (auto-update or unpacked by hand) leave an old game in build/ [issue 22]
-	stale = built && HL_VERSION[0] == 'v' && built_version != HL_VERSION;
+	stale = built && std::strcmp(HL_VERSION, "dev build") != 0 && built_version != HL_VERSION;
 	status_bad = false;
 	std::string tag, message;
 	const update::State us = update::state(tag, message);
@@ -1253,7 +1264,7 @@ void App::refresh_settings()
 
 void App::set_tab(int t)
 {
-	tab = (t + 4) % 4;
+	tab = (t + 5) % 5;
 	bump_row = -1;
 	model.DirtyVariable("tab");
 	refresh_settings();
