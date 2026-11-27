@@ -33,6 +33,39 @@ static void hid_GetTouchScreenState1(Ctx *c) { memset((void *)(uintptr_t)A0, 0, 
 static void hid_NoControllerColor(Ctx *c) { RET(0x4b8ca); }
 /* nn::oe::GetExpectedVolumeBalance(float *main, float *library applet) */
 static void oe_GetExpectedVolumeBalance(Ctx *c) { *(float *)(uintptr_t)A0 = 1.0f; *(float *)(uintptr_t)A1 = 1.0f; }
+/* nn::web::ShowOfflineHtmlPage(OfflineHtmlPageReturnValue *out, const ShowOfflineHtmlPageArg &arg):
+ * the pause-menu / ScareScraper Guide opens Switch's Offline Web library applet (HtmlDocument NCA, not in
+ * ExeFS/RomFS). Report the applet as closed so the game's Launch Offline Web Viewer thread clears its flag
+ * and returns cleanly to the pause menu instead of crashing in lifted nn::am service code (issue #86). */
+static void web_ShowOfflineHtmlPage(Ctx *c) {
+    const char *doc = "?";
+    char docbuf[256];
+    if (A1) {
+        const uint8_t *arg = (const uint8_t *)(uintptr_t)A1;
+        uint16_t count = rd16(A1);
+        size_t off = 8;
+        for (uint16_t i = 0; i < count && off + 8 <= 0x2000; i++) {
+            uint16_t kind = rd16(A1 + off);
+            uint16_t sz = rd16(A1 + off + 2);
+            if (off + 8 + sz > 0x2000) break;
+            if (kind == 6 && sz > 0) {
+                size_t n = sz < sizeof docbuf - 1 ? sz : sizeof docbuf - 1;
+                memcpy(docbuf, arg + off + 8, n);
+                docbuf[n] = '\0';
+                doc = docbuf;
+                break;
+            }
+            off += 8 + sz;
+        }
+    }
+    if (A0) {
+        memset((void *)(uintptr_t)A0, 0, 0x1010);
+        wr32(A0, 2); /* OfflineExitReason_WindowClosed */
+    }
+    printf("nn::web::ShowOfflineHtmlPage: offline web applet not modelled (%s); returning closed\n", doc);
+    trace_printf("     nn::web::ShowOfflineHtmlPage (%s) -> WindowClosed\n", doc);
+    RET(0);
+}
 static void c_isalnum(Ctx *c) { RET(isalnum((int)A0) != 0); }
 static void c_isxdigit(Ctx *c) { RET(isxdigit((int)A0) != 0); }
 static void c_strpbrk(Ctx *c) { RET((uint64_t)(uintptr_t)strpbrk((const char *)(uintptr_t)A0, (const char *)(uintptr_t)A1)); }
@@ -79,6 +112,9 @@ static const ImportDef lm3_imports[] = {
     {"_ZN2nn2oe27SetPerformanceConfigurationENS0_15PerformanceModeEi", nothing},
     {"_ZN2nn2oe24GetExpectedVolumeBalanceEPfS1_", oe_GetExpectedVolumeBalance},
     {"_ZN2nn2oe24SetExpectedVolumeBalanceEff", nothing},
+    /* offline web applet (pause-menu / ScareScraper Guide): no HtmlDocument NCA or browser applet on PC */
+    {"_ZN2nn3web19ShowOfflineHtmlPageEPNS0_26OfflineHtmlPageReturnValueERKNS0_22ShowOfflineHtmlPageArgE", web_ShowOfflineHtmlPage},
+    {"_ZN2nn3web26RequestExitOfflineHtmlPageEv", nothing},
     /* the GPU driver's own memory: the runtime is the driver here */
     {"_ZN2nn2vi16ListFrameHistoryEPNS0_9FrameInfoEiPKNS0_5LayerE", ret0},     /* no frame records kept: 0 entries (the game's frame-time statistics) */
     {"_ZN2nv18InitializeGraphicsEPvm", nothing},
