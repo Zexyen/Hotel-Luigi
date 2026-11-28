@@ -108,6 +108,8 @@ const std::vector<SettingDef>& setting_defs()
 			{{"0.00", "0 %"}, {"0.05", "5 %"}, {"0.10", "10 %"}, {"0.15", "15 %"}, {"0.20", "20 %"},
 			 {"0.25", "25 %"}, {"0.30", "30 %"}, {"0.35", "35 %"}, {"0.40", "40 %"}, {"0.45", "45 %"}, {"0.50", "50 %"}},
 			3, "0.10", "/controllers.ini", "general"},
+		{"invert_camera_x", "Invert camera X", "Flip the controller's right stick left and right", {{"off", "Off"}, {"on", "On"}}, 3, "off", "/controllers.ini", "general"},
+		{"invert_camera_y", "Invert camera Y", "Flip the controller's right stick up and down", {{"off", "Off"}, {"on", "On"}}, 3, "off", "/controllers.ini", "general"},
 		{"language", "Language", "Game language; Auto follows your system language",
 			{{"auto", "Auto"}, {"en-US", "English (US)"}, {"en-GB", "English (UK)"}, {"es", "Spanish (Spain)"},
 			 {"es-419", "Spanish (LatAm)"}, {"fr", "French"}, {"fr-CA", "French (Canada)"}, {"de", "German"},

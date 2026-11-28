@@ -340,6 +340,24 @@
       "defaults": { "general/deadzone": "0.10" }
     },
     {
+      "id": "invert_camera_x", "label": "Invert camera X", "group": "Controls", "in": "controllers",
+      "help": "Flip the controller's right stick left and right for camera and aiming.",
+      "choices": [
+        { "label": "Off", "set": { "general/invert_camera_x": "off" } },
+        { "label": "On", "set": { "general/invert_camera_x": "on" } }
+      ],
+      "defaults": { "general/invert_camera_x": "off" }
+    },
+    {
+      "id": "invert_camera_y", "label": "Invert camera Y", "group": "Controls", "in": "controllers",
+      "help": "Flip the controller's right stick up and down for camera and aiming.",
+      "choices": [
+        { "label": "Off", "set": { "general/invert_camera_y": "off" } },
+        { "label": "On", "set": { "general/invert_camera_y": "on" } }
+      ],
+      "defaults": { "general/invert_camera_y": "off" }
+    },
+    {
       "id": "language", "label": "Language", "group": "General",
       "help": "The game's language. Auto follows your system display language.",
       "choices": [

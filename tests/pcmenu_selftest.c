@@ -30,6 +30,11 @@ int nnpad_layout_set(const char *val) { g_layout = val; return 1; }
 static const char *g_deadzone = "0.10";
 const char *nnpad_deadzone_setting(void) { return g_deadzone; }
 int nnpad_deadzone_set(const char *val) { g_deadzone = val; return 1; }
+static const char *g_inv_cam_x = "off", *g_inv_cam_y = "off";
+const char *nnpad_invert_camera_x_setting(void) { return g_inv_cam_x; }
+int nnpad_invert_camera_x_set(const char *val) { g_inv_cam_x = val; return 1; }
+const char *nnpad_invert_camera_y_setting(void) { return g_inv_cam_y; }
+int nnpad_invert_camera_y_set(const char *val) { g_inv_cam_y = val; return 1; }
 int nnpad_button_prompts(void) { return 3; }
 int nnpad_prompts_by_letter(void) { return 1; }
 static int g_bind_on;
@@ -215,6 +220,26 @@ int main(int argc, char **argv) {
         snprintf(g_raw[dz], sizeof g_raw[dz], "0.12");
         assert(!strcmp(k_rows[dz].val[nearest(dz, -1, 0)], "0.10") && !strcmp(k_rows[dz].val[nearest(dz, 1, 0)], "0.15"));
         g_raw[dz][0] = 0;
+    }
+    {   /* invert_camera_x / invert_camera_y rows: labels + values + help render in embedded font subsets, apply live */
+        int ix = row_of("invert_camera_x"), iy = row_of("invert_camera_y");
+        assert(ix >= 0 && iy >= 0 && row_count(ix) == 2 && row_count(iy) == 2 && k_rows[ix].apply == A_INV_CAM_X && k_rows[iy].apply == A_INV_CAM_Y);
+        int rows[2] = {ix, iy};
+        for (int r = 0; r < 2; r++) {
+            for (const char *c = k_rows[rows[r]].label; *c; c++)
+                assert(*c == ' ' || stbtt_FindGlyphIndex(&g_f_head, *c));
+            for (int k = 0; k < row_count(rows[r]); k++)
+                for (const char *c = k_rows[rows[r]].name[k]; *c; c++)
+                    assert(*c == ' ' || stbtt_FindGlyphIndex(&g_f_head, *c));
+            for (const char *c = k_rows[rows[r]].help; *c; c++)
+                assert(*c == ' ' || stbtt_FindGlyphIndex(&g_f_ui, *c));
+        }
+        assert(g_cur[ix] == 0 && g_cur[iy] == 0 && !row_restart(ix) && !row_restart(iy));
+        change(ix, 1, 0); change(iy, 1, 0);
+        assert(!strcmp(k_rows[ix].val[g_cur[ix]], "on") && !strcmp(g_inv_cam_x, "on") && !row_restart(ix));
+        assert(!strcmp(k_rows[iy].val[g_cur[iy]], "on") && !strcmp(g_inv_cam_y, "on") && !row_restart(iy));
+        change(ix, -1, 0); change(iy, -1, 0);
+        assert(!strcmp(g_inv_cam_x, "off") && !strcmp(g_inv_cam_y, "off"));
     }
     printf("pcmenu self-test: all checks passed\n");
     return 0;

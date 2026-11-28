@@ -23,6 +23,10 @@ int  nnpad_bind_set(const unsigned char *b);    /* [lm3] write bind_controls (NU
 int  nnpad_bind_live(void);                     /* [lm3] 1 when a custom gameplay button layout is active for controllers */
 const char *nnpad_deadzone_setting(void);       /* [lm3] [general] deadzone, formatted as written (e.g. "0.10") */
 int  nnpad_deadzone_set(const char *val);       /* [lm3] write [general] deadzone (0.00..0.90) to controllers.ini and apply live */
+const char *nnpad_invert_camera_x_setting(void);/* [lm3] [general] invert_camera_x ("on" / "off") */
+int  nnpad_invert_camera_x_set(const char *val);/* [lm3] write [general] invert_camera_x to controllers.ini and apply live */
+const char *nnpad_invert_camera_y_setting(void);/* [lm3] [general] invert_camera_y ("on" / "off") */
+int  nnpad_invert_camera_y_set(const char *val);/* [lm3] write [general] invert_camera_y to controllers.ini and apply live */
 int  nnpad_init(void);                           /* SDL up (no video, no window); 0 = failed. Also loads controllers.ini. */
 void nnpad_shutdown(void);                       /* stop rumble and close open pads on exit */
 void nnpad_poll(int force);                      /* hot-plug, config reload; cheap when called often (at most once per ms) */
